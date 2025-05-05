@@ -14,9 +14,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </head>
+      <body className="bg-white">
         <header className="bg-white shadow-sm">
-          <div className="max-w-4xl mx-auto py-4 px-8 flex items-center">
+          <div className="max-w-4xl mx-auto py-4 px-8 flex justify-center">
             <Image
               src="/MLBoss Logo.png"
               alt="MLBoss Logo"
@@ -27,7 +31,7 @@ export default function RootLayout({
             />
           </div>
         </header>
-        <main>{children}</main>
+        {children}
       </body>
     </html>
   )

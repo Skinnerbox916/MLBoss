@@ -69,9 +69,9 @@ export default function Home() {
 
   return (
     <div className="DashboardLayout min-h-screen flex flex-col pb-24">
-      <div className="flex-1 flex flex-col md:flex-row max-w-6xl mx-auto w-full gap-0 md:gap-6 pt-8 px-2 md:px-0">
+      <div className="flex flex-col md:flex-row max-w-6xl mx-auto w-full min-h-[60vh] gap-4 p-4">
         {/* Left Sidebar: LineupPanel */}
-        <aside className="LineupPanel w-full md:w-[30%] bg-gray-50 rounded-lg p-4 border mb-4 md:mb-0 md:mr-4">
+        <aside className="LineupPanel bg-gray-50 rounded-lg p-4 border w-full md:w-[30%]">
           <h2 className="text-lg font-semibold mb-4">Your Lineup</h2>
           <ul className="space-y-2">
             {sampleLineup.map((player) => (
@@ -83,7 +83,7 @@ export default function Home() {
           </ul>
         </aside>
         {/* Right Main: EvaluationPanel */}
-        <main className="EvaluationPanel w-full md:w-[70%] bg-gray-50 rounded-lg p-4 border">
+        <main className="EvaluationPanel bg-gray-50 rounded-lg p-4 border w-full md:w-[70%]">
           <div className="mb-4 flex flex-wrap gap-2 items-center">
             <span className="font-semibold mr-2">Select Position:</span>
             {positions.map((pos) => (

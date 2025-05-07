@@ -382,9 +382,8 @@ export async function GET(req: NextRequest) {
             if (benchPitchersWithGames.length > 0) {
               console.log('Team API: Bench pitchers with games (not counted):', benchPitchersWithGames);
             }
-          } catch (espnError) {
-            console.error('Team API: Error using ESPN fallback:', espnError);
-            teamObj.games_today = 0;
+          } catch (e) {
+            console.error('Team API: Error fetching games:', e);
           }
         }
       } catch (e) {

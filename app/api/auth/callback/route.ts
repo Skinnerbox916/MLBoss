@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   }
 
   const tokenData = await tokenRes.json();
-  const response = NextResponse.redirect('https://e657-45-29-68-219.ngrok-free.app/dashboard');
+  const response = NextResponse.redirect('https://mlboss.skibri.us/dashboard');
   clearYahooCookies();
   response.cookies.set('yahoo_access_token', tokenData.access_token, { httpOnly: true, secure: true, path: '/', maxAge: tokenData.expires_in || 3600, sameSite: 'lax' });
   response.cookies.set('yahoo_refresh_token', tokenData.refresh_token, { httpOnly: true, secure: true, path: '/', sameSite: 'lax' });

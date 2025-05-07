@@ -1,7 +1,7 @@
 // Minimal Yahoo OAuth client-side helpers
 export const YAHOO_CLIENT_ID = 'dj0yJmk9eUFSWTNWZW9GWFFVJmQ9WVdrOWRYVkVaazF3TWswbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTk5';
 export const YAHOO_CLIENT_SECRET = '5dba8ae54c5ff474f54f511047ef48fab1084a35';
-export const YAHOO_REDIRECT_URI = 'https://e657-45-29-68-219.ngrok-free.app/api/auth/callback';
+export const YAHOO_REDIRECT_URI = 'https://mlboss.skibri.us/api/auth/callback';
 
 // Generate a random state parameter for CSRF protection
 export function generateState() {

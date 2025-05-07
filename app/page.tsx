@@ -19,10 +19,27 @@ function HomeContent() {
   }, [searchParams]);
 
   const handleLogin = () => {
+    console.log("Login button clicked");
     const state = generateState();
-    setClientCookie('yahoo_state', state, { path: '/', secure: true, sameSite: 'lax' });
+    console.log("Generated state:", state);
+    setClientCookie('yahoo_state', state, { path: '/', secure: false, sameSite: 'lax' });
+    console.log("Cookie set");
     const forceLogin = searchParams.get('forceLogin') === '1';
-    window.location.href = YAHOO_AUTH_URL(state, forceLogin);
+    const authUrl = YAHOO_AUTH_URL(state, forceLogin);
+    console.log("Auth URL:", authUrl);
+    
+    try {
+      // Try using window.open as an alternative
+      const opened = window.open(authUrl, '_self');
+      if (!opened) {
+        console.error("Failed to open window. Trying location.href instead");
+        window.location.href = authUrl;
+      }
+    } catch (err) {
+      console.error("Error redirecting:", err);
+      // Fallback to a direct link
+      alert("Please click OK and check the console for errors. If redirect fails, manually copy the auth URL from the console.");
+    }
   };
 
   return (

@@ -1,10 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { YAHOO_AUTH_URL, generateState, setClientCookie } from './utils/auth';
 import Image from 'next/image';
 
-export default function Home() {
+// Component that uses useSearchParams
+function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [showError, setShowError] = useState(false);
@@ -59,5 +60,18 @@ export default function Home() {
         Login with Yahoo
       </button>
     </div>
+  );
+}
+
+// Main component with Suspense boundary
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        Loading...
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 } 

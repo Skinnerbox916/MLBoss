@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAccessToken } from '../../../utils/auth.server';
 import { parseString } from 'xml2js';
+import { getYahooMlbGameId, getYahooTeamKey, fetchYahooApi } from '../../../utils/yahoo-api';
+import { getEspnScoreboard } from '../../../utils/espn-api';
+import { getCachedData, setCachedData, generateYahooCacheKey } from '../../../utils/cache';
 
-// Declare global namespace for TypeScript
+// Declare global namespace for TypeScript - maintain backward compatibility
 declare global {
   var espnScoreboardData: any | null;
   var espnDataLogged: boolean;
@@ -48,125 +51,71 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // First get the current MLB game ID
-    const gameUrl = 'https://fantasysports.yahooapis.com/fantasy/v2/game/mlb';
-    console.log('Team API: Getting MLB game info from:', gameUrl);
+    // Get the current date in YYYY-MM-DD format
+    const today = new Date().toISOString().split('T')[0];
     
-    const gameRes = await fetch(gameUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    console.log('Team API: MLB game info response status:', gameRes.status);
-    const gameText = await gameRes.text();
-    console.log('Team API: MLB game info response:', gameText);
-
-    if (!gameRes.ok) {
-      console.log('Team API: Failed to get MLB game info');
-      return NextResponse.json({ error: 'Failed to fetch MLB game info', details: gameText }, { status: 500 });
+    // Generate cache key for team data
+    const teamCacheKey = generateYahooCacheKey('team_data', { date: today });
+    
+    // Check if we have cached team data
+    const cachedTeamData = await getCachedData<any>(teamCacheKey);
+    if (cachedTeamData) {
+      console.log('Team API: Returning cached team data');
+      return NextResponse.json(cachedTeamData);
     }
 
-    // Parse XML response
-    const gameData = await new Promise<YahooResponse>((resolve, reject) => {
-      parseString(gameText, (err: Error | null, result: YahooResponse) => {
-        if (err) reject(err);
-        else resolve(result);
-      });
-    });
-
-    const gameId = gameData?.fantasy_content?.game?.[0]?.game_id?.[0];
-    console.log('Team API: Found MLB game ID:', gameId);
-    
-    if (!gameId) {
-      console.log('Team API: Could not find MLB game ID');
-      return NextResponse.json({ error: 'Could not find MLB game ID' }, { status: 500 });
+    // Step 1: Get MLB game ID
+    let gameId: string;
+    try {
+      gameId = await getYahooMlbGameId();
+      console.log('Team API: Found MLB game ID:', gameId);
+    } catch (error) {
+      console.error('Team API: Error getting MLB game ID:', error);
+      return NextResponse.json({ error: 'Failed to fetch MLB game ID' }, { status: 500 });
     }
 
-    // Now get teams for the current MLB game
-    const teamsUrl = `https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=${gameId}/teams`;
-    console.log('Team API: Making request to Yahoo API for teams:', teamsUrl);
-    
-    const yahooRes = await fetch(teamsUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    console.log('Team API: Yahoo API response status:', yahooRes.status);
-    const yahooText = await yahooRes.text();
-    console.log('Team API: Yahoo API response:', yahooText);
-    
-    if (!yahooRes.ok) {
-      if (yahooRes.status === 401) {
-        console.log('Team API: Token expired or invalid');
-        return NextResponse.json({ error: 'Token expired' }, { status: 401 });
-      }
-      console.log('Team API: Yahoo API error:', yahooText);
-      return NextResponse.json({ error: 'Failed to fetch Yahoo data', details: yahooText }, { status: 500 });
+    // Step 2: Get the user's team key
+    let teamKey: string;
+    let leagueKey: string;
+    try {
+      teamKey = await getYahooTeamKey(gameId);
+      console.log('Team API: Found team key:', teamKey);
+      leagueKey = teamKey?.split('.t.')[0];
+    } catch (error) {
+      console.error('Team API: Error getting team key:', error);
+      return NextResponse.json({ error: 'Failed to fetch team key' }, { status: 500 });
     }
 
-    // Parse XML response
-    const data = await new Promise<any>((resolve, reject) => {
-      parseString(yahooText, (err: Error | null, result: any) => {
-        if (err) reject(err);
-        else resolve(result);
-      });
-    });
-
-    console.log('Team API: Successfully parsed Yahoo data');
-
-    // Extract team info
-    const team = data?.fantasy_content?.users?.[0]?.user?.[0]?.games?.[0]?.game?.[0]?.teams?.[0]?.team?.[0];
-    const teamKey = team?.team_key?.[0];
-    const leagueKey = teamKey?.split('.t.')[0];
-    const waiverPriority = team?.waiver_priority?.[0] || null;
-
-    // Explicitly fetch team resource for transaction_counter
-    let movesUsed = 0;
-    let movesLimit = 0;
-    let debugInfo = {
-      teamResourceUrl: '',
-      teamData: null,
-      transactionCounter: null,
-      rawResponse: ''
-    };
+    // Step 3: Get team resource data
+    const teamResourceUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}`;
+    let teamData, movesUsed = 0, movesLimit = 0;
+    let debugInfo = { transactionCounter: null };
     
-    if (teamKey) {
-      const teamResourceUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}`;
-      debugInfo.teamResourceUrl = teamResourceUrl;
+    try {
+      teamData = await fetchYahooApi<any>(teamResourceUrl);
+      console.log('Team API: Successfully fetched team data');
       
-      const teamResourceRes = await fetch(teamResourceUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const teamResourceText = await teamResourceRes.text();
-      debugInfo.rawResponse = teamResourceText;
-      
-      const teamResourceData = await new Promise<any>((resolve, reject) => {
-        parseString(teamResourceText, (err: Error | null, result: any) => {
-          if (err) reject(err);
-          else resolve(result);
-        });
-      });
-      
-      // Log the full path to help debug
-      const teamData = teamResourceData?.fantasy_content?.team?.[0];
-      debugInfo.teamData = teamData;
-      debugInfo.transactionCounter = teamData?.transaction_counter;
+      // Extract transaction counter and moves info
+      const teamContent = teamData?.fantasy_content?.team?.[0];
+      debugInfo.transactionCounter = teamContent?.transaction_counter;
       
       // Extract moves limit and used from roster_adds
-      const rosterAdds = teamData?.roster_adds?.[0];
+      const rosterAdds = teamContent?.roster_adds?.[0];
       movesLimit = Number(rosterAdds?.coverage_value?.[0] || 0);
       movesUsed = Number(rosterAdds?.value?.[0] || 0);
+    } catch (error) {
+      console.error('Team API: Error getting team resource:', error);
+      // Continue with other data even if this fails
     }
 
-    // Prepare the team object with basic info
+    // Step 4: Prepare the team object with basic info
+    const team = teamData?.fantasy_content?.team?.[0];
     const teamObj: any = {
       name: team?.name?.[0] || '',
       team_id: team?.team_id?.[0] || '',
       team_logo: team?.team_logos?.[0]?.team_logo?.[0]?.url?.[0] || null,
       url: team?.url?.[0] || '',
-      waiver_priority: waiverPriority,
+      waiver_priority: team?.waiver_priority?.[0] || null,
       rank: null,
       matchup: null,
       record: null,
@@ -177,30 +126,20 @@ export async function GET(req: NextRequest) {
       moves_used: movesUsed,
       moves_limit: movesLimit,
       moves_remaining: Math.max(movesLimit - movesUsed, 0),
-      _debug: debugInfo // Include debug info in response
+      _debug: debugInfo, // Include debug info in response
+      cached: false,
+      generated_at: new Date().toISOString()
     };
 
-    // Fetch league standings for rank and record
+    // Step 5: Fetch league standings for rank and record
     if (leagueKey && teamKey) {
       try {
         const standingsUrl = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}/standings`;
-        console.log('Team API: Fetching standings from:', standingsUrl);
-        const standingsRes = await fetch(standingsUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const standingsText = await standingsRes.text();
-        console.log('Team API: Standings response:', standingsText);
-        const standingsData = await new Promise<any>((resolve, reject) => {
-          parseString(standingsText, (err: Error | null, result: any) => {
-            if (err) reject(err);
-            else resolve(result);
-          });
-        });
-
+        const standingsData = await fetchYahooApi<any>(standingsUrl, { ttl: 4 * 60 * 60 }); // Cache for 4 hours
+        
         const teams = standingsData?.fantasy_content?.league?.[0]?.standings?.[0]?.teams?.[0]?.team || [];
         console.log('Team API: Found teams in standings:', teams.length);
         const myTeam = teams.find((t: any) => t.team_key?.[0] === teamKey);
-        console.log('Team API: Found my team in standings:', myTeam ? 'yes' : 'no');
         
         if (myTeam) {
           const teamStandings = myTeam.team_standings?.[0];
@@ -208,39 +147,24 @@ export async function GET(req: NextRequest) {
           
           // Extract record
           const outcomeTotals = teamStandings?.outcome_totals?.[0];
-          console.log('Team API: Outcome totals:', outcomeTotals);
           if (outcomeTotals) {
             const wins = outcomeTotals.wins?.[0] || '0';
             const losses = outcomeTotals.losses?.[0] || '0';
             const ties = outcomeTotals.ties?.[0] || '0';
             teamObj.record = `${wins}-${losses}${ties !== '0' ? `-${ties}` : ''}`;
-            console.log('Team API: Calculated record:', teamObj.record);
           }
         }
       } catch (e) {
         console.error('Team API: Error fetching standings:', e);
-        teamObj.rank = null;
-        teamObj.record = null;
       }
     }
 
-    // Fetch roster for injury and slot information
+    // Step 6: Fetch roster for injury and slot information
     if (teamKey) {
       try {
         const rosterUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/roster`;
-        console.log('Team API: Fetching roster from:', rosterUrl);
-        const rosterRes = await fetch(rosterUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const rosterText = await rosterRes.text();
-        console.log('Team API: Roster response:', rosterText);
-        const rosterData = await new Promise<any>((resolve, reject) => {
-          parseString(rosterText, (err: Error | null, result: any) => {
-            if (err) reject(err);
-            else resolve(result);
-          });
-        });
-
+        const rosterData = await fetchYahooApi<any>(rosterUrl);
+        
         const players = rosterData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player || [];
         console.log('Team API: Found players in roster:', players.length);
         
@@ -249,7 +173,6 @@ export async function GET(req: NextRequest) {
         let dtdCount = 0;
         players.forEach((player: any) => {
           const status = player?.status?.[0];
-          console.log('Team API: Player status:', player?.name?.[0]?.full?.[0], status);
           if (status === 'IL') {
             ilCount++;
           } else if (status === 'DTD') {
@@ -258,8 +181,7 @@ export async function GET(req: NextRequest) {
         });
         teamObj.players_on_il = ilCount;
         teamObj.dtd_players = dtdCount;
-        console.log('Team API: Injury counts:', { il: ilCount, dtd: dtdCount });
-
+        
         // Count open starting slots
         const startingPositions = ['C', '1B', '2B', '3B', 'SS', 'OF', 'OF', 'OF', 'Util', 'SP', 'SP', 'SP', 'SP', 'SP', 'RP', 'RP', 'RP', 'RP', 'P', 'P'];
         const filledPositions = new Set();
@@ -273,143 +195,105 @@ export async function GET(req: NextRequest) {
         });
 
         teamObj.open_slots = startingPositions.length - filledPositions.size;
-        console.log('Team API: Open slots:', teamObj.open_slots, 'Filled positions:', Array.from(filledPositions));
       } catch (e) {
         console.error('Team API: Error fetching roster:', e);
       }
     }
 
-    // Fetch games today
+    // Step 7: Fetch games today information
     if (teamKey) {
       try {
-        const today = new Date().toISOString().split('T')[0];
-        // First get the team's players
+        // Get all players with games for today
         const rosterUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/roster;date=${today}`;
-        console.log('Team API: Fetching roster for games from:', rosterUrl);
-        const rosterRes = await fetch(rosterUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-        const rosterText = await rosterRes.text();
-        console.log('Team API: Roster response for games:', rosterText);
-        const rosterData = await new Promise<any>((resolve, reject) => {
-          parseString(rosterText, (err: Error | null, result: any) => {
-            if (err) reject(err);
-            else resolve(result);
-          });
-        });
-
-        const players = rosterData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player || [];
-        console.log('Team API: Found players for games:', players.length);
-
-        // Count available swaps (bench players who have games today)
-        let availableSwaps = 0;
-        const benchPlayersWithGames = [];
-        const benchBattersWithGames = [];
-        const benchPitchersWithGames = [];
-
-        // Modified approach: Use game start time to determine if a player has a game today
-        // First, get all player game start times
-        const playerGameTimes = new Map<string, string>();
-        const teamsWithGamesToday = new Set<string>();
+        const rosterData = await fetchYahooApi<any>(rosterUrl);
         
-        // Process each player to check for game time
-        for (const player of players) {
-          try {
-            const playerKey = player?.player_key?.[0];
-            const teamKey = player?.editorial_team_key?.[0];
-            const playerName = player?.name?.[0]?.full?.[0] || 'Unknown Player';
+        const players = rosterData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player || [];
+        
+        // Processing players for games data would be verbose here,
+        // so we'll use a simple count approach based on the team roster API data
+        // This is reasonable since we've already implemented detailed game checks in the roster API
+        
+        try {
+          // Fetch the roster API which already contains game information
+          const rosterApiUrl = `/api/yahoo/roster`;
+          const rosterApiRes = await fetch(rosterApiUrl);
+          
+          if (rosterApiRes.ok) {
+            const rosterApiData = await rosterApiRes.json();
+            const playersWithGames = rosterApiData.players?.filter((p: any) => p.has_game_today) || [];
             
-            if (playerKey) {
-              // Try to get player's game start time for today
-              const playerUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/players;date=${today}`;
-              const playerRes = await fetch(playerUrl, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-              });
-              
-              if (playerRes.ok) {
-                const playerText = await playerRes.text();
-                const playerData = await new Promise<any>((resolve, reject) => {
-                  parseString(playerText, (err: Error | null, result: any) => {
-                    if (err) reject(err);
-                    else resolve(result);
-                  });
-                });
-                
-                // Find this specific player in the response
-                const allPlayers = playerData?.fantasy_content?.team?.[0]?.players?.[0]?.player || [];
-                const thisPlayer = allPlayers.find((p: any) => p.player_key?.[0] === playerKey);
-                
-                // Get game_start_time directly from player data
-                const gameStartTime = thisPlayer?.game_start_time?.[0];
-                
-                if (gameStartTime) {
-                  playerGameTimes.set(playerKey, gameStartTime);
-                  if (teamKey) {
-                    teamsWithGamesToday.add(teamKey);
-                  }
-                  console.log(`Team API: Player ${playerName} has game today at ${gameStartTime}`);
-                } else {
-                  // Try alternative properties for game information
-                  const gameDate = thisPlayer?.game_date?.[0];
-                  const gameTime = thisPlayer?.game_time?.[0];
-                  const scheduledGameTime = thisPlayer?.scheduled_game_time?.[0];
+            teamObj.games_today = playersWithGames.length;
+            console.log(`Team API: Found ${playersWithGames.length} players with games today`);
+          }
+        } catch (e) {
+          console.error('Team API: Error fetching roster API data:', e);
+          
+          // Fallback: Use ESPN API to check for games
+          try {
+            const espnData = await getEspnScoreboard();
+            
+            // Get all team abbreviations from players
+            const teamAbbreviations = new Map<string, string>();
+            for (const player of players) {
+              const teamKey = player?.editorial_team_key?.[0];
+              const teamAbbr = player?.editorial_team_abbr?.[0];
+              if (teamKey && teamAbbr) {
+                teamAbbreviations.set(teamKey, teamAbbr);
+              }
+            }
+            
+            // Count unique teams with games today
+            const teamsWithGamesToday = new Set<string>();
+            
+            if (espnData?.events) {
+              for (const event of espnData.events) {
+                if (event.competitions && event.competitions.length > 0) {
+                  const competition = event.competitions[0];
                   
-                  if (scheduledGameTime) {
-                    playerGameTimes.set(playerKey, scheduledGameTime);
-                    if (teamKey) teamsWithGamesToday.add(teamKey);
-                    console.log(`Team API: Player ${playerName} has game today at ${scheduledGameTime} (scheduled_game_time)`);
-                  } else if (gameDate && gameTime) {
-                    playerGameTimes.set(playerKey, `${gameDate} ${gameTime}`);
-                    if (teamKey) teamsWithGamesToday.add(teamKey);
-                    console.log(`Team API: Player ${playerName} has game today at ${gameDate} ${gameTime} (game_date + game_time)`);
-                  } else if (gameDate) {
-                    playerGameTimes.set(playerKey, gameDate);
-                    if (teamKey) teamsWithGamesToday.add(teamKey);
-                    console.log(`Team API: Player ${playerName} has game today on ${gameDate} (game_date)`);
-                  } else {
-                    // Try a more direct approach with player stats endpoint
-                    try {
-                      const playerStatsUrl = `https://fantasysports.yahooapis.com/fantasy/v2/player/${playerKey}/stats;type=date;date=${today}`;
-                      const playerStatsRes = await fetch(playerStatsUrl, {
-                        headers: { Authorization: `Bearer ${accessToken}` },
-                        signal: AbortSignal.timeout(3000)
-                      });
-                      
-                      if (playerStatsRes.ok) {
-                        const playerStatsText = await playerStatsRes.text();
-                        const playerStatsData = await new Promise<any>((resolve, reject) => {
-                          parseString(playerStatsText, (err: Error | null, result: any) => {
-                            if (err) reject(err);
-                            else resolve(result);
-                          });
-                        });
-                        
-                        // Check for coverage data
-                        const coverageStart = playerStatsData?.fantasy_content?.player?.[0]?.player_stats?.[0]?.coverage_metadata?.[0]?.coverage_start?.[0];
-                        const isCoverageDay = playerStatsData?.fantasy_content?.player?.[0]?.player_stats?.[0]?.is_coverage_day?.[0];
-                        
-                        if (coverageStart) {
-                          playerGameTimes.set(playerKey, coverageStart);
-                          if (teamKey) teamsWithGamesToday.add(teamKey);
-                          console.log(`Team API: Player ${playerName} has game today at ${coverageStart} (coverage_start)`);
-                        } else if (isCoverageDay === '1') {
-                          playerGameTimes.set(playerKey, 'In Progress');
-                          if (teamKey) teamsWithGamesToday.add(teamKey);
-                          console.log(`Team API: Player ${playerName} has game today (is_coverage_day = 1)`);
-                        }
+                  for (const team of competition.competitors || []) {
+                    const teamAbbr = team.team?.abbreviation?.toUpperCase();
+                    
+                    for (const [yahooTeamKey, yahooTeamAbbr] of Array.from(teamAbbreviations.entries())) {
+                      if (yahooTeamAbbr.toUpperCase() === teamAbbr) {
+                        teamsWithGamesToday.add(yahooTeamKey);
                       }
-                    } catch (e) {
-                      console.error(`Team API: Error checking player stats API for ${playerName}:`, e);
                     }
                   }
                 }
               }
             }
-          } catch (e) {
-            console.error(`Team API: Error getting game time for player:`, e);
-            // If we can't get data for a player, don't fail the whole process
+            
+            // Count the number of players with games today
+            let gamesCount = 0;
+            for (const player of players) {
+              const teamKey = player?.editorial_team_key?.[0];
+              if (teamKey && teamsWithGamesToday.has(teamKey)) {
+                gamesCount++;
+              }
+            }
+            
+            teamObj.games_today = gamesCount;
+            console.log(`Team API: Found ${gamesCount} players with games today via ESPN data`);
+          } catch (espnError) {
+            console.error('Team API: Error using ESPN fallback:', espnError);
+            teamObj.games_today = 0;
           }
         }
+      } catch (e) {
+        console.error('Team API: Error determining games today:', e);
+        teamObj.games_today = 0;
+      }
+    }
+
+    // Cache the response data
+    await setCachedData(teamCacheKey, teamObj, { ttl: 15 * 60 }); // Cache for 15 minutes
+    
+    return NextResponse.json(teamObj);
+  } catch (error) {
+    console.error('Team API: Unhandled error:', error);
+    return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
+  }
+}
         
         // Fallback: If we couldn't determine games through player data,
         // just check a few known MLB game times for today
@@ -846,4 +730,4 @@ export async function GET(req: NextRequest) {
     console.error('Team API: Unexpected error:', error);
     return NextResponse.json({ error: 'Unexpected error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
-} 
+}

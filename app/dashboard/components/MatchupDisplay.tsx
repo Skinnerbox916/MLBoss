@@ -360,15 +360,21 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
               <div className="flex flex-wrap gap-3 pb-2">
                 {battingCategories.map((cat, index) => {
                   let delta = '';
-                  let my = parseFloat(cat.myStat);
-                  let opp = parseFloat(cat.opponentStat);
+                  const my = parseFloat(cat.myStat);
+                  const opp = parseFloat(cat.opponentStat);
                   if (!isNaN(my) && !isNaN(opp)) {
                     if (cat.winning === null) {
                       delta = 'TIE';
-                    } else if (cat.winning === true) {
-                      delta = (my - opp > 0 ? '+' : '') + (my - opp).toFixed(2).replace(/\.00$/, '');
                     } else {
-                      delta = (my - opp > 0 ? '+' : '') + (my - opp).toFixed(2).replace(/\.00$/, '');
+                      const diff = my - opp;
+                      const sign = diff > 0 ? '+' : '';
+                      if (cat.name === 'AVG') {
+                        delta = sign + diff.toFixed(3);
+                      } else if (cat.name === 'ERA' || cat.name === 'WHIP') {
+                        delta = sign + diff.toFixed(2);
+                      } else {
+                        delta = sign + diff.toFixed(2).replace(/\.00$/, '');
+                      }
                     }
                   }
                   const displayName = cat.displayName === 'Batter Ks' ? 'Ks' : cat.displayName;
@@ -398,15 +404,21 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
               <div className="flex flex-wrap gap-3 pb-2">
                 {pitchingCategories.map((cat, index) => {
                   let delta = '';
-                  let my = parseFloat(cat.myStat);
-                  let opp = parseFloat(cat.opponentStat);
+                  const my = parseFloat(cat.myStat);
+                  const opp = parseFloat(cat.opponentStat);
                   if (!isNaN(my) && !isNaN(opp)) {
                     if (cat.winning === null) {
                       delta = 'TIE';
-                    } else if (cat.winning === true) {
-                      delta = (my - opp > 0 ? '+' : '') + (my - opp).toFixed(2).replace(/\.00$/, '');
                     } else {
-                      delta = (my - opp > 0 ? '+' : '') + (my - opp).toFixed(2).replace(/\.00$/, '');
+                      const diff = my - opp;
+                      const sign = diff > 0 ? '+' : '';
+                      if (cat.name === 'AVG') {
+                        delta = sign + diff.toFixed(3);
+                      } else if (cat.name === 'ERA' || cat.name === 'WHIP') {
+                        delta = sign + diff.toFixed(2);
+                      } else {
+                        delta = sign + diff.toFixed(2).replace(/\.00$/, '');
+                      }
                     }
                   }
                   const displayName = cat.displayName === 'Pitcher Ks' ? 'Ks' : cat.displayName;

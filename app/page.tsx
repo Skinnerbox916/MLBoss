@@ -1,18 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-
-const YAHOO_CLIENT_ID = 'dj0yJmk9eUFSWTNWZW9GWFFVJmQ9WVdrOWRYVkVaazF3TWswbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTk5';
-const YAHOO_REDIRECT_URI = 'https://e657-45-29-68-219.ngrok-free.app/api/auth/callback';
-const YAHOO_AUTH_URL = `https://api.login.yahoo.com/oauth2/request_auth?client_id=${YAHOO_CLIENT_ID}&redirect_uri=${encodeURIComponent(YAHOO_REDIRECT_URI)}&response_type=code&language=en-us&scope=openid%20fspt-w`;
-
-function getCookie(name: string) {
-  if (typeof document === 'undefined') return null;
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop()?.split(';').shift() || null;
-  return null;
-}
+import { YAHOO_AUTH_URL, generateState, setClientCookie } from './utils/auth';
+import Image from 'next/image';
 
 export default function Home() {
   const router = useRouter();
@@ -27,32 +17,47 @@ export default function Home() {
     }
   }, [searchParams]);
 
-  // Only redirect to dashboard if token is present, there is no error, and not logging in
-  useEffect(() => {
-    const token = getCookie('yahoo_access_token');
-    const error = searchParams.get('error');
-    if (token && !error && !isLoggingIn) {
-      router.replace('/dashboard');
-    }
-  }, [router, searchParams, isLoggingIn]);
+  const handleLogin = () => {
+    const state = generateState();
+    setClientCookie('yahoo_state', state, { path: '/', secure: true, sameSite: 'lax' });
+    const forceLogin = searchParams.get('forceLogin') === '1';
+    window.location.href = YAHOO_AUTH_URL(state, forceLogin);
+  };
 
   return (
-    <div className="max-w-4xl mx-auto min-h-[60vh] flex flex-col items-center justify-center">
-      <h1 className="text-3xl font-bold mb-8 text-center">MLB Lineup Manager</h1>
-      <div className="flex flex-col items-center justify-center p-8 border rounded-lg">
-        {showError && (
-          <div className="text-red-600 mb-4">Your token has expired. Please log in again.</div>
-        )}
-        <button
-          onClick={() => {
-            setIsLoggingIn(true);
-            window.location.href = YAHOO_AUTH_URL;
-          }}
-          className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        >
-          Login with Yahoo
-        </button>
+    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+      <div style={{ marginBottom: '2rem' }}>
+        <Image
+          src="/MLBoss Logo.png"
+          alt="MLBoss Logo"
+          width={200}
+          height={0}
+          style={{ height: 'auto' }}
+          priority
+        />
       </div>
+      
+      {showError && (
+        <div style={{ marginBottom: '1rem', color: '#e53e3e', fontSize: '0.9rem' }}>
+          Your session has expired. Please log in again.
+        </div>
+      )}
+      
+      <button 
+        onClick={handleLogin} 
+        style={{ 
+          padding: '1rem 2rem', 
+          fontSize: '1.2rem', 
+          background: '#430297', 
+          color: 'white', 
+          border: 'none', 
+          borderRadius: '8px',
+          cursor: 'pointer',
+          transition: 'background 0.2s'
+        }}
+      >
+        Login with Yahoo
+      </button>
     </div>
   );
 } 

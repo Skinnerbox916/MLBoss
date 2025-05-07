@@ -209,9 +209,13 @@ export async function GET(req: NextRequest) {
         
         const players = rosterData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player || [];
         
-        // Processing players for games data would be verbose here,
-        // so we'll use a simple count approach based on the team roster API data
-        // This is reasonable since we've already implemented detailed game checks in the roster API
+        // Store player game times for later use
+        const playerGameTimes = new Map<string, string>();
+        const benchBattersWithGames: string[] = [];
+        const benchPitchersWithGames: string[] = [];
+        const benchPlayersWithGames: string[] = [];
+        let availableSwaps = 0;
+        const teamsWithGamesToday = new Set<string>();
         
         try {
           // Fetch the roster API which already contains game information
@@ -224,6 +228,30 @@ export async function GET(req: NextRequest) {
             
             teamObj.games_today = playersWithGames.length;
             console.log(`Team API: Found ${playersWithGames.length} players with games today`);
+            
+            // Collect player keys with games
+            for (const player of playersWithGames) {
+              if (player.player_key) {
+                playerGameTimes.set(player.player_key, 'today');
+                
+                // If this player is on the bench, add to available swaps
+                if (player.position === 'BN' && player.position_type === 'B') {
+                  availableSwaps++;
+                  benchBattersWithGames.push(player.name);
+                }
+                
+                // Track team for this player
+                if (player.editorial_team_key) {
+                  teamsWithGamesToday.add(player.editorial_team_key);
+                }
+              }
+            }
+            
+            teamObj.available_swaps = availableSwaps;
+            console.log(`Team API: Found ${availableSwaps} available swaps`);
+          } else {
+            console.error('Team API: Error fetching roster API:', rosterApiRes.status);
+            throw new Error(`Roster API returned ${rosterApiRes.status}`);
           }
         } catch (e) {
           console.error('Team API: Error fetching roster API data:', e);
@@ -243,8 +271,6 @@ export async function GET(req: NextRequest) {
             }
             
             // Count unique teams with games today
-            const teamsWithGamesToday = new Set<string>();
-            
             if (espnData?.events) {
               for (const event of espnData.events) {
                 if (event.competitions && event.competitions.length > 0) {
@@ -263,6 +289,83 @@ export async function GET(req: NextRequest) {
               }
             }
             
+            // If we still have no teams with games, try checking ESPN directly
+            if (teamsWithGamesToday.size === 0) {
+              console.log('Team API: No games found through player data, using ESPN API fallback');
+              
+              try {
+                // Load ESPN scoreboard data
+                if (!global.espnScoreboardData) {
+                  console.log('Team API: Fetching ESPN scoreboard as fallback for game data');
+                  const scoreboardRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard', {
+                    method: 'GET',
+                    headers: {
+                      'Accept': 'application/json',
+                      'Content-Type': 'application/json',
+                    },
+                    signal: AbortSignal.timeout(5000)
+                  });
+                  
+                  if (scoreboardRes.ok) {
+                    global.espnScoreboardData = await scoreboardRes.json();
+                    console.log('Team API: Successfully fetched ESPN scoreboard data');
+                  } else {
+                    console.error(`Team API: ESPN API returned ${scoreboardRes.status}`);
+                  }
+                }
+                
+                // Check ESPN data for teams with games today
+                if (global.espnScoreboardData?.events) {
+                  for (const event of global.espnScoreboardData.events) {
+                    if (event.competitions && event.competitions.length > 0) {
+                      const competition = event.competitions[0];
+                      
+                      for (const team of competition.competitors || []) {
+                        const teamAbbr = team.team?.abbreviation?.toUpperCase();
+                        
+                        // Find matching Yahoo team key for this ESPN team abbreviation
+                        for (const [yahooTeamKey, yahooTeamAbbr] of Array.from(teamAbbreviations.entries())) {
+                          if (yahooTeamAbbr.toUpperCase() === teamAbbr) {
+                            teamsWithGamesToday.add(yahooTeamKey);
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('Team API: Error fetching ESPN data:', e);
+              }
+            }
+            
+            // Now count bench players with games
+            for (const player of players) {
+              const position = player?.selected_position?.[0]?.position?.[0];
+              const teamKey = player?.editorial_team_key?.[0];
+              const playerKey = player?.player_key?.[0];
+              const playerName = player?.name?.[0]?.full?.[0] || 'Unknown';
+              // Only count batters for available swaps, not pitchers
+              const positionType = player?.position_type?.[0];
+              const isBatter = positionType === 'B'; // 'B' for batters, 'P' for pitchers
+              
+              // Check if player is on bench, is a batter, and their team has a game today
+              const hasGameByTime = playerKey && playerGameTimes.has(playerKey);
+              const hasGameByTeam = teamKey && teamsWithGamesToday.has(teamKey);
+              
+              if (position === 'BN' && (hasGameByTime || hasGameByTeam)) {
+                // Add to appropriate list
+                if (isBatter) {
+                  availableSwaps++;
+                  benchBattersWithGames.push(playerName);
+                  console.log(`Team API: Bench batter ${playerName} has a game today`);
+                } else {
+                  benchPitchersWithGames.push(playerName);
+                  console.log(`Team API: Bench pitcher ${playerName} has a game today (not counted in available swaps)`);
+                }
+                benchPlayersWithGames.push(playerName);
+              }
+            }
+            
             // Count the number of players with games today
             let gamesCount = 0;
             for (const player of players) {
@@ -273,7 +376,12 @@ export async function GET(req: NextRequest) {
             }
             
             teamObj.games_today = gamesCount;
+            teamObj.available_swaps = availableSwaps;
             console.log(`Team API: Found ${gamesCount} players with games today via ESPN data`);
+            console.log('Team API: Available swaps (batters only):', availableSwaps);
+            if (benchPitchersWithGames.length > 0) {
+              console.log('Team API: Bench pitchers with games (not counted):', benchPitchersWithGames);
+            }
           } catch (espnError) {
             console.error('Team API: Error using ESPN fallback:', espnError);
             teamObj.games_today = 0;
@@ -285,190 +393,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Cache the response data
-    await setCachedData(teamCacheKey, teamObj, { ttl: 15 * 60 }); // Cache for 15 minutes
-    
-    return NextResponse.json(teamObj);
-  } catch (error) {
-    console.error('Team API: Unhandled error:', error);
-    return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
-  }
-}
-        
-        // Fallback: If we couldn't determine games through player data,
-        // just check a few known MLB game times for today
-        if (teamsWithGamesToday.size === 0) {
-          console.log('Team API: No games found through player data, using ESPN API fallback');
-          
-          try {
-            // Load ESPN scoreboard data
-            if (!global.espnScoreboardData) {
-              console.log('Team API: Fetching ESPN scoreboard as fallback for game data');
-              const scoreboardRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard', {
-                method: 'GET',
-                headers: {
-                  'Accept': 'application/json',
-                  'Content-Type': 'application/json',
-                },
-                signal: AbortSignal.timeout(5000)
-              });
-              
-              if (scoreboardRes.ok) {
-                global.espnScoreboardData = await scoreboardRes.json();
-                console.log('Team API: Successfully fetched ESPN scoreboard data');
-              } else {
-                console.error(`Team API: ESPN API returned ${scoreboardRes.status}`);
-              }
-            }
-            
-            // Get all team abbreviations from players
-            const teamAbbreviations = new Map<string, string>();
-            for (const player of players) {
-              const teamKey = player?.editorial_team_key?.[0];
-              const teamAbbr = player?.editorial_team_abbr?.[0];
-              if (teamKey && teamAbbr) {
-                teamAbbreviations.set(teamKey, teamAbbr);
-              }
-            }
-            
-            // Check ESPN data for teams with games today
-            if (global.espnScoreboardData?.events) {
-              console.log('Team API: Checking ESPN data for teams with games today');
-              
-              // Create a mapping of team abbreviations for easier debugging
-              const teamAbbrevsDebug = Array.from(teamAbbreviations.entries())
-                .map(([key, abbr]) => `${key} => ${abbr}`)
-                .join(', ');
-              console.log(`Team API: Yahoo team key to abbreviation mapping: ${teamAbbrevsDebug}`);
-              
-              // Log ESPN teams for debugging
-              if (!global.espnDataLogged) {
-                const espnTeams = global.espnScoreboardData.events
-                  .flatMap((e: any) => e.competitions || [])
-                  .flatMap((c: any) => c.competitors || [])
-                  .map((t: any) => t.team?.abbreviation)
-                  .filter(Boolean);
-                
-                console.log(`Team API: ESPN API teams with games today: ${espnTeams.join(', ')}`);
-                global.espnDataLogged = true;
-              }
-              
-              for (const event of global.espnScoreboardData.events) {
-                if (event.competitions && event.competitions.length > 0) {
-                  const competition = event.competitions[0];
-                  
-                  // Log each matchup for debugging
-                  const matchupTeams = competition.competitors
-                    ?.map((t: any) => t.team?.abbreviation)
-                    .filter(Boolean)
-                    .join(' vs ');
-                  
-                  if (matchupTeams) {
-                    console.log(`Team API: ESPN game matchup: ${matchupTeams}`);
-                  }
-                  
-                  for (const team of competition.competitors || []) {
-                    const teamAbbr = team.team?.abbreviation?.toUpperCase();
-                    
-                    // Find matching Yahoo team key for this ESPN team abbreviation
-                    for (const [yahooTeamKey, yahooTeamAbbr] of Array.from(teamAbbreviations.entries())) {
-                      if (yahooTeamAbbr.toUpperCase() === teamAbbr) {
-                        teamsWithGamesToday.add(yahooTeamKey);
-                        console.log(`Team API: Found game for team ${yahooTeamAbbr} via ESPN API (matches ${teamAbbr})`);
-                      }
-                    }
-                  }
-                }
-              }
-              
-              if (teamsWithGamesToday.size === 0) {
-                console.log('Team API: No teams with games found in ESPN data');
-              }
-            }
-          } catch (e) {
-            console.error('Team API: Error fetching ESPN data:', e);
-          }
-          
-          // If ESPN API fallback also failed, try Yahoo league scoreboard
-          if (teamsWithGamesToday.size === 0) {
-            console.log('Team API: ESPN API fallback failed, trying Yahoo league scoreboard');
-            try {
-              const leagueUrl = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}/scoreboard;date=${today}`;
-              const leagueRes = await fetch(leagueUrl, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-              });
-              
-              if (leagueRes.ok) {
-                const leagueText = await leagueRes.text();
-                const leagueData = await new Promise<any>((resolve, reject) => {
-                  parseString(leagueText, (err: Error | null, result: any) => {
-                    if (err) reject(err);
-                    else resolve(result);
-                  });
-                });
-                
-                // Check if there are any games scheduled for today
-                const games = leagueData?.fantasy_content?.league?.[0]?.scoreboard?.[0]?.matchups?.[0]?.matchup || [];
-                console.log(`Team API: Found ${games.length} matchups in league scoreboard`);
-                
-                if (games.length > 0) {
-                  // There are games today, collect team keys
-                  console.log('Team API: Games found in Yahoo schedule');
-                  for (const player of players) {
-                    const teamKey = player?.editorial_team_key?.[0];
-                    if (teamKey) {
-                      teamsWithGamesToday.add(teamKey);
-                    }
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Team API: Error fetching league scoreboard:', e);
-            }
-          }
-        }
-
-        // Now count bench players with games
-        for (const player of players) {
-          const position = player?.selected_position?.[0]?.position?.[0];
-          const teamKey = player?.editorial_team_key?.[0];
-          const playerKey = player?.player_key?.[0];
-          const playerName = player?.name?.[0]?.full?.[0] || 'Unknown';
-          // Only count batters for available swaps, not pitchers
-          const positionType = player?.position_type?.[0];
-          const isBatter = positionType === 'B'; // 'B' for batters, 'P' for pitchers
-          
-          // Check if player is on bench, is a batter, and their team has a game today
-          const hasGameByTime = playerKey && playerGameTimes.has(playerKey);
-          const hasGameByTeam = teamKey && teamsWithGamesToday.has(teamKey);
-          
-          if (position === 'BN' && (hasGameByTime || hasGameByTeam)) {
-            // Add to appropriate list
-            if (isBatter) {
-              availableSwaps++;
-              benchBattersWithGames.push(playerName);
-              console.log(`Team API: Bench batter ${playerName} has a game today`);
-            } else {
-              benchPitchersWithGames.push(playerName);
-              console.log(`Team API: Bench pitcher ${playerName} has a game today (not counted in available swaps)`);
-            }
-            benchPlayersWithGames.push(playerName);
-          }
-        }
-
-        teamObj.games_today = teamsWithGamesToday.size;
-        teamObj.available_swaps = availableSwaps;
-        console.log('Team API: Teams with games today:', Array.from(teamsWithGamesToday));
-        console.log('Team API: Available swaps (batters only):', availableSwaps, 'Bench batters with games:', benchBattersWithGames);
-        if (benchPitchersWithGames.length > 0) {
-          console.log('Team API: Bench pitchers with games (not counted):', benchPitchersWithGames);
-        }
-      } catch (e) {
-        console.error('Team API: Error fetching games:', e);
-      }
-    }
-
-    // Fetch current matchup
+    // Step 8: Fetch current matchup
     if (leagueKey && teamKey) {
       try {
         // Get current week and league name
@@ -595,7 +520,6 @@ export async function GET(req: NextRequest) {
                     }
                   }
                   console.log('Team API: Used categories from settings:', statCategories.length);
-                  // Now we have the categories, continue with the rest of the code
                 }
               }
             } catch (e) {
@@ -723,6 +647,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Cache the response data
+    await setCachedData(teamCacheKey, teamObj, { ttl: 15 * 60 }); // Cache for 15 minutes
+    
     // Return the team object, always
     console.log('Team API: Final team object:', teamObj);
     return NextResponse.json({ team: teamObj });

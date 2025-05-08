@@ -1,7 +1,8 @@
 // Minimal Yahoo OAuth client-side helpers
-export const YAHOO_CLIENT_ID = 'dj0yJmk9eUFSWTNWZW9GWFFVJmQ9WVdrOWRYVkVaazF3TWswbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTk5';
-export const YAHOO_CLIENT_SECRET = '5dba8ae54c5ff474f54f511047ef48fab1084a35';
-export const YAHOO_REDIRECT_URI = 'https://mlboss.skibri.us/api/auth/callback';
+// App ID: 2yZewwq0 (NOT used in OAuth flow)
+export const YAHOO_CLIENT_ID = 'dj0yJmk9dWZ4NW1yb1lsVXJ6JmQ9WVdrOU1ubGFaWGQzY1RBbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTRi';
+export const YAHOO_CLIENT_SECRET = '3ec2cbb9c20965cdaf99f98c2d8cd9e558cd9d8c';
+export const YAHOO_REDIRECT_URI = 'https://dev-tunnel.skibri.us/api/auth/callback';
 
 // Generate a random state parameter for CSRF protection
 export function generateState() {
@@ -33,4 +34,4 @@ export function deleteClientCookie(name: string) {
 }
 
 export const YAHOO_AUTH_URL = (state: string, forceLogin: boolean = false) =>
-  `https://api.login.yahoo.com/oauth2/request_auth?client_id=${YAHOO_CLIENT_ID}&redirect_uri=${encodeURIComponent(YAHOO_REDIRECT_URI)}&response_type=code&scope=openid%20fspt-w&state=${state}${forceLogin ? '&prompt=login' : ''}`; 
+  `https://api.login.yahoo.com/oauth2/request_auth?client_id=${YAHOO_CLIENT_ID}&redirect_uri=${encodeURIComponent(YAHOO_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent('fspt-w')}&state=${state}${forceLogin ? '&prompt=login' : ''}`; 

@@ -9,12 +9,25 @@ function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [showError, setShowError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
     const error = searchParams.get('error');
-    if (error === 'token_expired') {
+    const message = searchParams.get('message');
+    
+    if (error) {
       setShowError(true);
+      
+      if (error === 'invalid_scope') {
+        setErrorMessage(message || 'Yahoo API scope permission error. Please try again or contact support.');
+      } else if (error === 'state_mismatch') {
+        setErrorMessage('Authentication session error. Please try again.');
+      } else if (error === 'token_expired') {
+        setErrorMessage('Your session has expired. Please log in again.');
+      } else {
+        setErrorMessage(`Authentication error: ${error}. Please try again.`);
+      }
     }
   }, [searchParams]);
 
@@ -22,7 +35,26 @@ function HomeContent() {
     console.log("Login button clicked");
     const state = generateState();
     console.log("Generated state:", state);
-    setClientCookie('yahoo_state', state, { path: '/', secure: false, sameSite: 'lax' });
+    // Set secure flag for Production, update path and sameSite
+    setClientCookie('yahoo_state', state, { path: '/', secure: true, sameSite: 'strict' });
+    
+    // Create a server-side copy of the state for verification
+    fetch('/api/auth/state', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ state }),
+    }).then(response => {
+      if (!response.ok) {
+        console.error('Failed to save state on server-side');
+      } else {
+        console.log('State saved on server-side');
+      }
+    }).catch(err => {
+      console.error('Error saving state:', err);
+    });
+    
     console.log("Cookie set");
     const forceLogin = searchParams.get('forceLogin') === '1';
     const authUrl = YAHOO_AUTH_URL(state, forceLogin);
@@ -56,8 +88,8 @@ function HomeContent() {
       </div>
       
       {showError && (
-        <div style={{ marginBottom: '1rem', color: '#e53e3e', fontSize: '0.9rem' }}>
-          Your session has expired. Please log in again.
+        <div style={{ marginBottom: '1rem', color: '#e53e3e', fontSize: '0.9rem', maxWidth: '80%', textAlign: 'center' }}>
+          {errorMessage}
         </div>
       )}
       

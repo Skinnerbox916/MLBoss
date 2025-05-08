@@ -527,15 +527,13 @@ export default function Dashboard() {
               </div>
             )}
 
-            {loading ? (
-              <div className="p-4">
-                <SkeletonTeamInfo />
-              </div>
-            ) : teamData ? (
-              <div className="p-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-                  {/* Left Column - Basic Team Info */}
-                  <div>
+            <div className="p-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                {/* Left Column - Basic Team Info */}
+                <div>
+                  {loading ? (
+                    <SkeletonTeamInfo />
+                  ) : teamData ? (
                     <div className="flex items-center">
                       {teamData.team_logo && (
                         <img 
@@ -576,94 +574,102 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="text-gray-500">
+                      Team information not available.
+                    </div>
+                  )}
+                </div>
 
-                  {/* Middle Column - Team Stats */}
-                  <div className="flex flex-row items-center justify-center h-full gap-6">
-                    <div className="text-center">
-                      <span className="block text-gray-700 font-medium text-xs">Waiver Priority</span>
-                      <span className="block text-lg font-bold text-gray-900">{teamData.waiver_priority || '-'}</span>
+                {/* Middle Column - Team Stats */}
+                <div className="flex flex-row items-center justify-center h-full gap-6">
+                  {teamData ? (
+                    <>
+                      <div className="text-center">
+                        <span className="block text-gray-700 font-medium text-xs">Waiver Priority</span>
+                        <span className="block text-lg font-bold text-gray-900">{teamData.waiver_priority || '-'}</span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-gray-700 font-medium text-xs">Weekly Adds</span>
+                        <span className="block text-lg font-bold text-gray-900">{teamData.moves_used} of {teamData.moves_limit}</span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block text-gray-700 font-medium text-xs">Available Swaps</span>
+                        <span className="block text-lg font-bold text-gray-900">{teamData.available_swaps || 0}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center text-gray-500">
+                      Stats not available
                     </div>
-                    <div className="text-center">
-                      <span className="block text-gray-700 font-medium text-xs">Weekly Adds</span>
-                      <span className="block text-lg font-bold text-gray-900">{teamData.moves_used} of {teamData.moves_limit}</span>
-                    </div>
-                    <div className="text-center">
-                      <span className="block text-gray-700 font-medium text-xs">Available Swaps</span>
-                      <span className="block text-lg font-bold text-gray-900">{teamData.available_swaps || 0}</span>
-                    </div>
-                  </div>
+                  )}
+                </div>
 
-                  {/* Right Column - Account Menu */}
-                  <div className="flex justify-end relative">
-                    <div className="dropdown inline-block relative">
-                      <button className="bg-white hover:bg-gray-100 text-gray-700 font-medium rounded-md border border-gray-200 shadow-sm py-2 px-3 inline-flex items-center">
-                        <span className="mr-1">Account</span>
-                        <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                          <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/> 
-                        </svg>
-                      </button>
-                      <ul className="dropdown-menu absolute hidden text-gray-700 pt-1 right-0 w-40 z-10">
-                        <li>
-                          <Link 
-                            href="/admin"
-                            className="rounded-t bg-white hover:bg-gray-100 py-2 px-4 block whitespace-no-wrap w-full text-left border border-gray-200 border-b-0 shadow-sm flex items-center"
+                {/* Right Column - Account Menu - Always visible */}
+                <div className="flex justify-end relative">
+                  <div className="dropdown inline-block relative">
+                    <button className="bg-white hover:bg-gray-100 text-gray-700 font-medium rounded-md border border-gray-200 shadow-sm py-2 px-3 inline-flex items-center">
+                      <span className="mr-1">Account</span>
+                      <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/> 
+                      </svg>
+                    </button>
+                    <ul className="dropdown-menu absolute hidden text-gray-700 pt-1 right-0 w-40 z-10">
+                      <li>
+                        <Link 
+                          href="/admin"
+                          className="rounded-t bg-white hover:bg-gray-100 py-2 px-4 block whitespace-no-wrap w-full text-left border border-gray-200 border-b-0 shadow-sm flex items-center"
+                        >
+                          <svg 
+                            xmlns="http://www.w3.org/2000/svg" 
+                            className="h-4 w-4 mr-2" 
+                            fill="none" 
+                            viewBox="0 0 24 24" 
+                            stroke="currentColor"
                           >
-                            <svg 
-                              xmlns="http://www.w3.org/2000/svg" 
-                              className="h-4 w-4 mr-2" 
-                              fill="none" 
-                              viewBox="0 0 24 24" 
-                              stroke="currentColor"
-                            >
-                              <path 
-                                strokeLinecap="round" 
-                                strokeLinejoin="round" 
-                                strokeWidth={2} 
-                                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" 
-                              />
-                              <path 
-                                strokeLinecap="round" 
-                                strokeLinejoin="round" 
-                                strokeWidth={2} 
-                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" 
-                              />
-                            </svg>
-                            Admin Console
-                          </Link>
-                        </li>
-                        <li>
-                          <button
-                            onClick={handleLogout}
-                            className="rounded-b bg-white hover:bg-gray-100 py-2 px-4 block whitespace-no-wrap w-full text-left border border-gray-200 shadow-sm text-red-600 font-medium flex items-center"
+                            <path 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              strokeWidth={2} 
+                              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" 
+                            />
+                            <path 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              strokeWidth={2} 
+                              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" 
+                            />
+                          </svg>
+                          Admin Console
+                        </Link>
+                      </li>
+                      <li>
+                        <button
+                          onClick={handleLogout}
+                          className="rounded-b bg-white hover:bg-gray-100 py-2 px-4 block whitespace-no-wrap w-full text-left border border-gray-200 shadow-sm text-red-600 font-medium flex items-center"
+                        >
+                          <svg 
+                            xmlns="http://www.w3.org/2000/svg" 
+                            className="h-4 w-4 mr-2" 
+                            fill="none" 
+                            viewBox="0 0 24 24" 
+                            stroke="currentColor"
                           >
-                            <svg 
-                              xmlns="http://www.w3.org/2000/svg" 
-                              className="h-4 w-4 mr-2" 
-                              fill="none" 
-                              viewBox="0 0 24 24" 
-                              stroke="currentColor"
-                            >
-                              <path 
-                                strokeLinecap="round" 
-                                strokeLinejoin="round" 
-                                strokeWidth={2} 
-                                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" 
-                              />
-                            </svg>
-                            Log Out
-                          </button>
-                        </li>
-                      </ul>
-                    </div>
+                            <path 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              strokeWidth={2} 
+                              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" 
+                            />
+                          </svg>
+                          Log Out
+                        </button>
+                      </li>
+                    </ul>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="p-4 text-gray-500">
-                Team information not available.
-              </div>
-            )}
+            </div>
           </div>
 
           <div className="p-8">

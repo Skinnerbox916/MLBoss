@@ -10,27 +10,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No state provided' }, { status: 400 });
     }
     
-    // Store state in a server-side cookie with less restrictive settings
-    cookies().set('yahoo_state', state, { 
+    // Store state in a server-side cookie with settings that will persist across redirects
+    const cookieStore = cookies();
+    cookieStore.set('yahoo_state', state, { 
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // Only secure in production
+      secure: true, // Always use secure for OAuth flows
       path: '/',
       maxAge: 600, // 10 minutes
-      sameSite: 'lax'
+      sameSite: 'lax' // Important for OAuth redirects
     });
     
     console.log('Server-side state saved:', state);
     
-    // Also set in the response for better persistence
-    const response = NextResponse.json({ success: true });
-    response.cookies.set('yahoo_state', state, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: 600
-    });
-    
-    return response;
+    // Return the state in the response for confirmation
+    return NextResponse.json({ success: true, state });
   } catch (error) {
     console.error('Error saving state:', error);
     return NextResponse.json({ error: 'Failed to save state' }, { status: 500 });

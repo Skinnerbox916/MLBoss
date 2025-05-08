@@ -1,9 +1,14 @@
 import Redis from 'ioredis';
 
 // Set default cache durations
-const DEFAULT_CACHE_TTL = 15 * 60; // 15 minutes
-const GAME_DATA_CACHE_TTL = 60 * 60; // 1 hour
-const TEAM_DATA_CACHE_TTL = 24 * 60 * 60; // 24 hours
+const DEFAULT_CACHE_TTL = parseInt(process.env.DEFAULT_CACHE_TTL || '900', 10); // 15 minutes
+const GAME_DATA_CACHE_TTL = parseInt(process.env.GAME_DATA_CACHE_TTL || '3600', 10); // 1 hour
+const TEAM_DATA_CACHE_TTL = parseInt(process.env.TEAM_DATA_CACHE_TTL || '86400', 10); // 24 hours
+
+// Data category TTLs
+const STATIC_DATA_TTL = parseInt(process.env.STATIC_DATA_TTL || '86400', 10); // 24 hours - player teams, positions, etc.
+const DAILY_DATA_TTL = parseInt(process.env.DAILY_DATA_TTL || '43200', 10); // 12 hours - probable pitchers, matchups, etc.
+const REALTIME_DATA_TTL = parseInt(process.env.REALTIME_DATA_TTL || '900', 10); // 15 minutes - stats, scores, etc.
 
 // Environment variables with fallbacks for local development
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -13,7 +18,7 @@ const CACHE_ENABLED = process.env.CACHE_ENABLED !== 'false';
 let redisClient: Redis | null = null;
 
 // Initialize Redis client
-const getRedisClient = (): Redis | null => {
+export const getRedisClient = (): Redis | null => {
   if (!CACHE_ENABLED) {
     return null;
   }
@@ -55,6 +60,7 @@ const getRedisClient = (): Redis | null => {
 interface CacheOptions {
   ttl?: number;
   allowStale?: boolean;
+  category?: 'static' | 'daily' | 'realtime'; // Add data category option
 }
 
 /**
@@ -109,9 +115,27 @@ export async function setCachedData<T>(
   if (!redis) return;
   
   try {
-    // Default TTL based on key prefix
+    // Default TTL based on data category or key prefix
     let ttl = DEFAULT_CACHE_TTL;
-    if (key.startsWith('game:')) {
+    
+    // First check for category-based TTL
+    if (options.category) {
+      if (options.category === 'static') {
+        ttl = STATIC_DATA_TTL;
+      } else if (options.category === 'daily') {
+        ttl = DAILY_DATA_TTL;
+      } else if (options.category === 'realtime') {
+        ttl = REALTIME_DATA_TTL;
+      }
+    } 
+    // Fall back to key prefix-based TTL if no category
+    else if (key.startsWith('static:')) {
+      ttl = STATIC_DATA_TTL;
+    } else if (key.startsWith('daily:')) {
+      ttl = DAILY_DATA_TTL;
+    } else if (key.startsWith('realtime:')) {
+      ttl = REALTIME_DATA_TTL;
+    } else if (key.startsWith('game:')) {
       ttl = GAME_DATA_CACHE_TTL;
     } else if (key.startsWith('team:')) {
       ttl = TEAM_DATA_CACHE_TTL;
@@ -126,14 +150,15 @@ export async function setCachedData<T>(
     const meta = {
       createdAt: Date.now(),
       expiresAt: Date.now() + ttl * 1000,
-      ttl
+      ttl,
+      category: options.category // Store category in metadata
     };
     
     // Store data and metadata
     await redis.set(`data:${key}`, JSON.stringify(data), 'EX', ttl);
     await redis.set(`meta:${key}`, JSON.stringify(meta), 'EX', ttl);
     
-    console.log(`Cache: Set for key ${key} with TTL ${ttl}s`);
+    console.log(`Cache: Set for key ${key} with TTL ${ttl}s${options.category ? ` (${options.category})` : ''}`);
   } catch (error) {
     console.error(`Cache: Error setting data for key ${key}:`, error);
   }
@@ -182,13 +207,22 @@ export async function clearCacheByPrefix(prefix: string): Promise<void> {
  * Generate a cache key for Yahoo API requests
  * @param endpoint Yahoo API endpoint
  * @param params Additional parameters
+ * @param category Optional data category prefix
  * @returns Cache key
  */
-export function generateYahooCacheKey(endpoint: string, params: Record<string, string> = {}): string {
+export function generateYahooCacheKey(
+  endpoint: string, 
+  params: Record<string, string> = {},
+  category?: 'static' | 'daily' | 'realtime'
+): string {
   const sortedParams = Object.entries(params)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
     .join('&');
     
+  if (category) {
+    return `${category}:yahoo:${endpoint}${sortedParams ? `:${sortedParams}` : ''}`;
+  }
+  
   return `yahoo:${endpoint}${sortedParams ? `:${sortedParams}` : ''}`;
 } 

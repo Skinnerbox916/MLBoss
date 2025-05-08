@@ -9,6 +9,7 @@ interface ApiOptions {
   ttl?: number;
   skipCache?: boolean;
   timeout?: number;
+  category?: 'static' | 'daily' | 'realtime'; // Add data category option
 }
 
 /**
@@ -26,12 +27,15 @@ export async function fetchYahooApi<T>(
     throw new Error('Not authenticated');
   }
 
-  // Generate cache key from endpoint
-  const cacheKey = generateYahooCacheKey(endpoint);
+  // Generate cache key from endpoint, respecting the category if provided
+  const cacheKey = generateYahooCacheKey(endpoint, {}, options.category);
 
   // Try to get from cache unless skipCache is true
   if (!options.skipCache) {
-    const cachedData = await getCachedData<T>(cacheKey, { ttl: options.ttl });
+    const cachedData = await getCachedData<T>(cacheKey, { 
+      ttl: options.ttl,
+      category: options.category // Pass through the category
+    });
     if (cachedData) {
       return cachedData;
     }
@@ -67,7 +71,10 @@ export async function fetchYahooApi<T>(
 
   // Cache the response
   if (!options.skipCache) {
-    await setCachedData(cacheKey, responseData, { ttl: options.ttl });
+    await setCachedData(cacheKey, responseData, { 
+      ttl: options.ttl,
+      category: options.category // Pass through the category
+    });
   }
 
   return responseData;
@@ -93,7 +100,11 @@ export async function parseYahooXml<T>(xmlText: string): Promise<T> {
  */
 export async function getYahooMlbGameId(): Promise<string> {
   const gameUrl = 'https://fantasysports.yahooapis.com/fantasy/v2/game/mlb';
-  const gameData = await fetchYahooApi<any>(gameUrl, { ttl: 24 * 60 * 60 }); // Cache for 24 hours
+  // This is static data that rarely changes - use static category
+  const gameData = await fetchYahooApi<any>(gameUrl, { 
+    category: 'static',
+    ttl: 24 * 60 * 60 // Fallback TTL in case category doesn't work
+  });
   
   const gameId = gameData?.fantasy_content?.game?.[0]?.game_id?.[0];
   if (!gameId) {
@@ -110,7 +121,11 @@ export async function getYahooMlbGameId(): Promise<string> {
  */
 export async function getYahooTeamKey(gameId: string): Promise<string> {
   const teamUrl = `https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=${gameId}/teams`;
-  const teamData = await fetchYahooApi<any>(teamUrl, { ttl: 60 * 60 }); // Cache for 1 hour
+  // Team assignment data changes daily - use daily category
+  const teamData = await fetchYahooApi<any>(teamUrl, {
+    category: 'daily',
+    ttl: 60 * 60 // Cache for 1 hour as fallback
+  });
   
   const teamKey = teamData?.fantasy_content?.users?.[0]?.user?.[0]?.games?.[0]?.game?.[0]?.teams?.[0]?.team?.[0]?.team_key?.[0];
   if (!teamKey) {
@@ -142,10 +157,11 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
   try {
     // Try the primary stats endpoint
     const playerUrl = `https://fantasysports.yahooapis.com/fantasy/v2/player/${playerKey}/stats;type=date;date=${today}`;
-    const cacheKey = generateYahooCacheKey('player_game_info', { playerKey, date: today });
+    // Game information is realtime data - use realtime category
+    const cacheKey = generateYahooCacheKey('player_game_info', { playerKey, date: today }, 'realtime');
     
     // Check cache first
-    const cachedData = await getCachedData<any>(cacheKey);
+    const cachedData = await getCachedData<any>(cacheKey, { category: 'realtime' });
     if (cachedData) {
       return cachedData;
     }
@@ -164,7 +180,10 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
         game_start_time: coverageStart,
         data_source: 'yahoo'
       };
-      await setCachedData(cacheKey, result, { ttl: 60 * 15 }); // Cache for 15 minutes
+      await setCachedData(cacheKey, result, { 
+        category: 'realtime',
+        ttl: 60 * 15 // Cache for 15 minutes as fallback
+      });
       return result;
     }
     

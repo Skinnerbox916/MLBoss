@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { YAHOO_AUTH_URL, generateState, setClientCookie } from './utils/auth';
+import { YAHOO_AUTH_URL, generateState, setClientCookie, getClientCookie } from './utils/auth';
 import Image from 'next/image';
 
 // Component that uses useSearchParams
@@ -31,46 +31,54 @@ function HomeContent() {
     }
   }, [searchParams]);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     console.log("Login button clicked");
+    setIsLoggingIn(true);
+    
     const state = generateState();
     console.log("Generated state:", state);
-    // Set secure flag for Production, update path and sameSite
-    setClientCookie('yahoo_state', state, { path: '/', secure: true, sameSite: 'strict' });
     
-    // Create a server-side copy of the state for verification
-    fetch('/api/auth/state', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ state }),
-    }).then(response => {
-      if (!response.ok) {
-        console.error('Failed to save state on server-side');
-      } else {
-        console.log('State saved on server-side');
-      }
-    }).catch(err => {
-      console.error('Error saving state:', err);
-    });
-    
-    console.log("Cookie set");
-    const forceLogin = searchParams.get('forceLogin') === '1';
-    const authUrl = YAHOO_AUTH_URL(state, forceLogin);
-    console.log("Auth URL:", authUrl);
+    // Set in client-side cookie first
+    setClientCookie('yahoo_state', state, { path: '/', secure: true, sameSite: 'lax' });
+    console.log("Client cookie set");
     
     try {
-      // Try using window.open as an alternative
-      const opened = window.open(authUrl, '_self');
-      if (!opened) {
-        console.error("Failed to open window. Trying location.href instead");
-        window.location.href = authUrl;
+      // Create a server-side copy of the state for verification
+      const stateResponse = await fetch('/api/auth/state', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ state }),
+      });
+      
+      if (!stateResponse.ok) {
+        console.error('Failed to save state on server-side:', await stateResponse.text());
+        setShowError(true);
+        setErrorMessage('Failed to initialize authentication. Please try again.');
+        setIsLoggingIn(false);
+        return;
       }
+      
+      const stateData = await stateResponse.json();
+      console.log('Server state response:', stateData);
+      
+      // Double-check we have the state value
+      const storedState = getClientCookie('yahoo_state');
+      console.log('State cookie verification:', storedState === state);
+      
+      const forceLogin = searchParams.get('forceLogin') === '1';
+      const authUrl = YAHOO_AUTH_URL(state, forceLogin);
+      console.log("Auth URL:", authUrl);
+      
+      // Navigate to Yahoo auth
+      window.location.href = authUrl;
+      
     } catch (err) {
-      console.error("Error redirecting:", err);
-      // Fallback to a direct link
-      alert("Please click OK and check the console for errors. If redirect fails, manually copy the auth URL from the console.");
+      console.error("Error in login process:", err);
+      setShowError(true);
+      setErrorMessage('An error occurred starting authentication. Please try again.');
+      setIsLoggingIn(false);
     }
   };
 

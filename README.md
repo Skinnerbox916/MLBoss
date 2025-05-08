@@ -26,6 +26,11 @@ DEFAULT_CACHE_TTL=900        # 15 minutes
 GAME_DATA_CACHE_TTL=3600     # 1 hour
 TEAM_DATA_CACHE_TTL=86400    # 24 hours
 
+# Data category TTLs (in seconds)
+STATIC_DATA_TTL=86400        # 24 hours
+DAILY_DATA_TTL=43200         # 12 hours
+REALTIME_DATA_TTL=900        # 15 minutes
+
 # Yahoo API configuration
 YAHOO_CLIENT_ID=your_client_id
 YAHOO_CLIENT_SECRET=your_client_secret
@@ -58,11 +63,19 @@ docker run -d -p 6379:6379 --name mlboss-redis redis
 
 The caching system uses different TTLs based on the type of data:
 
+#### Legacy Key-Based TTLs:
 - Default: 15 minutes
 - Game data (scores, schedules): 1 hour
 - Team data (roster, standings): 24 hours
 
-These can be configured through environment variables.
+#### Data Category TTLs:
+The application is transitioning to a more semantic caching approach based on data characteristics:
+
+- Static data (24 hours): Rarely changing information like player team affiliations and positions
+- Daily data (12 hours): Information that changes daily like probable pitchers and weekly matchups
+- Realtime data (15 minutes): Frequently changing information like scores, stats, and player status
+
+API requests can specify the data category when caching responses, allowing more appropriate TTL selection based on data type rather than endpoint.
 
 ## Getting Started
 

@@ -78,10 +78,10 @@ export async function GET(req: NextRequest) {
     const today = new Date().toISOString().split('T')[0];
     
     // Generate cache key for the roster data
-    const rosterCacheKey = generateYahooCacheKey('roster', { date: today });
+    const rosterCacheKey = generateYahooCacheKey('roster', { date: today }, 'daily');
     
     // Check if we have cached roster data
-    const cachedRoster = await getCachedData<any>(rosterCacheKey);
+    const cachedRoster = await getCachedData<any>(rosterCacheKey, { category: 'daily' });
     if (cachedRoster) {
       console.log('Roster API: Returning cached roster data');
       return NextResponse.json(cachedRoster);
@@ -195,11 +195,11 @@ export async function GET(req: NextRequest) {
     }));
 
     // Step 5: Fetch probable pitchers for today to indicate who's starting
-    const probablePitchersCacheKey = 'probable_pitchers';
+    const probablePitchersCacheKey = generateYahooCacheKey('probable_pitchers', { date: today }, 'daily');
     let pitchersScheduledToday: string[] = [];
     
     // Check cache for probable pitchers
-    const cachedPitchers = await getCachedData<string[]>(probablePitchersCacheKey);
+    const cachedPitchers = await getCachedData<string[]>(probablePitchersCacheKey, { category: 'daily' });
     if (cachedPitchers) {
       pitchersScheduledToday = cachedPitchers;
       console.log('Roster API: Using cached probable pitchers:', pitchersScheduledToday.length);
@@ -212,7 +212,10 @@ export async function GET(req: NextRequest) {
           pitchersScheduledToday = pitchersData.pitchers || [];
           
           // Cache the probable pitchers for 4 hours
-          await setCachedData(probablePitchersCacheKey, pitchersScheduledToday, { ttl: 4 * 60 * 60 });
+          await setCachedData(probablePitchersCacheKey, pitchersScheduledToday, { 
+            category: 'daily',
+            ttl: 4 * 60 * 60 
+          });
           
           console.log('Roster API: Fetched probable pitchers:', pitchersScheduledToday.length);
         } else {
@@ -259,7 +262,10 @@ export async function GET(req: NextRequest) {
     };
 
     // Cache the response
-    await setCachedData(rosterCacheKey, response, { ttl: 15 * 60 }); // Cache for 15 minutes
+    await setCachedData(rosterCacheKey, response, { 
+      category: 'daily',
+      ttl: 15 * 60 
+    });
     
     // Return the response
     return NextResponse.json(response);

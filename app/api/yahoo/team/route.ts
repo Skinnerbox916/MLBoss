@@ -55,10 +55,10 @@ export async function GET(req: NextRequest) {
     const today = new Date().toISOString().split('T')[0];
     
     // Generate cache key for team data
-    const teamCacheKey = generateYahooCacheKey('team_data', { date: today });
+    const teamCacheKey = generateYahooCacheKey('team_data', { date: today }, 'daily');
     
     // Check if we have cached team data
-    const cachedTeamData = await getCachedData<any>(teamCacheKey);
+    const cachedTeamData = await getCachedData<any>(teamCacheKey, { category: 'daily' });
     if (cachedTeamData) {
       console.log('Team API: Returning cached team data');
       return NextResponse.json(cachedTeamData);
@@ -647,7 +647,10 @@ export async function GET(req: NextRequest) {
     }
 
     // Cache the response data
-    await setCachedData(teamCacheKey, teamObj, { ttl: 15 * 60 }); // Cache for 15 minutes
+    await setCachedData(teamCacheKey, teamObj, { 
+      category: 'daily',  // Team data changes daily, so use daily category
+      ttl: 15 * 60  // Still keep a 15-minute TTL as a fallback
+    });
     
     // Return the team object, always
     console.log('Team API: Final team object:', teamObj);

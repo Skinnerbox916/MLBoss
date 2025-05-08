@@ -84,6 +84,13 @@ export async function GET(req: NextRequest) {
     const cachedRoster = await getCachedData<any>(rosterCacheKey, { category: 'daily' });
     if (cachedRoster) {
       console.log('Roster API: Returning cached roster data');
+      console.log('Roster API: Cached roster data structure:', {
+        dataType: typeof cachedRoster,
+        keys: typeof cachedRoster === 'object' ? Object.keys(cachedRoster) : [],
+        hasPlayers: typeof cachedRoster === 'object' && 'players' in cachedRoster,
+        playersLength: typeof cachedRoster === 'object' && 'players' in cachedRoster ? cachedRoster.players.length : 0
+      });
+      
       return NextResponse.json(cachedRoster);
     }
 
@@ -114,18 +121,20 @@ export async function GET(req: NextRequest) {
     let yahooData: any;
     try {
       // Use our new fetch utility for caching
-      yahooData = await fetchYahooApi<YahooResponse>(rosterUrl);
+      yahooData = await fetchYahooApi<YahooResponse>(rosterUrl, {
+        category: 'daily' // Roster data changes daily
+      });
       console.log('Roster API: Successfully fetched and parsed Yahoo roster data');
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Roster API: Error fetching roster:', error);
-      if (error.message?.includes('401')) {
+      if (error instanceof Error && error.message?.includes('401')) {
         return NextResponse.json({ error: 'Token expired' }, { status: 401 });
       }
       return NextResponse.json({ error: 'Failed to fetch Yahoo roster data' }, { status: 500 });
     }
 
     // Extract players from the response with more detailed status handling
-    const players = yahooData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player?.map(player => {
+    const players = yahooData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player?.map((player: any) => {
       // Special handling for status field
       let status = '';
       if (player.status && player.status.length > 0) {
@@ -154,8 +163,12 @@ export async function GET(req: NextRequest) {
     }) || [];
 
     // Step 4: For each player, fetch their game information
-    const playersWithGameInfo = await Promise.all(players.map(async player => {
-      let gameInfo = {
+    const playersWithGameInfo = await Promise.all(players.map(async (player: any) => {
+      let gameInfo: {
+        has_game_today: boolean;
+        game_start_time: string | null;
+        data_source: string;
+      } = {
         has_game_today: false,
         game_start_time: null,
         data_source: 'none'
@@ -206,7 +219,7 @@ export async function GET(req: NextRequest) {
     } else {
       try {
         // Fetch probable pitchers from MLB API
-        const pitchersRes = await fetch('/api/mlb/probable-pitchers');
+        const pitchersRes = await fetch(new URL('/api/mlb/probable-pitchers', req.nextUrl.origin).toString());
         if (pitchersRes.ok) {
           const pitchersData = await pitchersRes.json();
           pitchersScheduledToday = pitchersData.pitchers || [];
@@ -252,25 +265,28 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Prepare the response
-    const response = {
+    // Create a properly structured response
+    const result = {
       date: today,
       team_key: teamKey,
       players: playersWithStartingInfo,
       cached: false,
       generated_at: new Date().toISOString()
     };
-
-    // Cache the response
-    await setCachedData(rosterCacheKey, response, { 
-      category: 'daily',
-      ttl: 15 * 60 
+    
+    // Cache the processed roster data
+    await setCachedData(rosterCacheKey, result, { 
+      category: 'daily', 
+      ttl: 60 * 60 // Cache for 1 hour
     });
     
     // Return the response
-    return NextResponse.json(response);
-  } catch (error) {
+    return NextResponse.json(result);
+  } catch (error: unknown) {
     console.error('Roster API: Unhandled error:', error);
-    return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
+    return NextResponse.json({ 
+      error: 'Internal server error', 
+      details: error instanceof Error ? error.message : String(error) 
+    }, { status: 500 });
   }
 }

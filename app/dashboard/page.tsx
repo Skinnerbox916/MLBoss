@@ -118,6 +118,16 @@ export default function Dashboard() {
         const teamRes = await fetch('/api/yahoo/team');
         const teamData = await teamRes.json();
         
+        // Debug logs
+        console.log('Raw teamData response:', teamData);
+        console.log('teamData structure:', {
+          hasTeamProperty: 'team' in teamData,
+          teamPropertyType: teamData.team ? typeof teamData.team : 'undefined',
+          isTeamObject: teamData.team && typeof teamData.team === 'object',
+          topLevelKeys: Object.keys(teamData),
+          teamKeys: teamData.team ? Object.keys(teamData.team) : []
+        });
+        
         if (teamData.error) {
           setError(teamData.error);
           setLoading(false);
@@ -177,6 +187,12 @@ export default function Dashboard() {
 
   // Extract team data from the new API response
   const teamData = rawData?.team;
+  
+  // Add defensive rendering code - this function ensures we can safely access teamData properties
+  const getTeamProperty = (property: string, fallback: any = null) => {
+    if (!teamData) return fallback;
+    return teamData[property] !== undefined ? teamData[property] : fallback;
+  };
 
   // Function to render player status icon with more robust checks
   const renderPlayerStatus = (player: Player) => {    
@@ -544,12 +560,12 @@ export default function Dashboard() {
                       )}
                       <div>
                         <a 
-                          href={teamData.url} 
+                          href={getTeamProperty('url', '#')} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-xl font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1 font-oswald"
                         >
-                          {teamData.name || 'Team Name'}
+                          {getTeamProperty('name', 'Team Name')}
                           <svg 
                             xmlns="http://www.w3.org/2000/svg" 
                             className="h-4 w-4 text-gray-400" 
@@ -566,11 +582,11 @@ export default function Dashboard() {
                           </svg>
                         </a>
                         <div className="text-gray-600 text-sm mt-1">
-                          {teamData.league_name || 'Unknown League'}
+                          {getTeamProperty('league_name', 'Unknown League')}
                           {" | "}
-                          {teamData.record || '0-0'}
+                          {getTeamProperty('record', '0-0')}
                           {" | "}
-                          {teamData.rank ? `${getOrdinalSuffix(teamData.rank)}` : '-'}
+                          {getTeamProperty('rank') ? `${getOrdinalSuffix(getTeamProperty('rank'))}` : '-'}
                         </div>
                       </div>
                     </div>
@@ -587,15 +603,15 @@ export default function Dashboard() {
                     <>
                       <div className="text-center">
                         <span className="block text-gray-700 font-medium text-xs">Waiver Priority</span>
-                        <span className="block text-lg font-bold text-gray-900">{teamData.waiver_priority || '-'}</span>
+                        <span className="block text-lg font-bold text-gray-900">{getTeamProperty('waiver_priority', '-')}</span>
                       </div>
                       <div className="text-center">
                         <span className="block text-gray-700 font-medium text-xs">Weekly Adds</span>
-                        <span className="block text-lg font-bold text-gray-900">{teamData.moves_used} of {teamData.moves_limit}</span>
+                        <span className="block text-lg font-bold text-gray-900">{getTeamProperty('moves_used', 0)} of {getTeamProperty('moves_limit', 0)}</span>
                       </div>
                       <div className="text-center">
                         <span className="block text-gray-700 font-medium text-xs">Available Swaps</span>
-                        <span className="block text-lg font-bold text-gray-900">{teamData.available_swaps || 0}</span>
+                        <span className="block text-lg font-bold text-gray-900">{getTeamProperty('available_swaps', 0)}</span>
                       </div>
                     </>
                   ) : (
@@ -685,14 +701,14 @@ export default function Dashboard() {
             ) : teamData ? (
               (() => {
                 // Always show matchup information, even if there's no matchup data
-                const matchupData = teamData.matchup || {
+                const matchupData = getTeamProperty('matchup', {
                   week: 'N/A',
                   opponentName: 'No Current Matchup',
                   opponentLogo: null,
                   myScore: '0',
                   opponentScore: '0',
                   categories: createDefaultCategories()
-                };
+                });
                 
                 console.log('Dashboard: Matchup data:', matchupData);
                 console.log('Dashboard: Categories data:', matchupData.categories);
@@ -700,12 +716,12 @@ export default function Dashboard() {
                 return (
                   <div className="mb-8">
                     <MatchupDisplay
-                      week={matchupData.week}
-                      opponentName={matchupData.opponentName}
-                      opponentLogo={matchupData.opponentLogo}
-                      myScore={matchupData.myScore}
-                      opponentScore={matchupData.opponentScore}
-                      categories={matchupData.categories}
+                      week={matchupData.week || 'N/A'}
+                      opponentName={matchupData.opponentName || 'No Current Matchup'}
+                      opponentLogo={matchupData.opponentLogo || null}
+                      myScore={matchupData.myScore || '0'}
+                      opponentScore={matchupData.opponentScore || '0'}
+                      categories={matchupData.categories || createDefaultCategories()}
                       isLoading={false}
                     />
                   </div>

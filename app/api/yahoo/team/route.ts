@@ -61,7 +61,14 @@ export async function GET(req: NextRequest) {
     const cachedTeamData = await getCachedData<any>(teamCacheKey, { category: 'daily' });
     if (cachedTeamData) {
       console.log('Team API: Returning cached team data');
-      return NextResponse.json(cachedTeamData);
+      console.log('Team API: Cached team data structure:', {
+        dataType: typeof cachedTeamData,
+        hasTeamProperty: cachedTeamData && typeof cachedTeamData === 'object' && 'team' in cachedTeamData,
+        keys: cachedTeamData && typeof cachedTeamData === 'object' ? Object.keys(cachedTeamData) : []
+      });
+      
+      // Ensure we return the data in the same format as fresh data (wrapped in 'team' object)
+      return NextResponse.json({ team: cachedTeamData });
     }
 
     // Step 1: Get MLB game ID
@@ -92,7 +99,9 @@ export async function GET(req: NextRequest) {
     let debugInfo = { transactionCounter: null };
     
     try {
-      teamData = await fetchYahooApi<any>(teamResourceUrl);
+      teamData = await fetchYahooApi<any>(teamResourceUrl, {
+        category: 'daily' // Team data changes daily
+      });
       console.log('Team API: Successfully fetched team data');
       
       // Extract transaction counter and moves info
@@ -135,7 +144,10 @@ export async function GET(req: NextRequest) {
     if (leagueKey && teamKey) {
       try {
         const standingsUrl = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}/standings`;
-        const standingsData = await fetchYahooApi<any>(standingsUrl, { ttl: 4 * 60 * 60 }); // Cache for 4 hours
+        const standingsData = await fetchYahooApi<any>(standingsUrl, { 
+          category: 'daily', // Standings change daily
+          ttl: 4 * 60 * 60 // Cache for 4 hours
+        });
         
         const teams = standingsData?.fantasy_content?.league?.[0]?.standings?.[0]?.teams?.[0]?.team || [];
         console.log('Team API: Found teams in standings:', teams.length);
@@ -163,7 +175,9 @@ export async function GET(req: NextRequest) {
     if (teamKey) {
       try {
         const rosterUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/roster`;
-        const rosterData = await fetchYahooApi<any>(rosterUrl);
+        const rosterData = await fetchYahooApi<any>(rosterUrl, {
+          category: 'daily' // Roster changes daily
+        });
         
         const players = rosterData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player || [];
         console.log('Team API: Found players in roster:', players.length);
@@ -205,7 +219,9 @@ export async function GET(req: NextRequest) {
       try {
         // Get all players with games for today
         const rosterUrl = `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/roster;date=${today}`;
-        const rosterData = await fetchYahooApi<any>(rosterUrl);
+        const rosterData = await fetchYahooApi<any>(rosterUrl, {
+          category: 'daily' // Daily roster data
+        });
         
         const players = rosterData?.fantasy_content?.team?.[0]?.roster?.[0]?.players?.[0]?.player || [];
         
@@ -297,21 +313,10 @@ export async function GET(req: NextRequest) {
                 // Load ESPN scoreboard data
                 if (!global.espnScoreboardData) {
                   console.log('Team API: Fetching ESPN scoreboard as fallback for game data');
-                  const scoreboardRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard', {
-                    method: 'GET',
-                    headers: {
-                      'Accept': 'application/json',
-                      'Content-Type': 'application/json',
-                    },
-                    signal: AbortSignal.timeout(5000)
-                  });
                   
-                  if (scoreboardRes.ok) {
-                    global.espnScoreboardData = await scoreboardRes.json();
-                    console.log('Team API: Successfully fetched ESPN scoreboard data');
-                  } else {
-                    console.error(`Team API: ESPN API returned ${scoreboardRes.status}`);
-                  }
+                  // Use the utility function instead of direct fetch to leverage caching
+                  global.espnScoreboardData = await getEspnScoreboard();
+                  console.log('Team API: Successfully fetched ESPN scoreboard data');
                 }
                 
                 // Check ESPN data for teams with games today
@@ -399,18 +404,10 @@ export async function GET(req: NextRequest) {
         const leagueMetaUrl = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}`;
         console.log('Team API: Getting league metadata from:', leagueMetaUrl);
         
-        const leagueMetaRes = await fetch(leagueMetaUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
+        const leagueMetaData = await fetchYahooApi<any>(leagueMetaUrl, {
+          category: 'daily' // League metadata changes daily
         });
-        const leagueMetaText = await leagueMetaRes.text();
-        console.log('Team API: League metadata response status:', leagueMetaRes.status);
         
-        const leagueMetaData = await new Promise<any>((resolve, reject) => {
-          parseString(leagueMetaText, (err: Error | null, result: any) => {
-            if (err) reject(err);
-            else resolve(result);
-          });
-        });
         const currentWeek = leagueMetaData?.fantasy_content?.league?.[0]?.current_week?.[0];
         const leagueName = leagueMetaData?.fantasy_content?.league?.[0]?.name?.[0];
         teamObj.league_name = leagueName || 'Unknown League';
@@ -420,18 +417,12 @@ export async function GET(req: NextRequest) {
           const matchupsUrl = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}/scoreboard;week=${currentWeek}`;
           console.log('Team API: Getting matchup data from:', matchupsUrl);
           
-          const matchupsRes = await fetch(matchupsUrl, {
-            headers: { Authorization: `Bearer ${accessToken}` },
+          const matchupsData = await fetchYahooApi<any>(matchupsUrl, {
+            category: 'realtime', // Matchup data changes frequently during games
+            skipCache: true,      // Always fetch fresh data for matchups
+            timeout: 8000         // Increase timeout for this critical data
           });
-          const matchupsText = await matchupsRes.text();
-          console.log('Team API: Matchup response status:', matchupsRes.status);
           
-          const matchupsData = await new Promise<any>((resolve, reject) => {
-            parseString(matchupsText, (err: Error | null, result: any) => {
-              if (err) reject(err);
-              else resolve(result);
-            });
-          });
           console.log('Team API: Got matchup data');
 
           // Extract matchups from league scoreboard
@@ -485,41 +476,31 @@ export async function GET(req: NextRequest) {
             
             try {
               const settingsUrl = `https://fantasysports.yahooapis.com/fantasy/v2/league/${leagueKey}/settings`;
-              const settingsRes = await fetch(settingsUrl, {
-                headers: { Authorization: `Bearer ${accessToken}` },
+              const settingsData = await fetchYahooApi<any>(settingsUrl, {
+                category: 'static' // League settings rarely change
               });
               
-              if (settingsRes.ok) {
-                const settingsText = await settingsRes.text();
-                const settingsData = await new Promise<any>((resolve, reject) => {
-                  parseString(settingsText, (err: Error | null, result: any) => {
-                    if (err) reject(err);
-                    else resolve(result);
-                  });
-                });
-                
-                // Extract stat categories from league settings
-                const settingsCats = settingsData?.fantasy_content?.league?.[0]?.settings?.[0]?.stat_categories?.[0]?.stats?.[0]?.stat || [];
-                console.log('Team API: Found categories from settings:', settingsCats.length);
-                
-                if (settingsCats.length > 0) {
-                  // We found real categories, use these
-                  for (let i = 0; i < settingsCats.length; i++) {
-                    const cat = settingsCats[i];
-                    if (!statCategories.some((c: any) => c.stat_id?.[0] === cat.stat_id?.[0])) {
-                      statCategories.push(cat);
-                      
-                      // Add default stats 
-                      if (myTeamStats.length <= i) {
-                        myTeamStats.push({ value: ['0'] });
-                      }
-                      if (opponentStats.length <= i) {
-                        opponentStats.push({ value: ['0'] });
-                      }
+              // Extract stat categories from league settings
+              const settingsCats = settingsData?.fantasy_content?.league?.[0]?.settings?.[0]?.stat_categories?.[0]?.stats?.[0]?.stat || [];
+              console.log('Team API: Found categories from settings:', settingsCats.length);
+              
+              if (settingsCats.length > 0) {
+                // We found real categories, use these
+                for (let i = 0; i < settingsCats.length; i++) {
+                  const cat = settingsCats[i];
+                  if (!statCategories.some((c: any) => c.stat_id?.[0] === cat.stat_id?.[0])) {
+                    statCategories.push(cat);
+                    
+                    // Add default stats 
+                    if (myTeamStats.length <= i) {
+                      myTeamStats.push({ value: ['0'] });
+                    }
+                    if (opponentStats.length <= i) {
+                      opponentStats.push({ value: ['0'] });
                     }
                   }
-                  console.log('Team API: Used categories from settings:', statCategories.length);
                 }
+                console.log('Team API: Used categories from settings:', statCategories.length);
               }
             } catch (e) {
               console.error('Team API: Error getting league settings:', e);
@@ -647,7 +628,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Cache the response data
-    await setCachedData(teamCacheKey, teamObj, { 
+    await setCachedData(teamCacheKey, { team: teamObj }, { 
       category: 'daily',  // Team data changes daily, so use daily category
       ttl: 15 * 60  // Still keep a 15-minute TTL as a fallback
     });

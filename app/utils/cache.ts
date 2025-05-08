@@ -60,7 +60,13 @@ export const getRedisClient = (): Redis | null => {
 interface CacheOptions {
   ttl?: number;
   allowStale?: boolean;
-  category?: 'static' | 'daily' | 'realtime'; // Add data category option
+  /**
+   * Data category that determines caching behavior:
+   * - static: Longest TTL (24h), prioritizes cached data even if stale
+   * - daily: Medium TTL (12h), prioritizes cached data even if stale
+   * - realtime: Short TTL (15m), prioritizes fresh data, uses cache as fallback
+   */
+  category?: 'static' | 'daily' | 'realtime';
 }
 
 /**
@@ -83,16 +89,42 @@ export async function getCachedData<T>(key: string, options: CacheOptions = {}):
     // Parse the data
     const data = JSON.parse(cachedData) as T;
     
-    // Check if data is stale and stale data is not allowed
+    // Get category from metadata or from key
+    let category = 'unknown';
     if (cachedMeta) {
       const meta = JSON.parse(cachedMeta);
-      if (meta.expiresAt < Date.now() && !options.allowStale) {
-        console.log(`Cache: Stale data for key ${key}`);
-        return null;
+      category = meta.category || 
+        (key.startsWith('static:') ? 'static' : 
+          key.startsWith('daily:') ? 'daily' : 
+            key.startsWith('realtime:') ? 'realtime' : 'unknown');
+      
+      // Check if data is stale based on category
+      const isStale = meta.expiresAt < Date.now();
+      
+      if (isStale) {
+        // For realtime data, return null if stale to always get fresh data
+        // unless allowStale is explicitly set to true
+        if (category === 'realtime' || options.category === 'realtime') {
+          if (options.allowStale !== true) {
+            console.log(`Cache: Skipping stale realtime data for key ${key}`);
+            return null;
+          }
+        } 
+        // For static/daily data, allow stale data by default unless explicitly disallowed
+        else if ((category === 'static' || category === 'daily' || 
+            options.category === 'static' || options.category === 'daily')) {
+          if (options.allowStale === false) {
+            console.log(`Cache: Skipping stale ${category} data for key ${key}`);
+            return null;
+          }
+        }
+        
+        // Log that we're using stale data, but still return it
+        console.log(`Cache: Using stale ${category} data for key ${key} (expired at ${new Date(meta.expiresAt).toISOString()})`);
       }
     }
     
-    console.log(`Cache: Hit for key ${key}`);
+    console.log(`Cache: Hit for key ${key} (${category})`);
     return data;
   } catch (error) {
     console.error(`Cache: Error getting data for key ${key}:`, error);

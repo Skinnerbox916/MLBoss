@@ -1,24 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getEspnScoreboard } from '../../../utils/espn-api';
 
 export async function GET(req: NextRequest) {
   console.log('ESPN Scoreboard API: Starting request');
   
   try {
-    // Fetch the ESPN scoreboard data
-    const scoreboardRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard', {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(5000)
-    });
-    
-    if (!scoreboardRes.ok) {
-      throw new Error(`ESPN API returned ${scoreboardRes.status}: ${scoreboardRes.statusText}`);
-    }
-    
-    const scoreboardData = await scoreboardRes.json();
+    // Use our cached utility function instead of direct fetch
+    const scoreboardData = await getEspnScoreboard();
     
     // Process the data to extract useful debugging information
     const processedData = {

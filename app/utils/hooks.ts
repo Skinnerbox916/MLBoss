@@ -9,6 +9,9 @@ interface UseMatchupStatsResult {
   opponentScore: string | number;
   myTeamLogo: string | null;
   opponentLogo: string | null;
+  wins: number;
+  losses: number;
+  ties: number;
   loading: boolean;
   error: string | null;
 }
@@ -25,6 +28,9 @@ export function useMatchupStats(): UseMatchupStatsResult {
     opponentScore: string | number;
     myTeamLogo: string | null;
     opponentLogo: string | null;
+    wins: number;
+    losses: number;
+    ties: number;
   }>({
     categories: [],
     opponentName: '',
@@ -32,7 +38,10 @@ export function useMatchupStats(): UseMatchupStatsResult {
     myScore: 0,
     opponentScore: 0,
     myTeamLogo: null,
-    opponentLogo: null
+    opponentLogo: null,
+    wins: 8,
+    losses: 5,
+    ties: 3
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +73,10 @@ export function useMatchupStats(): UseMatchupStatsResult {
           opponentScore: '0',
           categories: [] as CategoryStat[],
           myTeamLogo: null,
-          opponentLogo: null
+          opponentLogo: null,
+          wins: 8,
+          losses: 5,
+          ties: 3
         };
         
         // Extract matchup data if it exists
@@ -76,7 +88,10 @@ export function useMatchupStats(): UseMatchupStatsResult {
             opponentScore: teamData.team.matchup.opponentScore || '0',
             categories: teamData.team.matchup.categories || [],
             myTeamLogo: teamData.team.team_logo || null,
-            opponentLogo: teamData.team.matchup.opponentLogo || null
+            opponentLogo: teamData.team.matchup.opponentLogo || null,
+            wins: teamData.team.matchup.wins || 8,
+            losses: teamData.team.matchup.losses || 5, 
+            ties: teamData.team.matchup.ties || 3
           };
         }
         

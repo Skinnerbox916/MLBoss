@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import { TeamHeaderProps } from '@/app/types/ui';
 
 // Helper to add ordinal suffix to rank
 function getOrdinalSuffix(rank: string | number) {
@@ -12,21 +13,10 @@ function getOrdinalSuffix(rank: string | number) {
   return n + 'th';
 }
 
-interface TeamHeaderProps {
-  teamData: any;
-  loading: boolean;
-}
-
-export default function TeamHeader({ teamData, loading }: TeamHeaderProps) {
-  // Function to safely access team properties
-  const getTeamProperty = (property: string, fallback: any = null) => {
-    if (!teamData?.team) return fallback;
-    return teamData.team[property] !== undefined ? teamData.team[property] : fallback;
-  };
-
+export default function TeamHeader({ team, loading = false, className = '' }: TeamHeaderProps) {
   if (loading) {
     return (
-      <div className="w-full bg-white border-b border-gray-200 animate-pulse p-2">
+      <div className={`w-full bg-white border-b border-gray-200 animate-pulse p-2 ${className}`}>
         <div className="flex items-center">
           <div className="w-12 h-12 bg-gray-200 rounded-full mr-4"></div>
           <div className="flex-1">
@@ -39,45 +29,23 @@ export default function TeamHeader({ teamData, loading }: TeamHeaderProps) {
   }
 
   return (
-    <div className="w-full bg-white border-b border-gray-200">
+    <div className={`w-full bg-white border-b border-gray-200 ${className}`}>
       <div className="max-w-screen-xl mx-auto px-4 py-3">
         <div className="flex items-center">
-          {getTeamProperty('team_logo') && (
+          {team.logo_url && (
             <img 
-              src={getTeamProperty('team_logo')} 
+              src={team.logo_url} 
               alt="Team Logo" 
               className="w-12 h-12 rounded-full mr-3 border"
             />
           )}
           <div>
-            <a 
-              href={getTeamProperty('url', '#')} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-lg font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1"
-            >
-              {getTeamProperty('name', 'Team Name')}
-              <svg 
-                xmlns="http://www.w3.org/2000/svg" 
-                className="h-4 w-4 text-gray-400" 
-                fill="none" 
-                viewBox="0 0 24 24" 
-                stroke="currentColor"
-              >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  strokeWidth={2} 
-                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
-                />
-              </svg>
-            </a>
+            <span className="text-lg font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1">
+              {team.name || 'Team Name'}
+            </span>
             <div className="text-gray-600 text-sm">
-              {getTeamProperty('league_name', 'Unknown League')}
-              {" | "}
-              {getTeamProperty('record', '0-0')}
-              {" | "}
-              {getTeamProperty('rank') ? `${getOrdinalSuffix(getTeamProperty('rank'))}` : '-'}
+              {team.record && `${team.record}`}
+              {team.manager && (team.record ? ` | Manager: ${team.manager}` : `Manager: ${team.manager}`)}
             </div>
           </div>
         </div>

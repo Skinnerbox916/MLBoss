@@ -48,6 +48,9 @@ export default function Dashboard() {
     opponentScore,
     myTeamLogo,
     opponentLogo,
+    wins,
+    losses,
+    ties,
     loading: matchupLoading 
   } = useMatchupStats();
 
@@ -139,32 +142,74 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Matchup Score Card */}
             <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-gray-700">Matchup Score</h2>
                 <HiStar className="h-6 w-6 text-amber-500" />
               </div>
               
-              {/* Simple Score Display */}
-              <div className="flex justify-center items-center py-3 mt-auto mb-auto">
-                <div className="text-center bg-green-50 rounded-l-lg py-4 px-4 border-r border-gray-100">
-                  <p className="text-3xl font-bold text-green-600">{myScore || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">You</p>
+              {/* Team Avatars and VS - Reduced size to give more space to scores */}
+              <div className="flex justify-center items-center mb-5">
+                <div className="flex flex-col items-center">
+                  <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100">
+                    {myTeamLogo ? (
+                      <img 
+                        src={myTeamLogo} 
+                        alt="Your team" 
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = "/default-avatar.png";
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center bg-purple-100 text-purple-700 font-bold text-lg">
+                        You
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
-                <div className="text-center py-2 px-2">
-                  <p className="text-xs text-gray-500">vs</p>
-                  <p className="text-lg font-medium text-gray-400">{opponentName}</p>
+                <div className="mx-3 text-gray-500 font-medium">
+                  vs
                 </div>
                 
-                <div className="text-center bg-red-50 rounded-r-lg py-4 px-4 border-l border-gray-100">
-                  <p className="text-3xl font-bold text-gray-700">{opponentScore || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">Opp</p>
+                <div className="flex flex-col items-center">
+                  <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100">
+                    {opponentLogo ? (
+                      <img 
+                        src={opponentLogo} 
+                        alt={opponentName} 
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = "/default-avatar.png";
+                        }}
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center bg-gray-200 text-gray-700 font-bold text-lg">
+                        {opponentName.charAt(0)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              {/* W-L-T Record - Improved spacing and sizing */}
+              <div className="bg-gray-50 rounded-full py-4 px-6 flex justify-center items-center mx-auto mb-5 w-full">
+                <div className="flex items-center justify-center">
+                  <span className="text-4xl font-bold text-green-600">{wins}</span>
+                </div>
+                <div className="w-px h-12 bg-gray-300 mx-5"></div>
+                <div className="flex items-center justify-center">
+                  <span className="text-4xl font-bold text-red-500">{losses}</span>
+                </div>
+                <div className="w-px h-12 bg-gray-300 mx-5"></div>
+                <div className="flex items-center justify-center">
+                  <span className="text-4xl font-bold text-gray-500">{ties}</span>
                 </div>
               </div>
               
               <button 
                 onClick={handleViewAllStats}
-                className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center"
+                className="mt-auto text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center"
               >
                 View Full Matchup →
               </button>

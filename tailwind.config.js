@@ -6,7 +6,11 @@ module.exports = {
     './app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontSize: {
+        '2xs': ['0.65rem', { lineHeight: '1rem' }],
+      },
+    },
   },
   plugins: [],
 } 

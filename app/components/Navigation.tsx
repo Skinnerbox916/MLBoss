@@ -72,22 +72,22 @@ export default function Navigation({ onLogout }: NavigationProps) {
     },
     {
       name: 'Lineup',
-      href: '/dashboard/lineup',
+      href: '/lineup',
       icon: HiViewList
     },
     {
       name: 'Matchup',
-      href: '/dashboard/matchup',
+      href: '/matchup',
       icon: HiUsers
     },
     {
       name: 'Roster',
-      href: '/dashboard/roster',
+      href: '/roster',
       icon: HiClipboardList
     },
     {
       name: 'League',
-      href: '/dashboard/league',
+      href: '/league',
       icon: HiGlobe
     }
   ];

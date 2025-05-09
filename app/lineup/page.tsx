@@ -249,33 +249,11 @@ export default function LineupPage() {
                         {Object.entries(method.game_indicators).map(([key, value]) => (
                           value !== null && (
                             <div key={key} className="text-xs">
-                              <span className="text-gray-500">{key}:</span> <span className="font-mono">{String(value)}</span>
+                              <span className="text-gray-500">{key}:</span> {String(value)}
                             </div>
                           )
                         ))}
                       </div>
-                    </div>
-                  )}
-
-                  {method.raw_response_summary && (
-                    <div className="col-span-2 mt-3 bg-gray-50 p-2 rounded">
-                      <span className="text-xs text-gray-500 font-medium">Player Info:</span>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-1">
-                        {Object.entries(method.raw_response_summary).map(([key, value]) => (
-                          value !== null && (
-                            <div key={key} className="text-xs">
-                              <span className="text-gray-500">{key}:</span> <span className="font-mono">{String(value)}</span>
-                            </div>
-                          )
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {method.note && (
-                    <div className="col-span-2 mt-2">
-                      <span className="text-xs text-blue-500">Note:</span>
-                      <span className="ml-2 text-xs">{method.note}</span>
                     </div>
                   )}
                 </div>
@@ -289,150 +267,235 @@ export default function LineupPage() {
 
   return (
     <div className="space-y-4">
-      {/* Debug Results Modal */}
-      {debugResults && <DebugResultsModal />}
-
+      {/* Debug Modal */}
+      <DebugResultsModal />
+      
+      {/* Date selection bar */}
       <div className="bg-white rounded-lg shadow-md p-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">Lineup Builder</h1>
-            <p className="text-sm text-gray-600">
-              {selectedDate && format(new Date(selectedDate), 'EEEE, MMMM d, yyyy')}
-            </p>
-          </div>
+        <div className="flex space-x-2 justify-between items-center">
+          <h2 className="text-lg font-semibold">Set Your Lineup</h2>
           
-          {/* Compact Date Selector */}
-          <div className="mt-3 sm:mt-0">
-            <div className="inline-flex rounded-lg shadow-sm overflow-hidden">
-              {dateOptions.map((opt, index) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setSelectedDate(opt.value)}
-                  className={`relative px-3 py-2 text-xs font-medium transition-colors
-                    ${selectedDate === opt.value 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}
-                    ${index === 0 ? 'rounded-l-lg' : ''}
-                    ${index === dateOptions.length - 1 ? 'rounded-r-lg' : ''}
-                    border-r last:border-r-0 border-gray-200`}
-                >
-                  <div className="flex flex-col items-center">
-                    <span className="font-bold">{opt.label}</span>
-                    <span className="text-xs">{opt.fullLabel}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
+          <div className="flex space-x-1">
+            {dateOptions.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setSelectedDate(option.value)}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition ${
+                  selectedDate === option.value
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-xs">{option.label}</span>
+                  <span className="text-xs">{option.fullLabel}</span>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
+      {/* Position selection */}
       <div className="bg-white rounded-lg shadow-md p-4">
-        {/* Position selection - use PositionDisplay component */}
-        <PositionDisplay 
-          onPositionSelect={handlePositionSelect}
-          selectedPosition={selectedPosition}
-        />
-
-        {/* Player selection */}
-        <div className="mt-4">
-          {loading ? (
-            <SkeletonPlayerList />
-          ) : error ? (
-            <div className="bg-red-50 text-red-700 p-4 rounded">
-              {error}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">R</th>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">HR</th>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">RBI</th>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">SB</th>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">AVG</th>
-                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">OPS</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-100">
-                  {sortPlayers(getFilteredPlayers()
-                    .filter((player: Player) => !player.position.includes('P'))
-                  ).map((player: Player, index: number) => {
-                    const rowStatus = getPlayerRowStatus(player);
-                    const isStarter = starters[selectedPosition || ''] === player.name;
-                    const eligiblePositions = player.eligiblePositions || player.position.split(',').map(p => p.trim());
+        <PositionDisplay onPositionSelect={handlePositionSelect} selectedPosition={selectedPosition} />
+      </div>
+      
+      {/* Roster list */}
+      <div className="bg-white rounded-lg shadow-md p-4">
+        <h3 className="text-md font-medium mb-3">{selectedPosition || 'All'} Players</h3>
+        
+        {loading ? (
+          <SkeletonPlayerList count={10} />
+        ) : error ? (
+          <div className="text-red-500 p-4">{error}</div>
+        ) : (
+          <ul className="space-y-1">
+            {sortPlayers(getFilteredPlayers()).map((player, i) => {
+              const isStarting = Object.values(starters).includes(player.name);
+              const isStartingThisPosition = starters[selectedPosition || ''] === player.name;
+              const rowStatus = getPlayerRowStatus(player);
+              const hasGameToday = rowStatus === 'active';
+              const isIL = rowStatus === 'il';
+              
+              return (
+                <li 
+                  key={i} 
+                  className={`flex items-center text-gray-800 text-sm rounded px-2 py-1.5 ${
+                    isStarting ? 'bg-green-50' : 
+                    isIL ? 'bg-red-50' : 
+                    !hasGameToday ? 'bg-gray-50' : 
+                    'hover:bg-gray-50'
+                  } ${
+                    selectedPosition && isStartingThisPosition ? 'border border-green-500' : ''
+                  }`}
+                >
+                  {/* Player icon */}
+                  {player.image_url ? (
+                    <img src={player.image_url} alt={player.name} className="w-7 h-7 rounded-full mr-2 border object-cover" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-gray-200 mr-2 flex items-center justify-center">
+                      <span className="text-xs text-gray-500">{player.name.charAt(0)}</span>
+                    </div>
+                  )}
+                  
+                  {/* Player info */}
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <div className="flex items-center flex-wrap">
+                      <span className="font-medium truncate mr-1">{player.name}</span>
+                      
+                      {/* Status badges */}
+                      {player.status && (
+                        <span className={`px-1 py-0.5 text-xs rounded ${
+                          player.status.includes('IL') || player.status.includes('DL')
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {player.status}
+                        </span>
+                      )}
+                      
+                      {/* Starting badge */}
+                      {isStarting && (
+                        <span className="ml-1 px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-800">
+                          Starting
+                        </span>
+                      )}
+                      
+                      {/* Pitching today badge */}
+                      {player.pitching_today && (
+                        <span className="ml-1 px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-800">
+                          Pitching
+                        </span>
+                      )}
+                      
+                      {/* No game badge */}
+                      {!hasGameToday && !isIL && (
+                        <span className="ml-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-800">
+                          No Game
+                        </span>
+                      )}
+                    </div>
                     
-                    return (
-                      <tr key={index} className={
-                        rowStatus === 'il' ? 'bg-red-50' :
-                        rowStatus === 'no-game' ? 'bg-gray-50' : ''
-                      }>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name={`starter-${selectedPosition}`}
-                              checked={isStarter}
-                              onChange={() => handleStarterSelect(player.name)}
-                              disabled={!selectedPosition}
-                              className="h-3 w-3 text-blue-600 border-gray-300 focus:ring-blue-500"
-                            />
-                            {player.image_url && (
-                              <img src={player.image_url} alt={player.name} className="w-8 h-8 rounded-full border object-cover" />
-                            )}
-                            <div className="flex flex-col">
-                              <div className="flex items-center gap-1 flex-wrap">
-                                <span className="font-medium text-sm">{player.name}</span>
-                                <span className="text-xs text-gray-500">{player.team}</span>
-                                {player.status === 'DTD' && (
-                                  <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 text-xs font-medium">DTD</span>
-                                )}
-                                {player.status && player.status.includes('IL') && (
-                                  <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-800 text-xs font-medium">{player.status}</span>
-                                )}
-                                <button 
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    debugPlayerGame(player.playerKey, player.teamKey);
-                                  }}
-                                  className="px-1.5 py-0.5 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700"
-                                  title="Debug Yahoo API"
-                                >
-                                  Debug
-                                </button>
-                              </div>
-                              <div className="flex flex-wrap gap-1 mt-0.5">
-                                {eligiblePositions.map((pos, idx) => (
-                                  <span
-                                    key={idx}
-                                    className={`text-xs px-1 py-0 rounded ${
-                                      pos === selectedPosition && isStarter
-                                        ? 'bg-blue-100 text-blue-800 font-medium'
-                                        : 'bg-gray-200 text-gray-700'
-                                    }`}
-                                  >
-                                    {pos}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-center text-xs">{player.stats?.R ?? '-'}</td>
-                        <td className="px-3 py-2 text-center text-xs">{player.stats?.HR ?? '-'}</td>
-                        <td className="px-3 py-2 text-center text-xs">{player.stats?.RBI ?? '-'}</td>
-                        <td className="px-3 py-2 text-center text-xs">{player.stats?.SB ?? '-'}</td>
-                        <td className="px-3 py-2 text-center text-xs">{player.stats?.AVG ?? '-'}</td>
-                        <td className="px-3 py-2 text-center text-xs">{player.stats?.OPS ?? '-'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                    {/* Team and position info */}
+                    <div className="text-xs text-gray-500 flex items-center mt-0.5">
+                      <span>{player.team}</span>
+                      <span className="mx-1 h-1 w-1 rounded-full bg-gray-300"></span>
+                      <span>{player.eligiblePositions?.join(', ') || player.position}</span>
+                      
+                      {/* Matchup info when available */}
+                      {hasGameToday && player.matchup && (
+                        <>
+                          <span className="mx-1 h-1 w-1 rounded-full bg-gray-300"></span>
+                          <span>
+                            {player.matchup.home_away === 'home' ? 'vs ' : '@ '}
+                            {player.matchup.opponent}
+                            {player.matchup.time && ` (${player.matchup.time})`}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Action buttons */}
+                  <div className="flex space-x-1 ml-2">
+                    {/* Debug button - only show for development */}
+                    {process.env.NODE_ENV === 'development' && player.playerKey && (
+                      <button
+                        onClick={() => debugPlayerGame(player.playerKey, player.teamKey)}
+                        disabled={debugLoading}
+                        className="px-1.5 py-0.5 text-xs bg-gray-100 hover:bg-gray-200 rounded"
+                        title="Debug game data"
+                      >
+                        {debugLoading ? '...' : 'Debug'}
+                      </button>
+                    )}
+                    
+                    {/* Set as starter button - only when position is selected */}
+                    {selectedPosition && (
+                      <button
+                        onClick={() => handleStarterSelect(player.name)}
+                        className={`px-1.5 py-0.5 text-xs rounded ${
+                          isStartingThisPosition
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                        }`}
+                      >
+                        {isStartingThisPosition ? 'Starting' : 'Start'}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      
+      {/* Current starters */}
+      <div className="bg-white rounded-lg shadow-md p-4">
+        <h3 className="text-md font-medium mb-3">Current Lineup</h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {['C', '1B', '2B', '3B', 'SS', 'OF', 'OF', 'OF', 'UTIL'].map(position => {
+            const starterName = starters[position];
+            const starterData = rosterData.find(p => p.name === starterName);
+            
+            return (
+              <div 
+                key={position}
+                className={`border rounded p-3 ${
+                  starterName ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">{position}</span>
+                  {starterName && selectedPosition === position && (
+                    <button
+                      onClick={() => {
+                        setStarters(prev => {
+                          const newStarters = {...prev};
+                          delete newStarters[position];
+                          return newStarters;
+                        });
+                      }}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                
+                {starterName ? (
+                  <div className="mt-1">
+                    <div className="font-medium text-sm">{starterName}</div>
+                    {starterData && (
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {starterData.team}
+                        {starterData.matchup && starterData.matchup.date === selectedDate && (
+                          <span className="ml-1">
+                            {starterData.matchup.home_away === 'home' ? 'vs ' : '@ '}
+                            {starterData.matchup.opponent}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500 mt-1">No player selected</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        
+        <div className="mt-4 text-right">
+          <button 
+            className="bg-purple-600 text-white px-4 py-2 rounded font-medium hover:bg-purple-700 transition"
+            onClick={() => console.log('Saving lineup:', starters)}
+          >
+            Save Lineup
+          </button>
         </div>
       </div>
     </div>

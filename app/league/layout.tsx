@@ -2,9 +2,9 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import TeamHeader from './components/TeamHeader';
+import TeamHeader from '../components/TeamHeader';
 
-export default function DashboardLayout({
+export default function LeagueLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -51,7 +51,7 @@ export default function DashboardLayout({
         </div>
       ) : null}
       
-      {/* Team header displayed on all dashboard pages */}
+      {/* Team header displayed on all league pages */}
       <div className="mb-6">
         <TeamHeader teamData={teamData} loading={loading} />
       </div>

@@ -1,8 +1,8 @@
 import './globals.css'
 import type { Metadata } from 'next'
-import Image from 'next/image'
 import { Inter } from 'next/font/google'
 import { Barlow_Condensed, Oswald } from 'next/font/google'
+import ClientLayout from './components/ClientLayout'
 
 const inter = Inter({ subsets: ['latin'] })
 const barlowCondensed = Barlow_Condensed({ 
@@ -33,8 +33,9 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body className={`${inter.className} ${barlowCondensed.variable} ${oswald.variable} bg-white`}>
-        {/* Remove the centered header logo */}
-        {children}
+        <ClientLayout>
+          {children}
+        </ClientLayout>
       </body>
     </html>
   )

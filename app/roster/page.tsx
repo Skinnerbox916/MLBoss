@@ -329,7 +329,7 @@ export default function RosterPage() {
                             View on Yahoo
                           </a>
                           <Link 
-                            href={`/dashboard/lineup?position=${player.eligiblePositions?.[0] || ''}&player=${player.name}`}
+                            href={`/lineup?position=${player.eligiblePositions?.[0] || ''}&player=${player.name}`}
                             className="text-xs text-purple-600 hover:text-purple-800"
                           >
                             Set in Lineup

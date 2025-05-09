@@ -67,8 +67,16 @@ export async function GET(req: NextRequest) {
         keys: cachedTeamData && typeof cachedTeamData === 'object' ? Object.keys(cachedTeamData) : []
       });
       
-      // Ensure we return the data in the same format as fresh data (wrapped in 'team' object)
-      return NextResponse.json({ team: cachedTeamData });
+      // Check if the cached data is already wrapped in a team object or not
+      if (cachedTeamData && typeof cachedTeamData === 'object' && 'team' in cachedTeamData) {
+        // Data is already structured properly, return as is
+        console.log('Team API: Cached data already has team property, returning as is');
+        return NextResponse.json(cachedTeamData);
+      } else {
+        // Ensure we return the data in the same format as fresh data
+        console.log('Team API: Wrapping cached data in team object');
+        return NextResponse.json({ team: cachedTeamData });
+      }
     }
 
     // Step 1: Get MLB game ID
@@ -627,14 +635,14 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Cache the response data
-    await setCachedData(teamCacheKey, { team: teamObj }, { 
-      category: 'daily',  // Team data changes daily, so use daily category
-      ttl: 15 * 60  // Still keep a 15-minute TTL as a fallback
+    // After building the team object, store it in cache
+    console.log('Team API: Storing fresh team data in cache');
+    
+    // Store just the team object in the cache, not the wrapped response
+    await setCachedData(teamCacheKey, teamObj, {
+      category: 'daily'
     });
     
-    // Return the team object, always
-    console.log('Team API: Final team object:', teamObj);
     return NextResponse.json({ team: teamObj });
   } catch (error) {
     console.error('Team API: Unexpected error:', error);

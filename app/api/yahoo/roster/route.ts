@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
     
     // Generate cache key for the roster data
     const rosterCacheKey = generateYahooCacheKey('roster', { date: today }, 'daily');
+    console.log(`Roster API: Generated cache key for daily roster data: ${rosterCacheKey}`);
     
     // Check if we have cached roster data
     const cachedRoster = await getCachedData<any>(rosterCacheKey, { category: 'daily' });
@@ -88,11 +89,14 @@ export async function GET(req: NextRequest) {
         dataType: typeof cachedRoster,
         keys: typeof cachedRoster === 'object' ? Object.keys(cachedRoster) : [],
         hasPlayers: typeof cachedRoster === 'object' && 'players' in cachedRoster,
-        playersLength: typeof cachedRoster === 'object' && 'players' in cachedRoster ? cachedRoster.players.length : 0
+        playersLength: typeof cachedRoster === 'object' && 'players' in cachedRoster ? cachedRoster.players.length : 0,
+        date: typeof cachedRoster === 'object' && 'date' in cachedRoster ? cachedRoster.date : 'not found'
       });
       
       return NextResponse.json(cachedRoster);
     }
+
+    console.log('Roster API: No cached roster data found, fetching from Yahoo API');
 
     // Step 1: Get MLB game ID using the utility function
     let gameId: string;
@@ -209,14 +213,16 @@ export async function GET(req: NextRequest) {
 
     // Step 5: Fetch probable pitchers for today to indicate who's starting
     const probablePitchersCacheKey = generateYahooCacheKey('probable_pitchers', { date: today }, 'daily');
+    console.log(`Roster API: Generated cache key for probable pitchers: ${probablePitchersCacheKey}`);
     let pitchersScheduledToday: string[] = [];
     
     // Check cache for probable pitchers
     const cachedPitchers = await getCachedData<string[]>(probablePitchersCacheKey, { category: 'daily' });
     if (cachedPitchers) {
       pitchersScheduledToday = cachedPitchers;
-      console.log('Roster API: Using cached probable pitchers:', pitchersScheduledToday.length);
+      console.log(`Roster API: Using cached probable pitchers: ${pitchersScheduledToday.length} pitchers found, data type: ${typeof cachedPitchers}`);
     } else {
+      console.log('Roster API: No cached probable pitchers found, fetching from MLB API');
       try {
         // Fetch probable pitchers from MLB API
         const pitchersRes = await fetch(new URL('/api/mlb/probable-pitchers', req.nextUrl.origin).toString());
@@ -225,6 +231,7 @@ export async function GET(req: NextRequest) {
           pitchersScheduledToday = pitchersData.pitchers || [];
           
           // Cache the probable pitchers for 4 hours
+          console.log(`Roster API: Caching ${pitchersScheduledToday.length} probable pitchers with key ${probablePitchersCacheKey}`);
           await setCachedData(probablePitchersCacheKey, pitchersScheduledToday, { 
             category: 'daily',
             ttl: 4 * 60 * 60 
@@ -232,7 +239,7 @@ export async function GET(req: NextRequest) {
           
           console.log('Roster API: Fetched probable pitchers:', pitchersScheduledToday.length);
         } else {
-          console.error('Roster API: Error fetching probable pitchers');
+          console.error(`Roster API: Error fetching probable pitchers, status: ${pitchersRes.status}`);
         }
       } catch (e) {
         console.error('Roster API: Error in probable pitchers API:', e);
@@ -275,12 +282,14 @@ export async function GET(req: NextRequest) {
     };
     
     // Cache the processed roster data
+    console.log(`Roster API: Caching roster data with key ${rosterCacheKey}, data size: ${JSON.stringify(result).length} bytes`);
     await setCachedData(rosterCacheKey, result, { 
       category: 'daily', 
       ttl: 60 * 60 // Cache for 1 hour
     });
     
     // Return the response
+    console.log(`Roster API: Returning fresh roster data with ${result.players.length} players`);
     return NextResponse.json(result);
   } catch (error: unknown) {
     console.error('Roster API: Unhandled error:', error);

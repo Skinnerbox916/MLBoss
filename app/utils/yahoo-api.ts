@@ -216,10 +216,12 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
     const playerUrl = `https://fantasysports.yahooapis.com/fantasy/v2/player/${playerKey}/stats;type=date;date=${today}`;
     // Game information is realtime data - use realtime category with skipCache
     const cacheKey = generateYahooCacheKey('player_game_info', { playerKey, date: today }, 'realtime');
+    console.log(`Player Game Info: Checking game status for player ${playerKey} on ${today}`);
     
     // Always fetch fresh data first for realtime player game info
     try {
       // Fetch fresh data directly for realtime data
+      console.log(`Player Game Info: Fetching fresh data from Yahoo API for ${playerKey}`);
       const playerData = await fetchYahooApi<any>(playerUrl, { 
         timeout: 5000,
         skipCache: true, // Skip the cache check
@@ -229,6 +231,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       // Extract game info from player data
       const coverageStart = playerData?.fantasy_content?.player?.[0]?.player_stats?.[0]?.coverage_metadata?.[0]?.coverage_start?.[0];
       if (coverageStart) {
+        console.log(`Player Game Info: Found game for ${playerKey} with coverage_start: ${coverageStart}`);
         const result = {
           has_game_today: true,
           game_start_time: coverageStart,
@@ -244,6 +247,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       // Check alternative properties
       const isCoverageDay = playerData?.fantasy_content?.player?.[0]?.player_stats?.[0]?.is_coverage_day?.[0];
       if (isCoverageDay === '1') {
+        console.log(`Player Game Info: Found game for ${playerKey} based on is_coverage_day: 1`);
         const result = {
           has_game_today: true,
           game_start_time: 'In Progress',
@@ -263,6 +267,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       const scheduledGameTime = playerData?.fantasy_content?.player?.[0]?.scheduled_game_time?.[0];
       
       if (gameStartTime) {
+        console.log(`Player Game Info: Found game for ${playerKey} with game_start_time: ${gameStartTime}`);
         const result = {
           has_game_today: true,
           game_start_time: gameStartTime,
@@ -276,6 +281,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       } 
       
       if (scheduledGameTime) {
+        console.log(`Player Game Info: Found game for ${playerKey} with scheduled_game_time: ${scheduledGameTime}`);
         const result = {
           has_game_today: true,
           game_start_time: scheduledGameTime,
@@ -289,6 +295,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       }
       
       if (gameDate && gameTime) {
+        console.log(`Player Game Info: Found game for ${playerKey} with game_date + game_time: ${gameDate} ${gameTime}`);
         const result = {
           has_game_today: true,
           game_start_time: `${gameDate} ${gameTime}`,
@@ -302,6 +309,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       }
       
       if (gameDate) {
+        console.log(`Player Game Info: Found game for ${playerKey} with game_date: ${gameDate}`);
         const result = {
           has_game_today: true,
           game_start_time: gameDate,
@@ -315,6 +323,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       }
       
       // If we get here, try the alternate endpoint
+      console.log(`Player Game Info: Trying alternate endpoint for ${playerKey}`);
       const altPlayerUrl = `https://fantasysports.yahooapis.com/fantasy/v2/player/${playerKey}`;
       const altPlayerData = await fetchYahooApi<any>(altPlayerUrl, { 
         timeout: 5000,
@@ -327,6 +336,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       const altGameStartTime = altPlayerData?.fantasy_content?.player?.[0]?.game_start_time?.[0];
       
       if (altGameStartTime) {
+        console.log(`Player Game Info: Found game for ${playerKey} with alt_game_start_time: ${altGameStartTime}`);
         const result = {
           has_game_today: true,
           game_start_time: altGameStartTime,
@@ -340,6 +350,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       }
       
       if (altGameDate && altGameTime) {
+        console.log(`Player Game Info: Found game for ${playerKey} with alt_game_date + alt_game_time: ${altGameDate} ${altGameTime}`);
         const result = {
           has_game_today: true,
           game_start_time: `${altGameDate} ${altGameTime}`,
@@ -353,6 +364,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       }
       
       if (altGameDate) {
+        console.log(`Player Game Info: Found game for ${playerKey} with alt_game_date: ${altGameDate}`);
         const result = {
           has_game_today: true,
           game_start_time: altGameDate,
@@ -366,25 +378,31 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
       }
       
       // No game info found, cache negative result with short TTL
+      console.log(`Player Game Info: No game found for ${playerKey}`);
       await setCachedData(cacheKey, defaultResponse, {
         category: 'realtime',
         ttl: 60 * 5 // Cache for 5 min
       });
       return defaultResponse;
     } catch (error) {
-      console.warn(`Error fetching fresh player game info for ${playerKey}, trying cache:`, error);
+      console.warn(`Player Game Info: Error fetching fresh data for ${playerKey}, trying cache:`, error);
       
       // Check cache as fallback only if fresh data fetch failed
+      console.log(`Player Game Info: Checking cache for ${playerKey}`);
       const cachedData = await getCachedData<any>(cacheKey, { category: 'realtime' });
       if (cachedData) {
-        console.log(`Using cached game info for player ${playerKey} as fallback`);
+        console.log(`Player Game Info: Using cached game info for player ${playerKey}`, {
+          hasGame: cachedData.has_game_today,
+          dataSource: cachedData.data_source,
+          cached: true
+        });
         return cachedData;
       }
     }
     
     return defaultResponse;
   } catch (error) {
-    console.error(`Error getting game info for player ${playerKey}:`, error);
+    console.error(`Player Game Info: Error getting game info for player ${playerKey}:`, error);
     return defaultResponse;
   }
 } 

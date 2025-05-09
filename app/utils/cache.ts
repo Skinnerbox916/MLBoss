@@ -18,15 +18,22 @@ let redisClient: Redis | null = null;
 // Initialize Redis client
 export const getRedisClient = (): Redis | null => {
   if (!CACHE_ENABLED) {
+    console.log('REDIS: Cache is disabled via CACHE_ENABLED environment variable');
     return null;
   }
 
   if (!redisClient) {
     try {
+      console.log('REDIS: Initializing connection to Redis server', {
+        url: REDIS_URL.replace(/\/\/.*@/, '//[auth-hidden]@'), // Hide auth info in logs
+        dailyTTL: DAILY_DATA_TTL,
+        cacheEnabled: CACHE_ENABLED
+      });
+      
       redisClient = new Redis(REDIS_URL, {
         // Reconnect on errors
         reconnectOnError: (err) => {
-          console.error('Redis connection error:', err);
+          console.error('REDIS: Connection error, will attempt to reconnect:', err.message);
           return true; // Always attempt to reconnect
         },
         // Set connection timeout
@@ -34,20 +41,63 @@ export const getRedisClient = (): Redis | null => {
         // Retry strategy
         retryStrategy: (times) => {
           const delay = Math.min(times * 50, 2000);
+          console.log(`REDIS: Connection retry attempt ${times}, delay ${delay}ms`);
           return delay;
         },
       });
       
+      // Error events
       redisClient.on('error', (err) => {
-        console.error('Redis error:', err);
+        console.error('REDIS: Error event:', err.message);
       });
       
+      // Connection events
       redisClient.on('connect', () => {
-        console.log('Connected to Redis');
+        console.log('REDIS: Connected to Redis server');
       });
       
+      redisClient.on('ready', () => {
+        console.log('REDIS: Redis client is ready for use');
+        // Log Redis info on startup
+        if (redisClient) {
+          redisClient.info().then(info => {
+            const lines = info.split('\n');
+            const version = lines.find(line => line.startsWith('redis_version'));
+            const memory = lines.find(line => line.startsWith('used_memory_human'));
+            const clients = lines.find(line => line.startsWith('connected_clients'));
+            console.log('REDIS: Server info', { version, memory, clients });
+          }).catch(err => {
+            console.error('REDIS: Error fetching Redis info:', err.message);
+          });
+        }
+      });
+      
+      redisClient.on('reconnecting', (delay: number) => {
+        console.log(`REDIS: Reconnecting to Redis after ${delay}ms`);
+      });
+      
+      redisClient.on('end', () => {
+        console.log('REDIS: Connection to Redis server ended');
+      });
+      
+      // Add command monitoring for the 'daily' category operations - useful for debugging
+      const monitorCommands = process.env.REDIS_MONITOR_COMMANDS === 'true';
+      if (monitorCommands) {
+        redisClient.on('select', (db) => {
+          console.log(`REDIS: Selected database ${db}`);
+        });
+        
+        redisClient.on('command', (cmd, args) => {
+          if (args && args.length > 0) {
+            const key = args[0]?.toString() || '';
+            if (key.includes('daily:')) {
+              console.log(`REDIS: Command ${cmd} for ${key}`);
+            }
+          }
+        });
+      }
     } catch (error) {
-      console.error('Error creating Redis client:', error);
+      console.error('REDIS: Error creating Redis client:', error);
       return null;
     }
   }
@@ -78,11 +128,24 @@ export async function getCachedData<T>(key: string, options: CacheOptions = {}):
   if (!redis) return null;
   
   try {
+    // Record start time for performance measurement
+    const startTime = Date.now();
+    const isDaily = key.startsWith('daily:') || options.category === 'daily';
+    
+    if (isDaily) {
+      console.log(`DAILY CACHE - Get attempt: ${key}, allowStale: ${options.allowStale}`);
+    }
+    
     // Try to get the data and metadata
     const cachedData = await redis.get(`data:${key}`);
     const cachedMeta = await redis.get(`meta:${key}`);
     
-    if (!cachedData) return null;
+    if (!cachedData) {
+      if (isDaily) {
+        console.log(`DAILY CACHE - MISS: ${key} - Data not found in Redis`);
+      }
+      return null;
+    }
     
     // Parse the data
     const data = JSON.parse(cachedData) as T;
@@ -99,6 +162,10 @@ export async function getCachedData<T>(key: string, options: CacheOptions = {}):
       // Check if data is stale based on category
       const isStale = meta.expiresAt < Date.now();
       
+      if (isDaily) {
+        console.log(`DAILY CACHE - Meta: ${key}, isStale: ${isStale}, expiresAt: ${new Date(meta.expiresAt).toISOString()}, now: ${new Date().toISOString()}`);
+      }
+      
       if (isStale) {
         // For realtime data, return null if stale to always get fresh data
         // unless allowStale is explicitly set to true
@@ -112,8 +179,14 @@ export async function getCachedData<T>(key: string, options: CacheOptions = {}):
         else if ((category === 'static' || category === 'daily' || 
             options.category === 'static' || options.category === 'daily')) {
           if (options.allowStale === false) {
+            if (isDaily) {
+              console.log(`DAILY CACHE - Skipping stale data: ${key}, allowStale explicitly set to false`);
+            }
             console.log(`Cache: Skipping stale ${category} data for key ${key}`);
             return null;
+          }
+          if (isDaily) {
+            console.log(`DAILY CACHE - Using stale data: ${key}, allowStale: ${options.allowStale}, ttl: ${meta.ttl}`);
           }
         }
         
@@ -122,9 +195,17 @@ export async function getCachedData<T>(key: string, options: CacheOptions = {}):
       }
     }
     
+    const elapsed = Date.now() - startTime;
+    if (isDaily) {
+      console.log(`DAILY CACHE - HIT: ${key}, category: ${category}, size: ${cachedData.length} bytes, elapsed: ${elapsed}ms`);
+    }
     console.log(`Cache: Hit for key ${key} (${category})`);
     return data;
   } catch (error) {
+    const isDaily = key.startsWith('daily:') || options.category === 'daily';
+    if (isDaily) {
+      console.error(`DAILY CACHE - ERROR: ${key}`, error);
+    }
     console.error(`Cache: Error getting data for key ${key}:`, error);
     return null;
   }
@@ -145,6 +226,8 @@ export async function setCachedData<T>(
   if (!redis) return;
   
   try {
+    const isDaily = key.startsWith('daily:') || options.category === 'daily';
+    
     // Default TTL based on data category or key prefix
     let ttl = DEFAULT_CACHE_TTL;
     
@@ -172,6 +255,10 @@ export async function setCachedData<T>(
       ttl = options.ttl;
     }
     
+    if (isDaily) {
+      console.log(`DAILY CACHE - Set: ${key}, ttl: ${ttl}s, expires: ${new Date(Date.now() + ttl * 1000).toISOString()}`);
+    }
+    
     // Set metadata
     const meta = {
       createdAt: Date.now(),
@@ -180,12 +267,24 @@ export async function setCachedData<T>(
       category: options.category // Store category in metadata
     };
     
+    // Convert data to string and measure size
+    const dataString = JSON.stringify(data);
+    const dataSize = dataString.length;
+    
     // Store data and metadata
-    await redis.set(`data:${key}`, JSON.stringify(data), 'EX', ttl);
+    await redis.set(`data:${key}`, dataString, 'EX', ttl);
     await redis.set(`meta:${key}`, JSON.stringify(meta), 'EX', ttl);
+    
+    if (isDaily) {
+      console.log(`DAILY CACHE - Set complete: ${key}, size: ${dataSize} bytes`);
+    }
     
     console.log(`Cache: Set for key ${key} with TTL ${ttl}s${options.category ? ` (${options.category})` : ''}`);
   } catch (error) {
+    const isDaily = key.startsWith('daily:') || options.category === 'daily';
+    if (isDaily) {
+      console.error(`DAILY CACHE - SET ERROR: ${key}`, error);
+    }
     console.error(`Cache: Error setting data for key ${key}:`, error);
   }
 }
@@ -199,9 +298,18 @@ export async function deleteCachedData(key: string): Promise<void> {
   if (!redis) return;
   
   try {
+    const isDaily = key.startsWith('daily:');
+    if (isDaily) {
+      console.log(`DAILY CACHE - Delete: ${key}`);
+    }
+    
     await redis.del(`data:${key}`, `meta:${key}`);
     console.log(`Cache: Deleted key ${key}`);
   } catch (error) {
+    const isDaily = key.startsWith('daily:');
+    if (isDaily) {
+      console.error(`DAILY CACHE - DELETE ERROR: ${key}`, error);
+    }
     console.error(`Cache: Error deleting key ${key}:`, error);
   }
 }
@@ -215,16 +323,29 @@ export async function clearCacheByPrefix(prefix: string): Promise<void> {
   if (!redis) return;
   
   try {
+    const isDaily = prefix.startsWith('daily:');
+    
     // Get all keys matching the prefix
     const dataKeys = await redis.keys(`data:${prefix}*`);
     const metaKeys = await redis.keys(`meta:${prefix}*`);
     const allKeys = [...dataKeys, ...metaKeys];
+    
+    if (isDaily) {
+      console.log(`DAILY CACHE - Clear by prefix: ${prefix}, found keys: ${allKeys.length}`);
+      if (allKeys.length > 0) {
+        console.log(`DAILY CACHE - Keys to delete: ${allKeys.join(', ')}`);
+      }
+    }
     
     if (allKeys.length > 0) {
       await redis.del(...allKeys);
       console.log(`Cache: Cleared ${allKeys.length} keys with prefix ${prefix}`);
     }
   } catch (error) {
+    const isDaily = prefix.startsWith('daily:');
+    if (isDaily) {
+      console.error(`DAILY CACHE - CLEAR ERROR: ${prefix}`, error);
+    }
     console.error(`Cache: Error clearing keys with prefix ${prefix}:`, error);
   }
 }

@@ -8,6 +8,7 @@ export default function AdminPage() {
   const [cacheStats, setCacheStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showRecentKeys, setShowRecentKeys] = useState(false);
 
   useEffect(() => {
     // Check if user is authenticated before showing admin page
@@ -48,6 +49,26 @@ export default function AdminPage() {
       
       if (!response.ok) {
         throw new Error(`Failed to clear ${category} cache`);
+      }
+      
+      // Refresh stats after clearing
+      fetchCacheStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    }
+  };
+
+  const clearAllCache = async () => {
+    try {
+      const response = await fetch('/api/admin/cache-clear-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to clear all cache');
       }
       
       // Refresh stats after clearing
@@ -104,7 +125,20 @@ export default function AdminPage() {
               </div>
               
               {/* Cache Categories */}
-              <h3 className="text-lg font-medium mb-3">Cache Categories</h3>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-lg font-medium">Cache Categories</h3>
+                <button
+                  onClick={clearAllCache}
+                  className={`px-3 py-1 rounded text-sm ${
+                    cacheStats?.totalKeys > 0 
+                      ? "bg-blue-600 text-white hover:bg-blue-700" 
+                      : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                  }`}
+                  disabled={!cacheStats?.totalKeys || cacheStats.totalKeys === 0}
+                >
+                  Clear All Cache
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -139,7 +173,12 @@ export default function AdminPage() {
                           <td className="px-6 py-4 whitespace-nowrap">
                             <button
                               onClick={() => clearCacheByCategory(category)}
-                              className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
+                              className={`px-3 py-1 rounded text-sm ${
+                                data.count > 0 
+                                  ? "bg-blue-600 text-white hover:bg-blue-700" 
+                                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                              }`}
+                              disabled={data.count === 0}
                             >
                               Clear
                             </button>
@@ -160,39 +199,53 @@ export default function AdminPage() {
               {/* Cache Keys Table - Optional, could be too large */}
               {cacheStats.keys && cacheStats.keys.length > 0 && (
                 <>
-                  <h3 className="text-lg font-medium my-4">Recent Keys</h3>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Key
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Category
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            TTL
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {cacheStats.keys.slice(0, 20).map((key: any) => ( // Show only recent 20 keys
-                          <tr key={key.name}>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm text-gray-900 font-mono">{key.name}</div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm text-gray-500">{key.category || 'N/A'}</div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm text-gray-500">{key.ttl || 'N/A'}</div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="flex justify-between items-center my-4">
+                    <h3 className="text-lg font-medium">Recent Keys</h3>
+                    <button 
+                      onClick={() => setShowRecentKeys(!showRecentKeys)} 
+                      className="text-sm px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded flex items-center"
+                    >
+                      {showRecentKeys ? 'Hide' : 'Show'} 
+                      <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 ml-1 transition-transform ${showRecentKeys ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
                   </div>
+                  
+                  {showRecentKeys && (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Key
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Category
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              TTL
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {cacheStats.keys.slice(0, 20).map((key: any) => ( // Show only recent 20 keys
+                            <tr key={key.name}>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm text-gray-900 font-mono">{key.name}</div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm text-gray-500">{key.category || 'N/A'}</div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="text-sm text-gray-500">{key.ttl || 'N/A'}</div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -202,7 +255,7 @@ export default function AdminPage() {
             </div>
           )}
           
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex justify-end space-x-3">
             <button
               onClick={fetchCacheStats}
               className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"

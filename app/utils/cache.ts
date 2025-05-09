@@ -2,8 +2,6 @@ import Redis from 'ioredis';
 
 // Set default cache durations
 const DEFAULT_CACHE_TTL = parseInt(process.env.DEFAULT_CACHE_TTL || '900', 10); // 15 minutes
-const GAME_DATA_CACHE_TTL = parseInt(process.env.GAME_DATA_CACHE_TTL || '3600', 10); // 1 hour
-const TEAM_DATA_CACHE_TTL = parseInt(process.env.TEAM_DATA_CACHE_TTL || '86400', 10); // 24 hours
 
 // Data category TTLs
 const STATIC_DATA_TTL = parseInt(process.env.STATIC_DATA_TTL || '86400', 10); // 24 hours - player teams, positions, etc.
@@ -167,10 +165,6 @@ export async function setCachedData<T>(
       ttl = DAILY_DATA_TTL;
     } else if (key.startsWith('realtime:')) {
       ttl = REALTIME_DATA_TTL;
-    } else if (key.startsWith('game:')) {
-      ttl = GAME_DATA_CACHE_TTL;
-    } else if (key.startsWith('team:')) {
-      ttl = TEAM_DATA_CACHE_TTL;
     }
     
     // Use provided TTL if specified

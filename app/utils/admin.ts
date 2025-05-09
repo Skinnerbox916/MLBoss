@@ -30,9 +30,7 @@ export async function getRedisInfo() {
       'static': { count: 0, ttl: '24h' },
       'daily': { count: 0, ttl: '12h' },
       'realtime': { count: 0, ttl: '15m' },
-      'legacy:team': { count: 0, ttl: '24h' },
-      'legacy:game': { count: 0, ttl: '1h' },
-      'legacy:other': { count: 0, ttl: '15m' },
+      'other': { count: 0, ttl: 'varied' }
     };
     
     // Get all meta keys to extract categories
@@ -53,7 +51,10 @@ export async function getRedisInfo() {
           if (meta.category) {
             // Categorized by explicit category field
             category = meta.category;
-            categories[meta.category] = categories[meta.category] || { count: 0, ttl: formatTTL(meta.ttl) };
+            if (!categories[meta.category]) {
+              // If it's a non-standard category, add it
+              categories[meta.category] = { count: 0, ttl: formatTTL(meta.ttl) };
+            }
             categories[meta.category].count++;
           } else if (key.startsWith('static:')) {
             category = 'static';
@@ -64,15 +65,10 @@ export async function getRedisInfo() {
           } else if (key.startsWith('realtime:')) {
             category = 'realtime';
             categories.realtime.count++;
-          } else if (key.startsWith('team:')) {
-            category = 'legacy:team';
-            categories['legacy:team'].count++;
-          } else if (key.startsWith('game:')) {
-            category = 'legacy:game';
-            categories['legacy:game'].count++;
           } else {
-            category = 'legacy:other';
-            categories['legacy:other'].count++;
+            // Any other format goes to 'other'
+            category = 'other';
+            categories.other.count++;
           }
           
           return {
@@ -118,30 +114,33 @@ export async function clearCacheCategory(category: string) {
   try {
     let pattern: string;
     
-    // Handle category patterns
+    // Handle category patterns for standard categories
     if (category === 'static' || category === 'daily' || category === 'realtime') {
       pattern = `${category}:*`;
-    } else if (category === 'legacy:team') {
-      pattern = 'team:*';
-    } else if (category === 'legacy:game') {
-      pattern = 'game:*';
-    } else if (category === 'legacy:other') {
-      // More complex, exclude known categories
-      const excludedPatterns = ['static:*', 'daily:*', 'realtime:*', 'team:*', 'game:*'];
       
-      // Get all keys
+      // For standard pattern-based deletion
+      const dataKeys = await redis.keys(`data:${pattern}`);
+      const metaKeys = await redis.keys(`meta:${pattern}`);
+      const allKeys = [...dataKeys, ...metaKeys];
+      
+      if (allKeys.length > 0) {
+        await redis.del(...allKeys);
+      }
+      
+      return dataKeys.length;
+    } 
+    else if (category === 'other') {
+      // For the 'other' category, exclude known categories
       const allKeys = await redis.keys('data:*');
-      
-      // Filter out the excluded patterns
-      const keysToDelete = allKeys.filter((key: string) => {
+      const keysToDelete = allKeys.filter(key => {
         const keyWithoutPrefix = key.replace('data:', '');
-        return !excludedPatterns.some(pattern => 
-          keyWithoutPrefix.match(new RegExp(`^${pattern.replace('*', '.*')}$`))
-        );
+        return !keyWithoutPrefix.startsWith('static:') && 
+               !keyWithoutPrefix.startsWith('daily:') && 
+               !keyWithoutPrefix.startsWith('realtime:');
       });
       
       // Delete filtered keys and their meta keys
-      const metaKeysToDelete = keysToDelete.map((key: string) => key.replace('data:', 'meta:'));
+      const metaKeysToDelete = keysToDelete.map(key => key.replace('data:', 'meta:'));
       const allKeysToDelete = [...keysToDelete, ...metaKeysToDelete];
       
       if (allKeysToDelete.length > 0) {
@@ -149,9 +148,9 @@ export async function clearCacheCategory(category: string) {
       }
       
       return keysToDelete.length;
-    } else {
-      // For special cases where we want to clear keys with a specific category metadata
-      // This is more complex and requires scanning the metadata
+    }
+    else {
+      // For custom categories, check metadata
       const metaKeys = await redis.keys('meta:*');
       
       const keysToDelete: string[] = [];
@@ -177,17 +176,6 @@ export async function clearCacheCategory(category: string) {
       
       return keysToDelete.length / 2; // Count only data keys
     }
-    
-    // For standard pattern-based deletion
-    const dataKeys = await redis.keys(`data:${pattern}`);
-    const metaKeys = await redis.keys(`meta:${pattern}`);
-    const allKeys = [...dataKeys, ...metaKeys];
-    
-    if (allKeys.length > 0) {
-      await redis.del(...allKeys);
-    }
-    
-    return dataKeys.length;
   } catch (error) {
     console.error('Error clearing cache category:', error);
     throw error;
@@ -210,5 +198,32 @@ function formatTTL(seconds: number): string {
     return `${Math.round(seconds / 60)}m`;
   } else {
     return `${seconds}s`;
+  }
+}
+
+/**
+ * Clear all cache entries in Redis
+ * @returns Number of keys cleared
+ */
+export async function clearAllCache() {
+  const redis = getRedisClient();
+  if (!redis) {
+    return 0;
+  }
+
+  try {
+    // Get all keys
+    const dataKeys = await redis.keys('data:*');
+    const metaKeys = await redis.keys('meta:*');
+    const allKeys = [...dataKeys, ...metaKeys];
+    
+    if (allKeys.length > 0) {
+      await redis.del(...allKeys);
+    }
+    
+    return dataKeys.length; // Return the count of data keys cleared
+  } catch (error) {
+    console.error('Error clearing all cache:', error);
+    throw error;
   }
 } 

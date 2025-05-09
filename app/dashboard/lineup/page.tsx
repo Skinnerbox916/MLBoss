@@ -47,7 +47,8 @@ export default function LineupPage() {
     const date = addDays(new Date(), i);
     return {
       value: format(date, 'yyyy-MM-dd'),
-      label: format(date, 'EEE MMM d'),
+      label: format(date, 'EEE'),
+      fullLabel: format(date, 'MMM d'),
     };
   });
 
@@ -287,47 +288,54 @@ export default function LineupPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Debug Results Modal */}
       {debugResults && <DebugResultsModal />}
 
       <div className="bg-white rounded-lg shadow-md p-4">
-        <h1 className="text-2xl font-bold text-gray-800">Lineup Builder</h1>
-        <p className="text-gray-600">
-          Select positions and players to build your optimal lineup
-        </p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">Lineup Builder</h1>
+            <p className="text-sm text-gray-600">
+              {selectedDate && format(new Date(selectedDate), 'EEEE, MMMM d, yyyy')}
+            </p>
+          </div>
+          
+          {/* Compact Date Selector */}
+          <div className="mt-3 sm:mt-0">
+            <div className="inline-flex rounded-lg shadow-sm overflow-hidden">
+              {dateOptions.map((opt, index) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setSelectedDate(opt.value)}
+                  className={`relative px-3 py-2 text-xs font-medium transition-colors
+                    ${selectedDate === opt.value 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-50 text-gray-700 hover:bg-gray-100'}
+                    ${index === 0 ? 'rounded-l-lg' : ''}
+                    ${index === dateOptions.length - 1 ? 'rounded-r-lg' : ''}
+                    border-r last:border-r-0 border-gray-200`}
+                >
+                  <div className="flex flex-col items-center">
+                    <span className="font-bold">{opt.label}</span>
+                    <span className="text-xs">{opt.fullLabel}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-4">
-        {/* Position selection */}
-        <div className="mb-6">
-          <h2 className="text-lg font-medium mb-3">Select Position</h2>
-          <PositionDisplay 
-            onPositionSelect={handlePositionSelect}
-            selectedPosition={selectedPosition}
-          />
-        </div>
-
-        {/* 7-day Date Picker */}
-        <div className="mb-6">
-          <h2 className="text-lg font-medium mb-3">Select Date</h2>
-          <div className="flex flex-row flex-wrap gap-2">
-            {dateOptions.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => setSelectedDate(opt.value)}
-                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors
-                  ${selectedDate === opt.value ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Position selection - use PositionDisplay component */}
+        <PositionDisplay 
+          onPositionSelect={handlePositionSelect}
+          selectedPosition={selectedPosition}
+        />
 
         {/* Player selection */}
-        <div>
-          <h2 className="text-lg font-medium mb-3">Player Selection</h2>
+        <div className="mt-4">
           {loading ? (
             <SkeletonPlayerList />
           ) : error ? (
@@ -339,13 +347,13 @@ export default function LineupPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-3 py-4 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-500 uppercase">R</th>
-                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-500 uppercase">HR</th>
-                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-500 uppercase">RBI</th>
-                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-500 uppercase">SB</th>
-                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-500 uppercase">AVG</th>
-                    <th className="px-3 py-4 text-center text-xs font-medium text-gray-500 uppercase">OPS</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">R</th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">HR</th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">RBI</th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">SB</th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">AVG</th>
+                    <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">OPS</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-100">
@@ -361,51 +369,48 @@ export default function LineupPage() {
                         rowStatus === 'il' ? 'bg-red-50' :
                         rowStatus === 'no-game' ? 'bg-gray-50' : ''
                       }>
-                        <td className="px-3 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center">
-                              <input
-                                type="radio"
-                                name={`starter-${selectedPosition}`}
-                                checked={isStarter}
-                                onChange={() => handleStarterSelect(player.name)}
-                                disabled={!selectedPosition}
-                                className="h-4 w-4 text-purple-600 border-gray-300 focus:ring-purple-500"
-                              />
-                            </div>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name={`starter-${selectedPosition}`}
+                              checked={isStarter}
+                              onChange={() => handleStarterSelect(player.name)}
+                              disabled={!selectedPosition}
+                              className="h-3 w-3 text-blue-600 border-gray-300 focus:ring-blue-500"
+                            />
                             {player.image_url && (
-                              <img src={player.image_url} alt={player.name} className="w-12 h-12 rounded-full border object-cover" />
+                              <img src={player.image_url} alt={player.name} className="w-8 h-8 rounded-full border object-cover" />
                             )}
                             <div className="flex flex-col">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium text-base">{player.name}</span>
-                                <span className="text-sm text-gray-500 font-medium">{player.team}</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="font-medium text-sm">{player.name}</span>
+                                <span className="text-xs text-gray-500">{player.team}</span>
                                 {player.status === 'DTD' && (
-                                  <span className="px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 text-xs font-semibold">DTD</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-800 text-xs font-medium">DTD</span>
                                 )}
                                 {player.status && player.status.includes('IL') && (
-                                  <span className="px-2 py-0.5 rounded bg-red-100 text-red-800 text-xs font-semibold">{player.status}</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-800 text-xs font-medium">{player.status}</span>
                                 )}
-                                {/* Add Debug button */}
                                 <button 
                                   onClick={(e) => {
                                     e.preventDefault();
                                     debugPlayerGame(player.playerKey, player.teamKey);
                                   }}
-                                  className="px-2 py-0.5 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700"
+                                  className="px-1.5 py-0.5 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700"
                                   title="Debug Yahoo API"
                                 >
                                   Debug
                                 </button>
                               </div>
-                              <div className="flex flex-wrap gap-1 mt-1">
+                              <div className="flex flex-wrap gap-1 mt-0.5">
                                 {eligiblePositions.map((pos, idx) => (
                                   <span
                                     key={idx}
-                                    className={`text-xs px-1.5 py-0.5 rounded ${
+                                    className={`text-xs px-1 py-0 rounded ${
                                       pos === selectedPosition && isStarter
-                                        ? 'bg-purple-100 text-purple-800 font-medium'
-                                        : 'bg-gray-300 text-gray-800'
+                                        ? 'bg-blue-100 text-blue-800 font-medium'
+                                        : 'bg-gray-200 text-gray-700'
                                     }`}
                                   >
                                     {pos}
@@ -415,12 +420,12 @@ export default function LineupPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-3 py-4 text-center">{player.stats?.R ?? '-'}</td>
-                        <td className="px-3 py-4 text-center">{player.stats?.HR ?? '-'}</td>
-                        <td className="px-3 py-4 text-center">{player.stats?.RBI ?? '-'}</td>
-                        <td className="px-3 py-4 text-center">{player.stats?.SB ?? '-'}</td>
-                        <td className="px-3 py-4 text-center">{player.stats?.AVG ?? '-'}</td>
-                        <td className="px-3 py-4 text-center">{player.stats?.OPS ?? '-'}</td>
+                        <td className="px-3 py-2 text-center text-xs">{player.stats?.R ?? '-'}</td>
+                        <td className="px-3 py-2 text-center text-xs">{player.stats?.HR ?? '-'}</td>
+                        <td className="px-3 py-2 text-center text-xs">{player.stats?.RBI ?? '-'}</td>
+                        <td className="px-3 py-2 text-center text-xs">{player.stats?.SB ?? '-'}</td>
+                        <td className="px-3 py-2 text-center text-xs">{player.stats?.AVG ?? '-'}</td>
+                        <td className="px-3 py-2 text-center text-xs">{player.stats?.OPS ?? '-'}</td>
                       </tr>
                     );
                   })}

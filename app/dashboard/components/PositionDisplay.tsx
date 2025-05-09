@@ -17,23 +17,24 @@ const POSITIONS = [
 
 export default function PositionDisplay({ onPositionSelect, selectedPosition }: PositionDisplayProps) {
   return (
-    <>
-      <h2 className="text-xl font-semibold mb-4">Batter Comparisons</h2>
-      <div className="flex flex-row space-x-2 overflow-x-auto pb-1 mb-2">
+    <div className="flex flex-wrap items-center">
+      <span className="text-sm font-medium text-gray-700 mr-3">Position:</span>
+      <div className="flex flex-wrap gap-1">
         {POSITIONS.map((position) => (
           <button
             key={position.id}
             onClick={() => onPositionSelect(position.id)}
-            className={`p-2 min-w-[44px] rounded-md text-sm font-medium transition-colors
+            className={`px-2 py-1 rounded text-xs font-medium transition-colors
               ${selectedPosition === position.id
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}
+            title={position.label}
           >
             {position.id}
           </button>
         ))}
       </div>
-    </>
+    </div>
   );
 } 

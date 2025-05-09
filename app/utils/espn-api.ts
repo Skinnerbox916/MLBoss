@@ -1,4 +1,9 @@
 import { getCachedData, setCachedData } from './cache';
+import { 
+  EspnScoreboard,
+  EspnGameCheckResult,
+  EspnTeam
+} from '../types/espn';
 
 // Default timeout for API requests
 const API_TIMEOUT = 5000;
@@ -11,7 +16,7 @@ const ESPN_SCOREBOARD_CACHE_KEY = 'realtime:espn:mlb:scoreboard';
  * NOTE: This should only be used as a fallback when Yahoo API data is unavailable
  * @returns ESPN scoreboard data
  */
-export async function getEspnScoreboard() {
+export async function getEspnScoreboard(): Promise<EspnScoreboard> {
   console.log('ESPN API: Fetching scoreboard data (fallback to Yahoo)');
   
   try {
@@ -25,7 +30,7 @@ export async function getEspnScoreboard() {
     });
     
     if (response.ok) {
-      const data = await response.json();
+      const data = await response.json() as EspnScoreboard;
       
       // Cache the data as fallback
       await setCachedData(ESPN_SCOREBOARD_CACHE_KEY, data, { 
@@ -43,7 +48,7 @@ export async function getEspnScoreboard() {
   }
 
   // Check cache as fallback
-  const cachedData = await getCachedData(ESPN_SCOREBOARD_CACHE_KEY, { category: 'realtime' });
+  const cachedData = await getCachedData<EspnScoreboard>(ESPN_SCOREBOARD_CACHE_KEY, { category: 'realtime' });
   if (cachedData) {
     console.log('ESPN API: Using cached scoreboard data as fallback');
     return cachedData;
@@ -60,7 +65,7 @@ export async function getEspnScoreboard() {
  * @param teamAbbr Team abbreviation
  * @returns Object with game info
  */
-export async function checkTeamGameFromEspn(teamAbbr: string) {
+export async function checkTeamGameFromEspn(teamAbbr: string): Promise<EspnGameCheckResult> {
   // This function should be used as a fallback only for:
   // 1. Probable pitcher information which Yahoo doesn't provide
   // 2. When Yahoo API fails to return game information
@@ -84,7 +89,9 @@ export async function checkTeamGameFromEspn(teamAbbr: string) {
       const competition = event.competitions[0];
       
       for (const team of competition.competitors || []) {
-        if (team.team?.abbreviation?.toUpperCase() === teamAbbrUpper) {
+        // Use the EspnTeam interface
+        const espnTeam = team as EspnTeam;
+        if (espnTeam.abbreviation?.toUpperCase() === teamAbbrUpper) {
           return {
             has_game_today: true,
             game_start_time: event.date || null,

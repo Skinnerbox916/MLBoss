@@ -11,6 +11,7 @@ interface DashboardStats {
     ilOutOfIlSpot: number;
     dtdStarting: number;
     openSlots: number;
+    availableSwaps: number;
   };
   upcomingMatchup: {
     opponent: string;
@@ -27,6 +28,11 @@ interface DashboardStats {
     update: string;
     timestamp: string;
   }>;
+  waiver: {
+    priority: number;
+    weeklyAdds: number;
+    weeklyLimit: number;
+  };
 }
 
 export default function Dashboard() {
@@ -39,7 +45,9 @@ export default function Dashboard() {
     categories, 
     opponentName, 
     myScore, 
-    opponentScore, 
+    opponentScore,
+    myTeamLogo,
+    opponentLogo,
     loading: matchupLoading 
   } = useMatchupStats();
 
@@ -55,7 +63,8 @@ export default function Dashboard() {
             startersWithNoGames: 2,
             ilOutOfIlSpot: 1,
             dtdStarting: 1,
-            openSlots: 2
+            openSlots: 2,
+            availableSwaps: 1
           },
           upcomingMatchup: {
             opponent: "Only Judge Can Judge Me",
@@ -95,6 +104,11 @@ export default function Dashboard() {
               timestamp: 'Yesterday, 4:45 PM'
             }
           ],
+          waiver: {
+            priority: 8,
+            weeklyAdds: 3,
+            weeklyLimit: 6
+          }
         });
         setLoading(false);
       }, 1000);
@@ -109,9 +123,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
-      
+    <div className="space-y-6 px-2">
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(5)].map((_, i) => (
@@ -152,7 +164,7 @@ export default function Dashboard() {
               
               <button 
                 onClick={handleViewAllStats}
-                className="mt-3 text-sm text-purple-600 font-medium hover:text-purple-800 w-full text-center"
+                className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center"
               >
                 View Full Matchup →
               </button>
@@ -170,35 +182,41 @@ export default function Dashboard() {
             <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-gray-700">Lineup Issues</h2>
-                <HiExclamation className="h-6 w-6 text-amber-600" />
+                <HiExclamation className="h-6 w-6 text-amber-500" />
               </div>
-              <div className="space-y-3 flex-1 flex flex-col justify-center">
+              <div className="flex-1 flex flex-col justify-center space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">No games:</span>
-                  <span className={`font-bold ${stats?.lineupIssues.startersWithNoGames ? 'text-red-600' : 'text-gray-600'}`}>
+                  <span className="font-bold text-gray-600">
                     {stats?.lineupIssues.startersWithNoGames}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">IL players starting:</span>
-                  <span className={`font-bold ${stats?.lineupIssues.ilOutOfIlSpot ? 'text-red-600' : 'text-gray-600'}`}>
+                  <span className="font-bold text-gray-600">
                     {stats?.lineupIssues.ilOutOfIlSpot}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">DTD starting:</span>
-                  <span className={`font-bold ${stats?.lineupIssues.dtdStarting ? 'text-amber-600' : 'text-gray-600'}`}>
+                  <span className="font-bold text-gray-600">
                     {stats?.lineupIssues.dtdStarting}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">Open slots:</span>
-                  <span className={`font-bold ${stats?.lineupIssues.openSlots ? 'text-red-600' : 'text-gray-600'}`}>
+                  <span className="font-bold text-gray-600">
                     {stats?.lineupIssues.openSlots}
                   </span>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Available Swaps:</span>
+                  <span className="font-bold text-gray-600">
+                    {stats?.lineupIssues.availableSwaps}
+                  </span>
+                </div>
               </div>
-              <button className="mt-3 text-sm text-purple-600 font-medium hover:text-purple-800 w-full text-center">
+              <button className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
                 Fix Lineup Issues →
               </button>
             </div>
@@ -219,7 +237,7 @@ export default function Dashboard() {
                   <span>Coming Soon</span>
                 </div>
               </div>
-              <button className="mt-3 text-sm text-purple-600 font-medium hover:text-purple-800 w-full text-center">
+              <button className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
                 Schedule Analysis →
               </button>
             </div>
@@ -262,7 +280,7 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-              <button className="mt-4 text-sm text-purple-600 font-medium hover:text-purple-800 w-full text-center">
+              <button className="mt-4 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
                 View All Activity →
               </button>
             </div>
@@ -282,20 +300,29 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-              <button className="mt-4 text-sm text-purple-600 font-medium hover:text-purple-800 w-full text-center">
+              <button className="mt-4 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
                 View All Updates →
               </button>
             </div>
 
-            {/* Players to Watch Card */}
+            {/* Waivers Card */}
             <div className="bg-white rounded-lg shadow-md p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-700">Trending Players</h2>
+                <h2 className="text-lg font-semibold text-gray-700">Waivers</h2>
                 <HiChartBar className="h-6 w-6 text-indigo-600" />
               </div>
-              <div className="text-center text-gray-500 py-8">
-                <p className="text-sm">Feature coming soon</p>
-                <p className="text-xs mt-2">Player market analysis and trends</p>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Waiver Priority:</span>
+                  <span className="font-bold text-gray-900">{stats?.waiver.priority}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Weekly Adds:</span>
+                  <span className="font-bold text-gray-900">{stats?.waiver.weeklyAdds} of {stats?.waiver.weeklyLimit}</span>
+                </div>
+                <div className="text-center text-gray-500 pt-4">
+                  <p className="text-sm">Additional waiver data coming soon</p>
+                </div>
               </div>
             </div>
           </div>

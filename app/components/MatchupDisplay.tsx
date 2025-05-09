@@ -5,6 +5,7 @@ interface MatchupProps {
   week: string | number;
   opponentName: string;
   opponentLogo?: string;
+  myTeamLogo?: string;
   myScore?: string | number;
   opponentScore?: string | number;
   categories?: CategoryStat[];
@@ -51,13 +52,13 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
   week,
   opponentName,
   opponentLogo,
+  myTeamLogo,
   myScore,
   opponentScore,
   categories = [],
   isLoading = false
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
   
   useEffect(() => {
     // Full dump of all categories with detailed info
@@ -287,73 +288,66 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
     <div className="bg-white rounded-lg shadow">
       {/* Matchup header */}
       <div className="p-4 border-b border-gray-200 relative overflow-visible">
-        {/* Card Title and Week, above the row */}
-        <div className="flex items-center justify-between mb-2">
+        {/* Card Title and Week */}
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center">
             <span className="text-xl font-bold text-gray-800">Current Matchup</span>
             <span className="ml-2 text-sm font-semibold text-gray-500">(Week {week || '-'})</span>
           </div>
-          {hasValidCategoryData && (
-            <button 
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="text-gray-500 hover:text-gray-700 transition-colors flex items-center justify-center ml-2"
-              aria-expanded={isExpanded}
-              title={isExpanded ? "Collapse categories" : "Expand categories"}
-              style={{ height: '36px', width: '36px' }}
-            >
-              <svg 
-                xmlns="http://www.w3.org/2000/svg" 
-                className={`h-6 w-6 transition-transform duration-200 ${isExpanded ? 'transform rotate-180' : ''}`} 
-                viewBox="0 0 20 20" 
-                fill="currentColor"
-              >
-                <path 
-                  fillRule="evenodd" 
-                  d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" 
-                  clipRule="evenodd" 
-                />
-              </svg>
-            </button>
-          )}
         </div>
-        {/* Scoreboard floating in the red box area */}
-        <div className="relative h-0">
-          <div className="absolute left-1/2 -translate-x-1/2 -top-7 z-10">
-            <div className="flex items-end bg-white/80 rounded-xl shadow px-6 py-2 border border-gray-200 min-w-[190px]">
-              <div className="flex flex-col items-center mx-3">
-                <span className="text-green-600 text-3xl font-extrabold drop-shadow">{wins}</span>
-                <span className="text-sm font-semibold tracking-wide text-gray-500 mt-1">W</span>
+        
+        {/* Team vs Team with logos */}
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-start w-[45%]">
+            {myTeamLogo ? (
+              <img src={myTeamLogo} alt="Your Team Logo" className="w-12 h-12 rounded-full object-cover shadow-sm border border-gray-200" />
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center shadow-sm border border-indigo-200">
+                <span className="text-indigo-700 font-bold text-lg">You</span>
               </div>
-              <span className="text-2xl text-gray-300 font-extrabold mx-2 select-none" aria-hidden="true">|</span>
-              <div className="flex flex-col items-center mx-3">
-                <span className="text-red-600 text-3xl font-extrabold drop-shadow">{losses}</span>
-                <span className="text-sm font-semibold tracking-wide text-gray-500 mt-1">L</span>
+            )}
+            <span className="ml-3 font-semibold text-lg truncate">Your Team</span>
+          </div>
+          
+          <div className="flex flex-col items-center">
+            <span className="text-sm font-medium text-gray-500 mb-1">vs</span>
+          </div>
+          
+          <div className="flex items-center justify-end w-[45%]">
+            <span className="mr-3 font-semibold text-lg truncate text-right">{opponentName || '-'}</span>
+            {opponentLogo ? (
+              <img src={opponentLogo} alt="Opponent Logo" className="w-12 h-12 rounded-full object-cover shadow-sm border border-gray-200" />
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center shadow-sm border border-gray-200">
+                <span className="text-gray-500 font-bold text-xs">{opponentName?.substring(0, 2) || '?'}</span>
               </div>
-              <span className="text-2xl text-gray-300 font-extrabold mx-2 select-none" aria-hidden="true">|</span>
-              <div className="flex flex-col items-center mx-3">
-                <span className="text-gray-600 text-3xl font-extrabold drop-shadow">{ties}</span>
-                <span className="text-sm font-semibold tracking-wide text-gray-500 mt-1">T</span>
-              </div>
+            )}
+          </div>
+        </div>
+        
+        {/* Scoreboard */}
+        <div className="mt-4 mb-1">
+          <div className="flex items-center justify-center rounded-xl bg-gray-50 border border-gray-100 py-2 px-6 mx-auto max-w-[280px] shadow-sm">
+            <div className="flex flex-col items-center mx-3">
+              <span className="text-green-600 text-3xl font-extrabold">{wins}</span>
+              <span className="text-sm font-semibold tracking-wide text-gray-500 mt-1">W</span>
+            </div>
+            <span className="text-2xl text-gray-300 font-extrabold mx-2 select-none" aria-hidden="true">|</span>
+            <div className="flex flex-col items-center mx-3">
+              <span className="text-red-600 text-3xl font-extrabold">{losses}</span>
+              <span className="text-sm font-semibold tracking-wide text-gray-500 mt-1">L</span>
+            </div>
+            <span className="text-2xl text-gray-300 font-extrabold mx-2 select-none" aria-hidden="true">|</span>
+            <div className="flex flex-col items-center mx-3">
+              <span className="text-gray-600 text-3xl font-extrabold">{ties}</span>
+              <span className="text-sm font-semibold tracking-wide text-gray-500 mt-1">T</span>
             </div>
           </div>
         </div>
-        {/* Team names and Scoreboard in a single row */}
-        <div className="flex items-center justify-between gap-4 mt-6">
-          {/* Team names left-aligned */}
-          <div className="flex items-center flex-shrink-0">
-            <span className="font-semibold text-lg">You</span>
-            <span className="mx-2 text-gray-500">vs</span>
-            {opponentLogo && (
-              <img src={opponentLogo} alt="Opponent Logo" className="w-8 h-8 rounded-full mr-2" />
-            )}
-            <span className="font-semibold text-lg">{opponentName || '-'}</span>
-          </div>
-          {/* (No scoreboard here, it's floating above) */}
-        </div>
       </div>
-
-      {/* Categories display */}
-      {hasValidCategoryData && isExpanded ? (
+      
+      {/* Categories display - always show categories if available */}
+      {hasValidCategoryData ? (
         <div className="p-4 space-y-4">
           {/* Batting categories */}
           {battingCategories.length > 0 && (
@@ -443,11 +437,11 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
             </>
           )}
         </div>
-      ) : !hasValidCategoryData ? (
+      ) : (
         <div className="p-4 text-center text-gray-500">
           No category data available
         </div>
-      ) : null}
+      )}
     </div>
   );
 };

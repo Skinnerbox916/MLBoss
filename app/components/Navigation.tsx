@@ -18,7 +18,7 @@ const navStyles = `
     width: 4px;
     height: 4px;
     border-radius: 50%;
-    background-color: black;
+    background-color: #3c1791;
     margin-right: 8px;
     vertical-align: middle;
   }
@@ -47,6 +47,7 @@ const navStyles = `
     display: flex;
     flex-direction: column;
     height: 100%;
+    color: #111827;
   }
   
   .admin-dropdown {
@@ -123,12 +124,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
                   <Link href={item.href} 
                     className={`nav-link ${
                       isActive 
-                        ? 'text-purple-700' 
-                        : 'text-gray-700 hover:text-purple-600'
+                        ? 'text-purple-700 font-semibold' 
+                        : 'text-gray-700 hover:text-purple-700'
                     }`}
                   >
                     <item.icon className={`nav-icon h-5 w-5 ${
-                      isActive ? 'text-purple-700' : ''
+                      isActive ? 'text-purple-700' : 'text-gray-600'
                     }`} />
                     <span>{item.name}</span>
                   </Link>
@@ -142,9 +143,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
               <div className="relative inline-block w-full">
                 <button
                   onClick={() => setAdminOpen(!adminOpen)}
-                  className="nav-link flex items-center py-1 text-gray-700 hover:text-purple-600"
+                  className="nav-link flex items-center py-1 text-gray-700 hover:text-purple-700"
                 >
-                  <HiCog className="nav-icon h-5 w-5" />
+                  <HiCog className="nav-icon h-5 w-5 text-gray-600" />
                   <span>Admin</span>
                   <span className="admin-dropdown">▼</span>
                 </button>
@@ -153,13 +154,13 @@ export default function Navigation({ onLogout }: NavigationProps) {
                   <div className="ml-9 mt-1">
                     <Link 
                       href="/admin"
-                      className="block py-1 text-sm text-gray-700 hover:text-purple-600"
+                      className="block py-1 text-sm text-gray-700 hover:text-purple-700"
                     >
                       Admin Console
                     </Link>
                     <Link 
                       href="/admin/settings"
-                      className="block py-1 text-sm text-gray-700 hover:text-purple-600"
+                      className="block py-1 text-sm text-gray-700 hover:text-purple-700"
                     >
                       Settings
                     </Link>
@@ -173,7 +174,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         <div className="p-4 border-t border-gray-200">
           <button
             onClick={onLogout}
-            className="w-full py-1 px-4 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+            className="w-full py-1 px-4 border border-gray-300 text-sm font-medium rounded-md text-white bg-[#3c1791] hover:bg-[#2a1066] transition-colors"
           >
             Logout
           </button>

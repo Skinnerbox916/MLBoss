@@ -22,7 +22,9 @@ export default function MatchupPage() {
     opponentName, 
     week,
     myScore, 
-    opponentScore, 
+    opponentScore,
+    myTeamLogo,
+    opponentLogo,
     loading,
     error
   } = useMatchupStats();
@@ -46,6 +48,8 @@ export default function MatchupPage() {
           myScore={String(myScore || '0')}
           opponentScore={String(opponentScore || '0')}
           categories={convertCategories(categories || [])}
+          opponentLogo={opponentLogo || undefined}
+          myTeamLogo={myTeamLogo || undefined}
           isLoading={false}
         />
       )}

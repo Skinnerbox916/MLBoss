@@ -26,11 +26,11 @@ export default function TeamHeader({ teamData, loading }: TeamHeaderProps) {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow-md p-4 animate-pulse">
+      <div className="w-full bg-white border-b border-gray-200 animate-pulse p-2">
         <div className="flex items-center">
-          <div className="w-14 h-14 bg-gray-200 rounded-full mr-4"></div>
+          <div className="w-12 h-12 bg-gray-200 rounded-full mr-4"></div>
           <div className="flex-1">
-            <div className="h-6 bg-gray-200 rounded w-1/3 mb-2"></div>
+            <div className="h-5 bg-gray-200 rounded w-1/3 mb-2"></div>
             <div className="h-4 bg-gray-200 rounded w-2/3"></div>
           </div>
         </div>
@@ -39,15 +39,14 @@ export default function TeamHeader({ teamData, loading }: TeamHeaderProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-4">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* Left: Team identity */}
+    <div className="w-full bg-white border-b border-gray-200">
+      <div className="max-w-screen-xl mx-auto px-4 py-3">
         <div className="flex items-center">
           {getTeamProperty('team_logo') && (
             <img 
               src={getTeamProperty('team_logo')} 
               alt="Team Logo" 
-              className="w-14 h-14 rounded-full mr-4 border"
+              className="w-12 h-12 rounded-full mr-3 border"
             />
           )}
           <div>
@@ -55,7 +54,7 @@ export default function TeamHeader({ teamData, loading }: TeamHeaderProps) {
               href={getTeamProperty('url', '#')} 
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-xl font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1"
+              className="text-lg font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1"
             >
               {getTeamProperty('name', 'Team Name')}
               <svg 
@@ -73,31 +72,13 @@ export default function TeamHeader({ teamData, loading }: TeamHeaderProps) {
                 />
               </svg>
             </a>
-            <div className="text-gray-600 text-sm mt-1">
+            <div className="text-gray-600 text-sm">
               {getTeamProperty('league_name', 'Unknown League')}
               {" | "}
               {getTeamProperty('record', '0-0')}
               {" | "}
               {getTeamProperty('rank') ? `${getOrdinalSuffix(getTeamProperty('rank'))}` : '-'}
             </div>
-          </div>
-        </div>
-
-        {/* Right: Team Stats */}
-        <div className="flex flex-wrap gap-4 md:gap-6">
-          <div className="text-center">
-            <span className="block text-gray-700 font-medium text-xs">Waiver Priority</span>
-            <span className="block text-lg font-bold text-gray-900">{getTeamProperty('waiver_priority', '-')}</span>
-          </div>
-          <div className="text-center">
-            <span className="block text-gray-700 font-medium text-xs">Weekly Adds</span>
-            <span className="block text-lg font-bold text-gray-900">
-              {getTeamProperty('moves_used', 0)} of {getTeamProperty('moves_limit', 0)}
-            </span>
-          </div>
-          <div className="text-center">
-            <span className="block text-gray-700 font-medium text-xs">Available Swaps</span>
-            <span className="block text-lg font-bold text-gray-900">{getTeamProperty('available_swaps', 0)}</span>
           </div>
         </div>
       </div>

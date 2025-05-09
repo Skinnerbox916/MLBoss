@@ -30,7 +30,7 @@ export default function PlayerCard({ player }: PlayerCardProps) {
     : ['R', 'HR', 'RBI', 'SB', 'AVG', 'OPS'];
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:shadow-md transition-shadow">
+    <div className="bg-white rounded-lg shadow-md p-4 border border-gray-100 hover:shadow-lg transition-shadow">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center space-x-3">
           {player.image_url ? (
@@ -71,7 +71,7 @@ export default function PlayerCard({ player }: PlayerCardProps) {
 
       {/* Matchup Information */}
       {player.matchup && (
-        <div className="mb-3 p-2 bg-white rounded-md">
+        <div className="mb-3 p-2 bg-gray-50 rounded-md">
           <div className="text-sm font-medium text-gray-700">
             vs {player.matchup.opponent}
           </div>
@@ -86,7 +86,7 @@ export default function PlayerCard({ player }: PlayerCardProps) {
       {player.stats && (
         <div className="grid grid-cols-3 gap-2">
           {relevantStats.map((stat) => (
-            <div key={stat} className="text-center p-1 bg-white rounded">
+            <div key={stat} className="text-center p-1 bg-gray-50 rounded">
               <div className="text-xs text-gray-500">{stat}</div>
               <div className="text-sm font-medium">
                 {player.stats?.[stat] || '-'}

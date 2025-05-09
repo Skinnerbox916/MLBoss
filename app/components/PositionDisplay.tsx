@@ -1,40 +1,44 @@
 import React from 'react';
+import { PositionDisplayProps } from '../types/ui';
 
-interface PositionDisplayProps {
-  onPositionSelect: (position: string) => void;
-  selectedPosition: string | null;
-}
+// This component displays a position label with appropriate styling
+// Different from the original implementation which was for position selection
+const PositionDisplay: React.FC<PositionDisplayProps> = ({ position, size = 'md', className = '' }) => {
+  // Position color mapping
+  const positionColorMap: Record<string, string> = {
+    'C': 'bg-red-100 text-red-800',
+    '1B': 'bg-blue-100 text-blue-800',
+    '2B': 'bg-green-100 text-green-800',
+    '3B': 'bg-purple-100 text-purple-800',
+    'SS': 'bg-indigo-100 text-indigo-800',
+    'OF': 'bg-yellow-100 text-yellow-800',
+    'SP': 'bg-orange-100 text-orange-800',
+    'RP': 'bg-pink-100 text-pink-800',
+    'P': 'bg-gray-100 text-gray-800',
+    'UTIL': 'bg-gray-100 text-gray-700',
+    'BN': 'bg-gray-100 text-gray-600',
+    'IL': 'bg-red-100 text-red-700',
+    'NA': 'bg-gray-100 text-gray-500',
+    // Default
+    'default': 'bg-gray-100 text-gray-800',
+  };
 
-const POSITIONS = [
-  { id: 'C', label: 'Catcher' },
-  { id: '1B', label: 'First Base' },
-  { id: '2B', label: 'Second Base' },
-  { id: '3B', label: 'Third Base' },
-  { id: 'SS', label: 'Shortstop' },
-  { id: 'OF', label: 'Outfield' },
-  { id: 'UTIL', label: 'Utility' },
-];
+  // Size mapping
+  const sizeClasses = {
+    'sm': 'text-xs px-1.5 py-0.5',
+    'md': 'text-sm px-2 py-1', 
+    'lg': 'text-base px-3 py-1.5'
+  };
 
-export default function PositionDisplay({ onPositionSelect, selectedPosition }: PositionDisplayProps) {
+  // Get color class or use default
+  const colorClass = positionColorMap[position] || positionColorMap.default;
+  const sizeClass = sizeClasses[size] || sizeClasses.md;
+
   return (
-    <div className="flex flex-wrap items-center">
-      <span className="text-sm font-medium text-gray-700 mr-3">Position:</span>
-      <div className="flex flex-wrap gap-1">
-        {POSITIONS.map((position) => (
-          <button
-            key={position.id}
-            onClick={() => onPositionSelect(position.id)}
-            className={`px-2 py-1 rounded text-xs font-medium transition-colors
-              ${selectedPosition === position.id
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            title={position.label}
-          >
-            {position.id}
-          </button>
-        ))}
-      </div>
-    </div>
+    <span className={`inline-block font-medium rounded ${colorClass} ${sizeClass} ${className}`}>
+      {position}
+    </span>
   );
-} 
+};
+
+export default PositionDisplay; 

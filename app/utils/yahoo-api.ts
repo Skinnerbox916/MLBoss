@@ -1,6 +1,15 @@
 import { parseString } from 'xml2js';
 import { getAccessToken } from './auth.server';
 import { getCachedData, setCachedData, generateYahooCacheKey } from './cache';
+import { 
+  YahooApiOptions, 
+  YahooPlayer, 
+  YahooTeam, 
+  YahooLeague,
+  YahooGame,
+  YahooMatchup,
+  YahooPlayerGameInfo
+} from '../types/yahoo';
 
 // Default timeout for API requests
 const API_TIMEOUT = 5000;
@@ -26,7 +35,7 @@ interface ApiOptions {
  */
 export async function fetchYahooApi<T>(
   endpoint: string,
-  options: ApiOptions = {}
+  options: YahooApiOptions = {}
 ): Promise<T> {
   const accessToken = getAccessToken();
   if (!accessToken) {

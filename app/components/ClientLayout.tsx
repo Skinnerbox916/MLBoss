@@ -1,60 +1,50 @@
 'use client';
 
-import { useRouter, usePathname } from 'next/navigation';
-import { useState, useEffect, ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
+import { ReactNode } from 'react';
 import DashboardFrame from './DashboardFrame';
 
+/**
+ * Props for the ClientLayout component
+ * @interface ClientLayoutProps
+ * @property {ReactNode} children - The child components to be rendered
+ */
 type ClientLayoutProps = {
   children: ReactNode;
 };
 
+/**
+ * Array of paths that should be wrapped in the DashboardFrame
+ * Used to determine which pages should have the dashboard layout
+ */
+const DASHBOARD_PATHS = [
+  '/dashboard',
+  '/lineup',
+  '/matchup',
+  '/roster',
+  '/league'
+] as const;
+
+/**
+ * ClientLayout component that handles the layout structure of the application
+ * Wraps dashboard pages in DashboardFrame and renders other pages directly
+ * 
+ * @param {ClientLayoutProps} props - The component props
+ * @returns {JSX.Element} The rendered layout
+ */
 export default function ClientLayout({ children }: ClientLayoutProps) {
-  const router = useRouter();
   const pathname = usePathname();
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (typeof document !== 'undefined' && 
-        !pathname?.includes('/auth') && 
-        !pathname?.startsWith('/api') && 
-        pathname !== '/' && 
-        !document.cookie.includes('yahoo_client_access_token')) {
-      router.push('/');
-    }
-  }, [router, pathname]);
+  // Determine if the current path should be wrapped in DashboardFrame
+  const isDashboardPath = DASHBOARD_PATHS.some(path => pathname.startsWith(path));
 
-  const handleLogout = () => {
-    fetch('/api/auth/logout')
-      .then(() => {
-        router.push('/');
-      });
-  };
+  // Log the current path and whether it's a dashboard path for debugging
+  console.debug(`[ClientLayout] Current path: ${pathname}, isDashboardPath: ${isDashboardPath}`);
 
-  // For login page, return just the children
-  if (pathname === '/') {
-    return <>{children}</>;
-  }
-
-  // Determine if this is a dashboard related path
-  const isDashboardPath = pathname?.startsWith('/dashboard') || 
-                          pathname?.startsWith('/lineup') || 
-                          pathname?.startsWith('/matchup') || 
-                          pathname?.startsWith('/roster') || 
-                          pathname?.startsWith('/league');
-
-  return (
-    <>
-      {error ? (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 mb-4 w-full">
-          {error}
-        </div>
-      ) : null}
-      
-      {isDashboardPath ? (
-        <DashboardFrame>{children}</DashboardFrame>
-      ) : (
-        children
-      )}
-    </>
+  // Render either wrapped in DashboardFrame or directly based on the path
+  return isDashboardPath ? (
+    <DashboardFrame>{children}</DashboardFrame>
+  ) : (
+    children
   );
 } 

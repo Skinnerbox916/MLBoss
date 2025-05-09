@@ -1,22 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { Layout } from './layout';
 
 export default function DashboardFrame({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const [teamData, setTeamData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dataFetched, setDataFetched] = useState(false);
 
   useEffect(() => {
-    if (typeof document !== 'undefined' && !document.cookie.includes('yahoo_client_access_token')) {
-      router.push('/');
-      return;
-    }
-
     // Only fetch if we haven't fetched data yet
     if (!dataFetched) {
       const fetchData = async () => {
@@ -42,7 +35,7 @@ export default function DashboardFrame({ children }: { children: React.ReactNode
 
       fetchData();
     }
-  }, [router, dataFetched]);
+  }, [dataFetched]);
 
   return (
     <>
@@ -52,7 +45,7 @@ export default function DashboardFrame({ children }: { children: React.ReactNode
         </div>
       ) : null}
       
-      {/* Using the new centralized Layout component */}
+      {/* Using the centralized Layout component */}
       <Layout teamData={teamData} loading={loading}>
         {children}
       </Layout>

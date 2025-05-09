@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, getRefreshToken, clearYahooCookies } from '../../../utils/auth';
+import { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET } from '../../../utils/auth';
+import { getRefreshToken, clearYahooCookies } from '../../../utils/auth.server';
 
 export async function POST(req: NextRequest) {
   const refreshToken = getRefreshToken();

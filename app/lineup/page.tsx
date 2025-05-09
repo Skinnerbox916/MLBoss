@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { SkeletonPlayerList } from '../components/SkeletonLoading';
-import PositionDisplay from '../components/PositionDisplay';
+import PositionSelector from '../components/PositionSelector';
 import { format, addDays } from 'date-fns';
 
 interface Player {
@@ -298,7 +298,7 @@ export default function LineupPage() {
 
       {/* Position selection */}
       <div className="bg-white rounded-lg shadow-md p-4">
-        <PositionDisplay onPositionSelect={handlePositionSelect} selectedPosition={selectedPosition} />
+        <PositionSelector onPositionSelect={handlePositionSelect} selectedPosition={selectedPosition} />
       </div>
       
       {/* Roster list */}

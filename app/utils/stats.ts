@@ -19,6 +19,28 @@ export interface GroupedStats {
 }
 
 /**
+ * Calculate if a team is winning in a category based on stat values and whether higher is better
+ */
+export function calculateWinning(myStat: string | number, opponentStat: string | number, isHigherBetter: boolean): boolean | null {
+  // Convert values to numbers for comparison
+  const myValue = typeof myStat === 'string' ? parseFloat(myStat) : myStat;
+  const opponentValue = typeof opponentStat === 'string' ? parseFloat(String(opponentStat)) : opponentStat;
+  
+  // Handle invalid values
+  if (isNaN(myValue) || isNaN(opponentValue) || myStat === '-' || opponentStat === '-') return null;
+  
+  // Handle ties
+  if (myValue === opponentValue) return null;
+  
+  // Determine winning based on isHigherBetter flag
+  if (isHigherBetter) {
+    return myValue > opponentValue;
+  } else {
+    return myValue < opponentValue;
+  }
+}
+
+/**
  * Calculate the delta between my stat and opponent stat
  */
 export function calculateDelta(myStat: string | number, opponentStat: string | number, isHigherBetter: boolean): number {
@@ -27,19 +49,16 @@ export function calculateDelta(myStat: string | number, opponentStat: string | n
     const myValue = parseFloat(myStat);
     const opponentValue = parseFloat(String(opponentStat));
     
-    // For stats like AVG, OPS, ERA, WHIP - we want the actual difference
-    let diff = myValue - opponentValue;
-    
-    // Invert the difference for stats where lower is better
-    return isHigherBetter ? diff : -diff;
+    // Always use the simple difference (my - opponent) without inversion
+    return myValue - opponentValue;
   }
   
   // Handle number stats
   const myValue = typeof myStat === 'string' ? parseInt(myStat, 10) : myStat;
   const opponentValue = typeof opponentStat === 'string' ? parseInt(String(opponentStat), 10) : opponentStat;
   
-  // Invert the difference for stats where lower is better
-  return isHigherBetter ? myValue - opponentValue : opponentValue - myValue;
+  // Always use the simple difference (my - opponent) without inversion
+  return myValue - opponentValue;
 }
 
 /**
@@ -50,15 +69,11 @@ export function processCategoryStats(categories: CategoryStat[]): CategoryStat[]
     // Skip categories that don't contribute to scoring
     if (cat.name === 'H/AB') return cat;
     
+    // Calculate delta (with appropriate sign inversion for display)
     const delta = calculateDelta(cat.myStat, cat.opponentStat, cat.isHigherBetter);
     
-    // Determine winning status if not already set
-    let winning = cat.winning;
-    if (winning === undefined || winning === null) {
-      if (delta > 0) winning = true;
-      else if (delta < 0) winning = false;
-      else winning = null; // Tie
-    }
+    // Always calculate winning here (single source of truth)
+    const winning = calculateWinning(cat.myStat, cat.opponentStat, cat.isHigherBetter);
     
     return {
       ...cat,

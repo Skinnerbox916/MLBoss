@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { HiChartBar, HiExclamation, HiCalendar, HiBell, HiRefresh, HiStar } from 'react-icons/hi';
 import { useRouter } from 'next/navigation';
-import CategoryTracker from './components/CategoryTracker';
 import { useMatchupStats } from '../utils/hooks';
+import BattingCategoryCard from './components/BattingCategoryCard';
+import PitchingCategoryCard from './components/PitchingCategoryCard';
+import { processCategoryStats, groupCategoriesByType } from '@/app/utils/stats';
 
 interface DashboardStats {
   lineupIssues: {
@@ -53,6 +55,11 @@ export default function Dashboard() {
     ties,
     loading: matchupLoading 
   } = useMatchupStats();
+
+  // Group categories into batting and pitching
+  const processedCategories = useMemo(() => processCategoryStats(categories), [categories]);
+  const groupedStats = useMemo(() => groupCategoriesByType(processedCategories), [processedCategories]);
+  const { batting, pitching } = groupedStats;
 
   useEffect(() => {
     // In a real implementation, this would fetch data from your API
@@ -142,9 +149,9 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Matchup Score Card */}
             <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-700">Matchup Score</h2>
+              <div className="flex items-center gap-2 mb-4">
                 <HiStar className="h-6 w-6 text-amber-500" />
+                <h2 className="text-lg font-semibold text-gray-700">Matchup Score</h2>
               </div>
               
               {/* Team Avatars and VS - Reduced size to give more space to scores */}
@@ -215,19 +222,25 @@ export default function Dashboard() {
               </button>
             </div>
             
-            {/* Category Tracker Card - now using our shared component */}
-            <CategoryTracker 
-              categories={categories} 
-              isSmall={true} 
+            {/* Batting Category Card */}
+            <BattingCategoryCard 
+              categories={batting} 
+              onViewAllClick={handleViewAllStats}
+              loading={matchupLoading}
+            />
+            
+            {/* Pitching Category Card */}
+            <PitchingCategoryCard 
+              categories={pitching} 
               onViewAllClick={handleViewAllStats}
               loading={matchupLoading}
             />
             
             {/* Lineup Issues Card */}
             <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-gray-700">Lineup Issues</h2>
+              <div className="flex items-center gap-2 mb-4">
                 <HiExclamation className="h-6 w-6 text-amber-500" />
+                <h2 className="text-lg font-semibold text-gray-700">Lineup Issues</h2>
               </div>
               <div className="flex-1 flex flex-col justify-center space-y-2">
                 <div className="flex justify-between items-center">
@@ -265,36 +278,15 @@ export default function Dashboard() {
                 Fix Lineup Issues →
               </button>
             </div>
-            
-            {/* Upcoming Matchup Card */}
-            <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-gray-700">Next Week</h2>
-                <HiCalendar className="h-6 w-6 text-blue-600" />
-              </div>
-              <div className="flex-1 flex flex-col justify-center">
-                <div className="text-sm text-gray-700 mb-4">
-                  <p className="mb-1 font-semibold">{stats?.upcomingMatchup.opponent}</p>
-                  <p className="text-gray-500">{stats?.upcomingMatchup.dateRange}</p>
-                </div>
-                <div className="flex justify-between text-xs text-gray-600">
-                  <span>Matchup Analysis</span>
-                  <span>Coming Soon</span>
-                </div>
-              </div>
-              <button className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
-                Schedule Analysis →
-              </button>
-            </div>
           </div>
 
           {/* Second row - 3 column cards (1/3 width each) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Recent Activity Card */}
             <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-700">Recent Activity</h2>
+              <div className="flex items-center gap-2 mb-4">
                 <HiRefresh className="h-6 w-6 text-green-600" />
+                <h2 className="text-lg font-semibold text-gray-700">Recent Activity</h2>
               </div>
               <div className="space-y-4">
                 {stats?.recentActivity.map((activity, index) => (
@@ -332,9 +324,9 @@ export default function Dashboard() {
             
             {/* Player Updates Card */}
             <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-700">Player Updates</h2>
+              <div className="flex items-center gap-2 mb-4">
                 <HiBell className="h-6 w-6 text-orange-500" />
+                <h2 className="text-lg font-semibold text-gray-700">Player Updates</h2>
               </div>
               <div className="space-y-4">
                 {stats?.playerUpdates.map((update, index) => (
@@ -352,9 +344,9 @@ export default function Dashboard() {
 
             {/* Waivers Card */}
             <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-700">Waivers</h2>
+              <div className="flex items-center gap-2 mb-4">
                 <HiChartBar className="h-6 w-6 text-indigo-600" />
+                <h2 className="text-lg font-semibold text-gray-700">Waivers</h2>
               </div>
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
@@ -369,6 +361,29 @@ export default function Dashboard() {
                   <p className="text-sm">Additional waiver data coming soon</p>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Stash Next Week card below the main grid for now */}
+          <div className="mt-4">
+            <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
+              <div className="flex items-center gap-2 mb-4">
+                <HiCalendar className="h-6 w-6 text-blue-600" />
+                <h2 className="text-lg font-semibold text-gray-700">Next Week</h2>
+              </div>
+              <div className="flex-1 flex flex-col justify-center">
+                <div className="text-sm text-gray-700 mb-4">
+                  <p className="mb-1 font-semibold">{stats?.upcomingMatchup.opponent}</p>
+                  <p className="text-gray-500">{stats?.upcomingMatchup.dateRange}</p>
+                </div>
+                <div className="flex justify-between text-xs text-gray-600">
+                  <span>Matchup Analysis</span>
+                  <span>Coming Soon</span>
+                </div>
+              </div>
+              <button className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
+                Schedule Analysis →
+              </button>
             </div>
           </div>
         </div>

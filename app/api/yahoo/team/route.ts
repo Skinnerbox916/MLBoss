@@ -301,7 +301,7 @@ export async function GET(req: NextRequest) {
                   const competition = event.competitions[0];
                   
                   for (const team of competition.competitors || []) {
-                    const teamAbbr = team.team?.abbreviation?.toUpperCase();
+                    const teamAbbr = team.abbreviation?.toUpperCase();
                     
                     for (const [yahooTeamKey, yahooTeamAbbr] of Array.from(teamAbbreviations.entries())) {
                       if (yahooTeamAbbr.toUpperCase() === teamAbbr) {
@@ -334,7 +334,7 @@ export async function GET(req: NextRequest) {
                       const competition = event.competitions[0];
                       
                       for (const team of competition.competitors || []) {
-                        const teamAbbr = team.team?.abbreviation?.toUpperCase();
+                        const teamAbbr = team.abbreviation?.toUpperCase();
                         
                         // Find matching Yahoo team key for this ESPN team abbreviation
                         for (const [yahooTeamKey, yahooTeamAbbr] of Array.from(teamAbbreviations.entries())) {
@@ -557,20 +557,7 @@ export async function GET(req: NextRequest) {
             const opponentStat = safeIndex >= 0 && opponentStats[safeIndex]?.value?.[0] || '0';
             
             // Determine if higher is better (default true unless specified otherwise)
-            const isHigherBetter = cat.is_reverse_sort?.[0] !== '1';
-            
-            let winning = null;
-            if (myStat !== '-' && opponentStat !== '-') {
-              const myValue = parseFloat(myStat);
-              const opponentValue = parseFloat(opponentStat);
-              if (!isNaN(myValue) && !isNaN(opponentValue)) {
-                if (isHigherBetter) {
-                  winning = myValue > opponentValue ? true : myValue < opponentValue ? false : null;
-                } else {
-                  winning = myValue < opponentValue ? true : myValue > opponentValue ? false : null;
-                }
-              }
-            }
+            let isHigherBetter = cat.is_reverse_sort?.[0] !== '1';
             
             // Enhance strikeout categories to make them more distinguishable
             let displayName = cat.display_name?.[0] || categoryName;
@@ -583,21 +570,16 @@ export async function GET(req: NextRequest) {
               
               if (isBatterCategory) {
                 displayName = 'Batter Ks';
-                // For batters, lower strikeouts is better (override the default)
-                if (myStat !== '-' && opponentStat !== '-') {
-                  const myValue = parseFloat(myStat);
-                  const opponentValue = parseFloat(opponentStat);
-                  if (!isNaN(myValue) && !isNaN(opponentValue)) {
-                    winning = myValue < opponentValue ? true : myValue > opponentValue ? false : null;
-                  }
-                }
+                // For batters, lower strikeouts is better
+                isHigherBetter = false;
               } else {
                 displayName = 'Pitcher Ks';
-                // For pitchers, higher strikeouts is better (which is the default)
+                // For pitchers, higher strikeouts is better
+                isHigherBetter = true;
               }
               
               // Log how we categorized this
-              console.log(`Team API: Categorized strikeout stat '${categoryName}' at index ${index} as ${displayName}`);
+              console.log(`Team API: Categorized strikeout stat '${categoryName}' at index ${index} as ${displayName}, isHigherBetter: ${isHigherBetter}`);
             }
             
             return {
@@ -606,7 +588,6 @@ export async function GET(req: NextRequest) {
               displayName,
               myStat,
               opponentStat,
-              winning,
               isHigherBetter
             };
           });

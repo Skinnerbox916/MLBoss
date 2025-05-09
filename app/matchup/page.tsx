@@ -1,6 +1,6 @@
 'use client';
 import { useRouter } from 'next/navigation';
-import MatchupDisplay from '../components/MatchupDisplay';
+import MatchupDisplay from './components/MatchupDisplay';
 import { useMatchupStats } from '@/app/utils/hooks';
 import { CategoryStat } from '@/app/utils/stats';
 

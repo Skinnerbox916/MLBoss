@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import { Sidebar } from './';
 import { Header } from './';
+import { HeaderProps } from '@/app/types/ui';
 
 // Centralized styles
 const styles = {
@@ -11,11 +12,23 @@ const styles = {
 
 interface LayoutProps {
   children: ReactNode;
-  teamData?: any;
+  teamData?: {
+    team?: HeaderProps['team'];
+  };
   loading?: boolean;
 }
 
 export default function Layout({ children, teamData, loading = false }: LayoutProps) {
+  // Ensure consistent data structure between server and client
+  const headerTeam = teamData?.team ? {
+    name: teamData.team.name || 'Team Name',
+    team_logo: teamData.team.team_logo,
+    url: teamData.team.url,
+    league_name: teamData.team.league_name || 'Unknown League',
+    record: teamData.team.record || '0-0',
+    rank: teamData.team.rank
+  } : undefined;
+
   return (
     <div className={styles.layout}>
       {/* Sidebar */}
@@ -24,7 +37,7 @@ export default function Layout({ children, teamData, loading = false }: LayoutPr
       {/* Main content area */}
       <div className={styles.mainContent}>
         {/* Header */}
-        <Header teamData={teamData} loading={loading} />
+        <Header team={headerTeam} loading={loading} />
         
         {/* Content */}
         <div className={styles.contentContainer}>

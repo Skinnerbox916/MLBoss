@@ -1,58 +1,45 @@
 import React from 'react';
-import Link from 'next/link';
+import { getOrdinalSuffix } from '@/app/utils/formatters';
+import { HeaderProps } from '@/app/types/ui';
 
-// Centralized styles
-const styles = {
-  header: 'w-full border-b border-gray-200 mb-4 bg-white shadow',
-  container: 'h-[80px] flex items-center',
-  content: 'max-w-screen-xl w-full mx-auto px-6',
-  teamWrapper: 'flex items-center justify-center',
-  teamLogo: 'w-14 h-14 rounded-full mr-4 border',
-  teamName: 'text-xl font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1',
-  externalLinkIcon: 'h-4 w-4 text-gray-400',
-  teamInfo: 'text-gray-600 text-sm mt-1',
-  loadingContainer: 'w-full border-b border-gray-200 animate-pulse mb-4',
-  loadingHeight: 'h-[80px] flex items-center',
-  loadingContent: 'max-w-screen-xl w-full mx-auto px-6',
-  loadingItemWrapper: 'flex items-center justify-center',
-  loadingCircle: 'w-12 h-12 bg-gray-200 rounded-full mr-3',
-  loadingLine1: 'h-5 bg-gray-200 rounded w-40 mb-2',
-  loadingLine2: 'h-4 bg-gray-200 rounded w-60',
-};
-
-// Helper to add ordinal suffix to rank
-function getOrdinalSuffix(rank: string | number) {
-  const n = typeof rank === 'string' ? parseInt(rank, 10) : rank;
-  if (isNaN(n)) return rank;
-  const j = n % 10, k = n % 100;
-  if (j === 1 && k !== 11) return n + 'st';
-  if (j === 2 && k !== 12) return n + 'nd';
-  if (j === 3 && k !== 13) return n + 'rd';
-  return n + 'th';
-}
-
-interface HeaderProps {
-  teamData: any;
-  loading: boolean;
-}
-
-export default function Header({ teamData, loading }: HeaderProps) {
-  // Function to safely access team properties
-  const getTeamProperty = (property: string, fallback: any = null) => {
-    if (!teamData?.team) return fallback;
-    return teamData.team[property] !== undefined ? teamData.team[property] : fallback;
+/**
+ * @deprecated Use the new `team` prop instead of `teamData`. This interface will be removed in a future version.
+ */
+interface LegacyHeaderProps {
+  teamData?: {
+    team?: {
+      name?: string;
+      team_logo?: string;
+      url?: string;
+      league_name?: string;
+      record?: string;
+      rank?: number;
+    };
   };
+  loading?: boolean;
+}
+
+// Support both new and legacy prop structures
+type Props = HeaderProps | LegacyHeaderProps;
+
+export default function Header(props: Props) {
+  const { loading = false } = props;
+  
+  // Handle both new and legacy prop structures
+  const team = 'team' in props 
+    ? props.team 
+    : (props as LegacyHeaderProps).teamData?.team;
 
   if (loading) {
     return (
-      <div className={styles.loadingContainer}>
-        <div className={styles.loadingHeight}>
-          <div className={styles.loadingContent}>
-            <div className={styles.loadingItemWrapper}>
-              <div className={styles.loadingCircle}></div>
+      <div className="w-full border-b border-gray-200 animate-pulse mb-4">
+        <div className="h-[80px] flex items-center">
+          <div className="max-w-screen-xl w-full mx-auto px-6">
+            <div className="flex items-center justify-center">
+              <div className="w-12 h-12 bg-gray-200 rounded-full mr-3"></div>
               <div>
-                <div className={styles.loadingLine1}></div>
-                <div className={styles.loadingLine2}></div>
+                <div className="h-5 bg-gray-200 rounded w-40 mb-2"></div>
+                <div className="h-4 bg-gray-200 rounded w-60"></div>
               </div>
             </div>
           </div>
@@ -61,29 +48,52 @@ export default function Header({ teamData, loading }: HeaderProps) {
     );
   }
 
+  // Early return with consistent structure
+  if (!team) {
+    return (
+      <div className="w-full border-b border-gray-200 mb-4 bg-white shadow">
+        <div className="h-[80px] flex items-center">
+          <div className="max-w-screen-xl w-full mx-auto px-6">
+            <div className="flex items-center justify-center">
+              <div className="text-gray-400">No team data available</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Ensure all values have defaults to prevent hydration mismatches
+  const teamName = team.name || 'Team Name';
+  const teamLogo = team.team_logo || '';
+  const teamUrl = team.url || '#';
+  const leagueName = team.league_name || 'Unknown League';
+  const record = team.record || '0-0';
+  const rank = team.rank ? getOrdinalSuffix(team.rank) : '-';
+
   return (
-    <div className={styles.header}>
-      <div className={styles.container}>
-        <div className={styles.content}>
-          <div className={styles.teamWrapper}>
-            {getTeamProperty('team_logo') && (
+    <div className="w-full border-b border-gray-200 mb-4 bg-white shadow">
+      <div className="h-[80px] flex items-center">
+        <div className="max-w-screen-xl w-full mx-auto px-6">
+          <div className="flex items-center justify-center">
+            {teamLogo && (
               <img 
-                src={getTeamProperty('team_logo')} 
-                alt="Team Logo" 
-                className={styles.teamLogo}
+                src={teamLogo} 
+                alt={`${teamName} Logo`} 
+                className="w-14 h-14 rounded-full mr-4 border"
               />
             )}
             <div>
               <a 
-                href={getTeamProperty('url', '#')} 
+                href={teamUrl} 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className={styles.teamName}
+                className="text-xl font-bold text-[#3C1791] hover:text-[#2A1066] transition-colors inline-flex items-center gap-1"
               >
-                {getTeamProperty('name', 'Team Name')}
+                {teamName}
                 <svg 
                   xmlns="http://www.w3.org/2000/svg" 
-                  className={styles.externalLinkIcon}
+                  className="h-4 w-4 text-gray-400" 
                   fill="none" 
                   viewBox="0 0 24 24" 
                   stroke="currentColor"
@@ -96,12 +106,12 @@ export default function Header({ teamData, loading }: HeaderProps) {
                   />
                 </svg>
               </a>
-              <div className={styles.teamInfo}>
-                {getTeamProperty('league_name', 'Unknown League')}
+              <div className="text-gray-600 text-sm mt-1">
+                {leagueName}
                 {" | "}
-                {getTeamProperty('record', '0-0')}
+                {record}
                 {" | "}
-                {getTeamProperty('rank') ? `${getOrdinalSuffix(getTeamProperty('rank'))}` : '-'}
+                {rank}
               </div>
             </div>
           </div>

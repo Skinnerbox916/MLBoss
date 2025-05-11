@@ -1,17 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 
-// Helper to add ordinal suffix to rank
-function getOrdinalSuffix(rank: string | number) {
-  const n = typeof rank === 'string' ? parseInt(rank, 10) : rank;
-  if (isNaN(n)) return rank;
-  const j = n % 10, k = n % 100;
-  if (j === 1 && k !== 11) return n + 'st';
-  if (j === 2 && k !== 12) return n + 'nd';
-  if (j === 3 && k !== 13) return n + 'rd';
-  return n + 'th';
-}
+import { useTeam } from '@/app/utils/TeamContext';
+import { useRouter } from 'next/navigation';
+import { getOrdinalSuffix } from '@/app/utils/formatters';
 
 // Define an interface for the team in standings
 interface StandingsTeam {
@@ -26,41 +17,8 @@ interface StandingsTeam {
 }
 
 export default function LeaguePage() {
+  const { teamData, loading, error } = useTeam();
   const router = useRouter();
-  const [teamData, setTeamData] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (typeof document !== 'undefined' && !document.cookie.includes('yahoo_client_access_token')) {
-      router.push('/');
-      return;
-    }
-
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        // Fetch team data
-        const teamRes = await fetch('/api/yahoo/team');
-        const teamData = await teamRes.json();
-        
-        if (teamData.error) {
-          setError(teamData.error);
-          setLoading(false);
-          return;
-        }
-
-        setTeamData(teamData);
-        setLoading(false);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred');
-        setLoading(false);
-      }
-    };
-
-    // Fetch data
-    fetchData();
-  }, [router]);
 
   // Get safe access to team properties
   const getTeamProperty = (property: string, fallback: any = null) => {
@@ -203,20 +161,18 @@ export default function LeaguePage() {
         </div>
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow-md p-4">
-          <h2 className="text-lg font-medium mb-4">Recent Transactions</h2>
-          <p className="text-gray-500 text-sm">
-            Transaction data not available yet. Coming soon!
-          </p>
-        </div>
-        
-        <div className="bg-white rounded-lg shadow-md p-4">
-          <h2 className="text-lg font-medium mb-4">League Settings</h2>
-          <p className="text-gray-500 text-sm">
-            League settings not available yet. Coming soon!
-          </p>
-        </div>
+      <div className="bg-white rounded-lg shadow-md p-4">
+        <h2 className="text-lg font-medium mb-4">Recent Transactions</h2>
+        <p className="text-gray-500 text-sm">
+          Transaction data not available yet. Coming soon!
+        </p>
+      </div>
+      
+      <div className="bg-white rounded-lg shadow-md p-4">
+        <h2 className="text-lg font-medium mb-4">League Settings</h2>
+        <p className="text-gray-500 text-sm">
+          League settings not available yet. Coming soon!
+        </p>
       </div>
     </div>
   );

@@ -62,4 +62,19 @@ export interface MatchupDisplayProps {
   };
   showProjections?: boolean;
   className?: string;
+}
+
+/**
+ * Header component props
+ */
+export interface HeaderProps {
+  team?: {
+    name: string;
+    team_logo?: string;
+    url?: string;
+    league_name: string;
+    record: string;
+    rank?: number;
+  };
+  loading?: boolean;
 } 

@@ -59,6 +59,7 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (typeof document !== 'undefined' && !document.cookie.includes('yahoo_client_access_token')) {
+      console.log('TeamProvider: No yahoo_client_access_token cookie, redirecting to /');
       router.push('/');
       return;
     }
@@ -67,27 +68,33 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
     if (!dataFetched) {
       const fetchData = async () => {
         try {
+          console.log('TeamProvider: Fetching /api/yahoo/team...');
           // Fetch team data for the header
           const teamRes = await fetch('/api/yahoo/team');
           const data = await teamRes.json();
+          console.log('TeamProvider: Fetched data:', data);
           
           if (data.error) {
             setError(data.error);
             setLoading(false);
+            console.log('TeamProvider: Error from API:', data.error);
             return;
           }
 
           setTeamData(data);
           setLoading(false);
           setDataFetched(true);
+          console.log('TeamProvider: Set teamData and loading=false');
           
           // Store in localStorage for future page loads
           if (typeof window !== 'undefined') {
             localStorage.setItem('teamData', JSON.stringify(data));
+            console.log('TeamProvider: Saved teamData to localStorage');
           }
         } catch (err) {
           setError(err instanceof Error ? err.message : 'An error occurred');
           setLoading(false);
+          console.log('TeamProvider: Fetch error:', err);
         }
       };
 

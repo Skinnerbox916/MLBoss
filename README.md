@@ -77,6 +77,55 @@ The application is transitioning to a more semantic caching approach based on da
 
 API requests can specify the data category when caching responses, allowing more appropriate TTL selection based on data type rather than endpoint.
 
+## Data Layer Architecture
+
+The application now features a comprehensive data layer architecture that efficiently manages data fetching, caching, and state management:
+
+### Core Components
+
+1. **Base Data Hooks**: Specialized hooks for each major data type:
+   - `usePlayer.ts`: Player data and statistics
+   - `useTeam.ts`: Team roster and matchup information
+   - `useLeague.ts`: League standings and transactions
+
+2. **React Query Integration**: The application uses TanStack Query (React Query) to provide:
+   - Automatic caching and request deduplication
+   - Background data revalidation
+   - Optimistic updates and mutations
+   - Stale-while-revalidate pattern
+   - Automatic retry logic
+
+3. **Context Providers**: Application-wide state management with:
+   - `QueryProvider`: Configures React Query for the application
+   - `FantasyDataProvider`: Makes commonly used data available app-wide
+
+4. **Composite Hooks**: Feature-specific hooks that combine data from multiple sources:
+   - `useLineupOptimizer`: Combines roster and player stats for lineup recommendations
+
+### Multi-Level Caching
+
+The data architecture implements a multi-level caching strategy:
+
+1. **Server-Side (Redis)**: Long-term persistence with category-based TTLs:
+   - Static data (24h): League settings, player metadata
+   - Daily data (12h): Rosters, standings
+   - Realtime data (15m): Game scores, player stats
+
+2. **Client-Side (React Query)**: In-memory caching with:
+   - Configurable stale times based on data type
+   - Automatic background refreshing
+   - Query invalidation when data changes
+
+3. **Application State**: Context-based state for UI-specific data that doesn't need persistence
+
+### Key Benefits
+
+- **Separation of Concerns**: Clear distinction between data fetching, state management, and UI
+- **Code Reusability**: Base hooks can be combined for complex features
+- **Performance**: Multiple cache layers minimize API calls and improve response times
+- **Consistency**: Standardized patterns for data access throughout the application
+- **Scalability**: The architecture can easily accommodate additional data types and features
+
 ## Getting Started
 
 1. Clone the repository

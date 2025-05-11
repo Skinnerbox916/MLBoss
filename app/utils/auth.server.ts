@@ -9,21 +9,23 @@ export function clearYahooCookies() {
 }
 
 // Get the current access token from cookies
-export function getAccessToken() {
+export function getAccessToken(): string | undefined {
   const cookieStore = cookies();
-  return cookieStore.get('yahoo_access_token')?.value;
+  const value = cookieStore.get('yahoo_access_token')?.value;
+  return value ? String(value) : undefined;
 }
 
 // Get the current refresh token from cookies
-export function getRefreshToken() {
+export function getRefreshToken(): string | undefined {
   const cookieStore = cookies();
   const token = cookieStore.get('yahoo_refresh_token')?.value;
   console.log('Auth Server: Refresh token present:', !!token);
-  return token;
+  return token ? String(token) : undefined;
 }
 
 // Get the stored state parameter from cookies
-export function getStoredState() {
+export function getStoredState(): string | undefined {
   const cookieStore = cookies();
-  return cookieStore.get('yahoo_state')?.value;
+  const state = cookieStore.get('yahoo_state')?.value;
+  return state ? String(state) : undefined;
 } 

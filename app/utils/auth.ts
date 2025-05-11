@@ -1,4 +1,6 @@
-// Minimal Yahoo OAuth client-side helpers
+'use client';
+
+import { getCookie, setCookie, deleteCookie } from 'cookies-next';
 import { AuthCookieOptions } from '../types/auth';
 
 // App ID: 2yZewwq0 (NOT used in OAuth flow)
@@ -36,4 +38,59 @@ export function deleteClientCookie(name: string): void {
 }
 
 export const YAHOO_AUTH_URL = (state: string, forceLogin: boolean = false): string =>
-  `https://api.login.yahoo.com/oauth2/request_auth?client_id=${YAHOO_CLIENT_ID}&redirect_uri=${encodeURIComponent(YAHOO_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent('fspt-w')}&state=${state}${forceLogin ? '&prompt=login' : ''}`; 
+  `https://api.login.yahoo.com/oauth2/request_auth?client_id=${YAHOO_CLIENT_ID}&redirect_uri=${encodeURIComponent(YAHOO_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent('fspt-w')}&state=${state}${forceLogin ? '&prompt=login' : ''}`;
+
+// Functions that work in both client and server components
+
+// Get the current access token from cookies
+export function getAccessToken(): string | undefined {
+  return getCookie('yahoo_access_token')?.toString();
+}
+
+// Get the current refresh token from cookies
+export function getRefreshToken(): string | undefined {
+  const token = getCookie('yahoo_refresh_token')?.toString();
+  return token;
+}
+
+// Get the stored state parameter from cookies
+export function getStoredState(): string | undefined {
+  return getCookie('yahoo_state')?.toString();
+}
+
+// Clear all Yahoo-related cookies (client-side only)
+export function clearYahooCookies(): void {
+  deleteCookie('yahoo_access_token');
+  deleteCookie('yahoo_refresh_token');
+  deleteCookie('yahoo_state');
+}
+
+// Set access token
+export function setAccessToken(token: string): void {
+  setCookie('yahoo_access_token', token, {
+    maxAge: 60 * 60, // 1 hour
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  });
+}
+
+// Set refresh token
+export function setRefreshToken(token: string): void {
+  setCookie('yahoo_refresh_token', token, {
+    maxAge: 60 * 60 * 24 * 30, // 30 days
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  });
+}
+
+// Set state parameter
+export function setState(state: string): void {
+  setCookie('yahoo_state', state, {
+    maxAge: 60 * 10, // 10 minutes
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  });
+} 

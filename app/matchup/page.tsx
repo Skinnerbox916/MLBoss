@@ -1,4 +1,5 @@
 'use client';
+import React from 'react';
 import { useRouter } from 'next/navigation';
 import MatchupDisplay from './components/MatchupDisplay';
 import { useMatchupStats } from '@/app/utils/hooks';

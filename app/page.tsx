@@ -12,8 +12,11 @@ function HomeContent() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+    
     // Add a small delay to simulate checking and make animation visible
     const checkAuth = setTimeout(() => {
       // Check if user already has a token and redirect to dashboard
@@ -96,6 +99,23 @@ function HomeContent() {
       setIsLoggingIn(false);
     }
   };
+
+  if (!mounted) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <div style={{ marginBottom: '2rem' }}>
+          <Image
+            src="/MLBoss Logo.png"
+            alt="MLBoss Logo"
+            width={200}
+            height={0}
+            style={{ height: 'auto' }}
+            priority
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -181,7 +201,16 @@ export default function Home() {
   return (
     <Suspense fallback={
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        Loading...
+        <div style={{ marginBottom: '2rem' }}>
+          <Image
+            src="/MLBoss Logo.png"
+            alt="MLBoss Logo"
+            width={200}
+            height={0}
+            style={{ height: 'auto' }}
+            priority
+          />
+        </div>
       </div>
     }>
       <HomeContent />

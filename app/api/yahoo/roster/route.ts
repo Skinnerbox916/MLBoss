@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAccessToken } from '../../../utils/auth.server';
+import { getAccessToken } from '../../../lib/server/auth';
 import { parseString } from 'xml2js';
-import { getYahooMlbGameId, getYahooTeamKey, getPlayerGameInfo, fetchYahooApi, parseYahooXml } from '../../../utils/yahoo-api';
+import { getYahooMlbGameId, getYahooTeamKey, getPlayerGameInfo, fetchYahooApi, parseYahooXml } from '../../../utils/yahoo-api-server';
 import { checkTeamGameFromEspn } from '../../../utils/espn-api';
-import { getCachedData, setCachedData, generateYahooCacheKey } from '../../../utils/cache';
+import { getCachedData, setCachedData, generateCacheKey } from '../../../lib/server/cache';
 
 // Declare global namespace for TypeScript
 declare global {
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
     const today = new Date().toISOString().split('T')[0];
     
     // Generate cache key for the roster data
-    const rosterCacheKey = generateYahooCacheKey('roster', { date: today }, 'daily');
+    const rosterCacheKey = generateCacheKey('roster', { date: today }, 'daily');
     console.log(`Roster API: Generated cache key for daily roster data: ${rosterCacheKey}`);
     
     // Check if we have cached roster data
@@ -212,7 +212,7 @@ export async function GET(req: NextRequest) {
     }));
 
     // Step 5: Fetch probable pitchers for today to indicate who's starting
-    const probablePitchersCacheKey = generateYahooCacheKey('probable_pitchers', { date: today }, 'daily');
+    const probablePitchersCacheKey = generateCacheKey('probable_pitchers', { date: today }, 'daily');
     console.log(`Roster API: Generated cache key for probable pitchers: ${probablePitchersCacheKey}`);
     let pitchersScheduledToday: string[] = [];
     

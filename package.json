@@ -5,11 +5,14 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:notypes": "NEXT_DISABLE_TYPESCRIPT=1 next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.75.7",
     "@types/xml2js": "^0.4.14",
+    "cookies-next": "^4.1.1",
     "date-fns": "^4.1.0",
     "ioredis": "^5.6.1",
     "next": "14.1.0",

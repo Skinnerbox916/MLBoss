@@ -1,48 +1,24 @@
 "use client";
 import { useEffect, useState, useMemo } from 'react';
-import { HiChartBar, HiExclamation, HiCalendar, HiBell, HiRefresh, HiStar } from 'react-icons/hi';
 import { useRouter } from 'next/navigation';
 import { useMatchupStats } from '../utils/hooks';
-import BattingCategoryCard from './components/BattingCategoryCard';
-import PitchingCategoryCard from './components/PitchingCategoryCard';
+import { useDashboardData } from '../utils/dashboard-hooks';
 import { processCategoryStats, groupCategoriesByType } from '@/app/utils/stats';
 
-interface DashboardStats {
-  lineupIssues: {
-    startersWithNoGames: number;
-    ilOutOfIlSpot: number;
-    dtdStarting: number;
-    openSlots: number;
-    availableSwaps: number;
-  };
-  upcomingMatchup: {
-    opponent: string;
-    dateRange: string;
-  };
-  recentActivity: Array<{
-    type: 'add' | 'drop' | 'trade';
-    player?: string;
-    team?: string;
-    timestamp: string;
-  }>;
-  playerUpdates: Array<{
-    player: string;
-    update: string;
-    timestamp: string;
-  }>;
-  waiver: {
-    priority: number;
-    weeklyAdds: number;
-    weeklyLimit: number;
-  };
-}
+// Import all the card components
+import MatchupScoreCard from './components/MatchupScoreCard';
+import BattingCategoryCard from './components/BattingCategoryCard';
+import PitchingCategoryCard from './components/PitchingCategoryCard';
+import LineupIssuesCard from './components/LineupIssuesCard';
+import RecentActivityCard from './components/RecentActivityCard';
+import PlayerUpdatesCard from './components/PlayerUpdatesCard';
+import WaiversCard from './components/WaiversCard';
+import NextWeekCard from './components/NextWeekCard';
 
 export default function Dashboard() {
   const router = useRouter();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
   
-  // Use the shared hook to fetch matchup stats
+  // Get matchup data from matchup hook
   const { 
     categories, 
     opponentName, 
@@ -56,85 +32,37 @@ export default function Dashboard() {
     loading: matchupLoading 
   } = useMatchupStats();
 
+  // Get all dashboard data from central dashboard hook
+  const {
+    data: dashboardData,
+    loading: dashboardLoading,
+    error: dashboardError,
+    refreshData
+  } = useDashboardData();
+
   // Group categories into batting and pitching
   const processedCategories = useMemo(() => processCategoryStats(categories), [categories]);
   const groupedStats = useMemo(() => groupCategoriesByType(processedCategories), [processedCategories]);
   const { batting, pitching } = groupedStats;
-
-  useEffect(() => {
-    // In a real implementation, this would fetch data from your API
-    // For now we're just using dummy data with a simulated delay
-    const fetchData = async () => {
-      setLoading(true);
-      // Simulate API call
-      setTimeout(() => {
-        setStats({
-          lineupIssues: {
-            startersWithNoGames: 2,
-            ilOutOfIlSpot: 1,
-            dtdStarting: 1,
-            openSlots: 2,
-            availableSwaps: 1
-          },
-          upcomingMatchup: {
-            opponent: "Only Judge Can Judge Me",
-            dateRange: "May 8 - May 14"
-          },
-          recentActivity: [
-            {
-              type: 'add',
-              player: 'Bryce Harper (PHI - 1B,OF,DH)',
-              timestamp: 'Today, 10:23 AM'
-            },
-            {
-              type: 'drop',
-              player: 'Carlos Correa (MIN - SS)',
-              timestamp: 'Today, 10:22 AM'
-            },
-            {
-              type: 'trade',
-              team: 'Cruel Summer',
-              timestamp: 'Yesterday, 3:45 PM'
-            }
-          ],
-          playerUpdates: [
-            {
-              player: 'Juan Soto (NYY - OF)',
-              update: 'Day-to-Day - Back stiffness',
-              timestamp: 'Today, 2:15 PM'
-            },
-            {
-              player: 'Freddie Freeman (LAD - 1B)',
-              update: 'No longer DTD - Expected to start tonight',
-              timestamp: 'Today, 12:30 PM'
-            },
-            {
-              player: 'Spencer Strider (ATL - SP)',
-              update: 'Moved to 60-day IL - Tommy John surgery',
-              timestamp: 'Yesterday, 4:45 PM'
-            }
-          ],
-          waiver: {
-            priority: 8,
-            weeklyAdds: 3,
-            weeklyLimit: 6
-          }
-        });
-        setLoading(false);
-      }, 1000);
-    };
-
-    fetchData();
-  }, []);
 
   // Handle navigation to matchup page
   const handleViewAllStats = () => {
     router.push('/dashboard/matchup');
   };
 
+  // Handle navigation to lineup page
+  const handleFixLineup = () => {
+    router.push('/lineup');
+  };
+
+  // Handle navigation to schedule analysis page
+  const handleScheduleAnalysis = () => {
+    router.push('/schedule');
+  };
+
   return (
     <div className="space-y-6 px-2">
-      {loading ? (
+      {dashboardLoading || matchupLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="bg-white rounded-lg shadow-md p-6 animate-pulse">
@@ -143,84 +71,24 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+      ) : dashboardError ? (
+        <div className="bg-red-50 p-4 rounded-md text-red-800">
+          Error loading dashboard data: {dashboardError}
+        </div>
       ) : (
         <div className="space-y-6">
           {/* First row - 4 column cards (1/4 width each) - Square aspect ratio */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Matchup Score Card */}
-            <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center gap-2 mb-4">
-                <HiStar className="h-6 w-6 text-amber-500" />
-                <h2 className="text-lg font-semibold text-gray-700">Matchup Score</h2>
-              </div>
-              
-              {/* Team Avatars and VS - Reduced size to give more space to scores */}
-              <div className="flex justify-center items-center mb-5">
-                <div className="flex flex-col items-center">
-                  <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100">
-                    {myTeamLogo ? (
-                      <img 
-                        src={myTeamLogo} 
-                        alt="Your team" 
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.src = "/default-avatar.png";
-                        }}
-                      />
-                    ) : (
-                      <div className="h-full w-full flex items-center justify-center bg-purple-100 text-purple-700 font-bold text-lg">
-                        You
-                      </div>
-                    )}
-                  </div>
-                </div>
-                
-                <div className="mx-3 text-gray-500 font-medium">
-                  vs
-                </div>
-                
-                <div className="flex flex-col items-center">
-                  <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-gray-200 bg-gray-100">
-                    {opponentLogo ? (
-                      <img 
-                        src={opponentLogo} 
-                        alt={opponentName} 
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.src = "/default-avatar.png";
-                        }}
-                      />
-                    ) : (
-                      <div className="h-full w-full flex items-center justify-center bg-gray-200 text-gray-700 font-bold text-lg">
-                        {opponentName.charAt(0)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              
-              {/* W-L-T Record - Improved spacing and sizing */}
-              <div className="bg-gray-50 rounded-full py-4 px-6 flex justify-center items-center mx-auto mb-5 w-full">
-                <div className="flex items-center justify-center">
-                  <span className="text-4xl font-bold text-green-600">{wins}</span>
-                </div>
-                <div className="w-px h-12 bg-gray-300 mx-5"></div>
-                <div className="flex items-center justify-center">
-                  <span className="text-4xl font-bold text-red-500">{losses}</span>
-                </div>
-                <div className="w-px h-12 bg-gray-300 mx-5"></div>
-                <div className="flex items-center justify-center">
-                  <span className="text-4xl font-bold text-gray-500">{ties}</span>
-                </div>
-              </div>
-              
-              <button 
-                onClick={handleViewAllStats}
-                className="mt-auto text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center"
-              >
-                View Full Matchup →
-              </button>
-            </div>
+            <MatchupScoreCard
+              wins={wins}
+              losses={losses}
+              ties={ties}
+              myTeamLogo={myTeamLogo || undefined}
+              opponentLogo={opponentLogo || undefined}
+              opponentName={opponentName}
+              onViewAllClick={handleViewAllStats}
+            />
             
             {/* Batting Category Card */}
             <BattingCategoryCard 
@@ -237,154 +105,45 @@ export default function Dashboard() {
             />
             
             {/* Lineup Issues Card */}
-            <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center gap-2 mb-4">
-                <HiExclamation className="h-6 w-6 text-amber-500" />
-                <h2 className="text-lg font-semibold text-gray-700">Lineup Issues</h2>
-              </div>
-              <div className="flex-1 flex flex-col justify-center space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">No games:</span>
-                  <span className="font-bold text-gray-600">
-                    {stats?.lineupIssues.startersWithNoGames}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">IL players starting:</span>
-                  <span className="font-bold text-gray-600">
-                    {stats?.lineupIssues.ilOutOfIlSpot}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">DTD starting:</span>
-                  <span className="font-bold text-gray-600">
-                    {stats?.lineupIssues.dtdStarting}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Open slots:</span>
-                  <span className="font-bold text-gray-600">
-                    {stats?.lineupIssues.openSlots}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Available Swaps:</span>
-                  <span className="font-bold text-gray-600">
-                    {stats?.lineupIssues.availableSwaps}
-                  </span>
-                </div>
-              </div>
-              <button className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
-                Fix Lineup Issues →
-              </button>
-            </div>
+            <LineupIssuesCard
+              startersWithNoGames={dashboardData?.lineupIssues.startersWithNoGames ?? 0}
+              ilOutOfIlSpot={dashboardData?.lineupIssues.ilOutOfIlSpot ?? 0}
+              dtdStarting={dashboardData?.lineupIssues.dtdStarting ?? 0}
+              openSlots={dashboardData?.lineupIssues.openSlots ?? 0}
+              availableSwaps={dashboardData?.lineupIssues.availableSwaps ?? 0}
+              onFixLineupClick={handleFixLineup}
+            />
           </div>
 
           {/* Second row - 3 column cards (1/3 width each) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Recent Activity Card */}
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <HiRefresh className="h-6 w-6 text-green-600" />
-                <h2 className="text-lg font-semibold text-gray-700">Recent Activity</h2>
-              </div>
-              <div className="space-y-4">
-                {stats?.recentActivity.map((activity, index) => (
-                  <div key={index} className="border-b border-gray-100 pb-3 last:border-b-0 last:pb-0">
-                    <div className="flex items-start">
-                      <div className={`mt-1 h-4 w-4 rounded-full flex-shrink-0 ${
-                        activity.type === 'add' ? 'bg-green-100' : 
-                        activity.type === 'drop' ? 'bg-red-100' : 'bg-blue-100'
-                      }`}>
-                        <span className={`block h-2 w-2 rounded-full mx-auto mt-1 ${
-                          activity.type === 'add' ? 'bg-green-500' : 
-                          activity.type === 'drop' ? 'bg-red-500' : 'bg-blue-500'
-                        }`}></span>
-                      </div>
-                      <div className="ml-3">
-                        <p className="text-sm font-medium text-gray-800">
-                          {activity.type === 'add' && 'Added'} 
-                          {activity.type === 'drop' && 'Dropped'} 
-                          {activity.type === 'trade' && 'Traded with'}
-                          {' '}
-                          <span className="font-semibold">
-                            {activity.player || activity.team}
-                          </span>
-                        </p>
-                        <p className="text-xs text-gray-500 mt-0.5">{activity.timestamp}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button className="mt-4 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
-                View All Activity →
-              </button>
-            </div>
+            <RecentActivityCard
+              activities={dashboardData?.recentActivity ?? []}
+              onViewAllClick={() => router.push('/activity')}
+            />
             
             {/* Player Updates Card */}
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <HiBell className="h-6 w-6 text-orange-500" />
-                <h2 className="text-lg font-semibold text-gray-700">Player Updates</h2>
-              </div>
-              <div className="space-y-4">
-                {stats?.playerUpdates.map((update, index) => (
-                  <div key={index} className="border-b border-gray-100 pb-3 last:border-b-0 last:pb-0">
-                    <p className="text-sm font-medium text-gray-800">{update.player}</p>
-                    <p className="text-xs text-gray-600 mt-1">{update.update}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{update.timestamp}</p>
-                  </div>
-                ))}
-              </div>
-              <button className="mt-4 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
-                View All Updates →
-              </button>
-            </div>
+            <PlayerUpdatesCard
+              updates={dashboardData?.playerUpdates ?? []}
+              onViewAllClick={() => router.push('/updates')}
+            />
 
             {/* Waivers Card */}
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <HiChartBar className="h-6 w-6 text-indigo-600" />
-                <h2 className="text-lg font-semibold text-gray-700">Waivers</h2>
-              </div>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Waiver Priority:</span>
-                  <span className="font-bold text-gray-900">{stats?.waiver.priority}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Weekly Adds:</span>
-                  <span className="font-bold text-gray-900">{stats?.waiver.weeklyAdds} of {stats?.waiver.weeklyLimit}</span>
-                </div>
-                <div className="text-center text-gray-500 pt-4">
-                  <p className="text-sm">Additional waiver data coming soon</p>
-                </div>
-              </div>
-            </div>
+            <WaiversCard
+              priority={dashboardData?.waiver.priority ?? 0}
+              weeklyAdds={dashboardData?.waiver.weeklyAdds ?? 0}
+              weeklyLimit={dashboardData?.waiver.weeklyLimit ?? 0}
+            />
           </div>
 
-          {/* Stash Next Week card below the main grid for now */}
+          {/* Next Week card */}
           <div className="mt-4">
-            <div className="bg-white rounded-lg shadow-md p-6 flex flex-col h-full">
-              <div className="flex items-center gap-2 mb-4">
-                <HiCalendar className="h-6 w-6 text-blue-600" />
-                <h2 className="text-lg font-semibold text-gray-700">Next Week</h2>
-              </div>
-              <div className="flex-1 flex flex-col justify-center">
-                <div className="text-sm text-gray-700 mb-4">
-                  <p className="mb-1 font-semibold">{stats?.upcomingMatchup.opponent}</p>
-                  <p className="text-gray-500">{stats?.upcomingMatchup.dateRange}</p>
-                </div>
-                <div className="flex justify-between text-xs text-gray-600">
-                  <span>Matchup Analysis</span>
-                  <span>Coming Soon</span>
-                </div>
-              </div>
-              <button className="mt-3 text-sm text-[#3c1791] font-medium hover:text-[#2a1066] w-full text-center">
-                Schedule Analysis →
-              </button>
-            </div>
+            <NextWeekCard
+              opponent={dashboardData?.upcomingMatchup.opponent ?? ''}
+              dateRange={dashboardData?.upcomingMatchup.dateRange ?? ''}
+              onScheduleAnalysisClick={handleScheduleAnalysis}
+            />
           </div>
         </div>
       )}

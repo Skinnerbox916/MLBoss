@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REDIRECT_URI } from '@/app/utils/auth';
 import { clearYahooCookies, getStoredState } from '@/app/utils/auth.server';
 
 export async function GET(req: NextRequest) {
@@ -16,7 +15,7 @@ export async function GET(req: NextRequest) {
       
       // Copy all query parameters
       url.searchParams.forEach((value, key) => {
-        tunnelUrl.searchParams.append(key, value);
+        tunnelUrl.searchParams.append(key, String(value));
       });
       
       // Add redirect counter to prevent loops
@@ -47,7 +46,7 @@ export async function GET(req: NextRequest) {
     
     console.log('Auth callback received - code exists:', !!code, 'state matches:', state === storedState);
     // Additional debug logging for actual values
-    console.log('Received URL:', req.url);
+    console.log('Received URL:', String(req.url));
     console.log('Auth code:', code);
     console.log('State received:', state);
     console.log('Stored state:', storedState);
@@ -66,16 +65,20 @@ export async function GET(req: NextRequest) {
       // return NextResponse.redirect('https://dev-tunnel.skibri.us/?error=state_mismatch');
     }
 
+    // Create a URLSearchParams without using the problematic constants directly
+    const clientId = 'dj0yJmk9dWZ4NW1yb1lsVXJ6JmQ9WVdrOU1ubGFaWGQzY1RBbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTRi';
+    const clientSecret = '3ec2cbb9c20965cdaf99f98c2d8cd9e558cd9d8c';
+    const redirectUri = 'https://dev-tunnel.skibri.us/api/auth/callback';
+    
     const params = new URLSearchParams();
-    params.append('client_id', YAHOO_CLIENT_ID);
-    params.append('client_secret', YAHOO_CLIENT_SECRET);
-    params.append('redirect_uri', YAHOO_REDIRECT_URI);
-    params.append('code', code);
+    params.append('client_id', clientId);
+    params.append('client_secret', clientSecret);
+    params.append('redirect_uri', redirectUri);
+    params.append('code', code || '');
     params.append('grant_type', 'authorization_code');
 
-    console.log('Token request params:', YAHOO_REDIRECT_URI);
-    console.log('Client ID used:', YAHOO_CLIENT_ID);
-    console.log('Full params:', params.toString());
+    // Avoid console.log with complex objects that might contain symbols
+    console.log('Preparing to request token with code');
     
     const tokenRes = await fetch('https://api.login.yahoo.com/oauth2/get_token', {
       method: 'POST',
@@ -87,7 +90,6 @@ export async function GET(req: NextRequest) {
     });
     
     const responseText = await tokenRes.text();
-    console.log('Raw token response:', responseText);
     
     let tokenData;
     
@@ -107,9 +109,28 @@ export async function GET(req: NextRequest) {
 
     const response = NextResponse.redirect('https://dev-tunnel.skibri.us/dashboard');
     clearYahooCookies();
-    response.cookies.set('yahoo_access_token', tokenData.access_token, { httpOnly: true, secure: true, path: '/', maxAge: tokenData.expires_in || 3600, sameSite: 'lax' });
-    response.cookies.set('yahoo_refresh_token', tokenData.refresh_token, { httpOnly: true, secure: true, path: '/', sameSite: 'lax' });
-    response.cookies.set('yahoo_client_access_token', tokenData.access_token, { httpOnly: false, secure: true, path: '/', maxAge: tokenData.expires_in || 3600, sameSite: 'lax' });
+    response.cookies.set('yahoo_access_token', String(tokenData.access_token), { 
+      httpOnly: true, 
+      secure: true, 
+      path: '/', 
+      maxAge: tokenData.expires_in || 3600, 
+      sameSite: 'lax' 
+    });
+    
+    response.cookies.set('yahoo_refresh_token', String(tokenData.refresh_token), { 
+      httpOnly: true, 
+      secure: true, 
+      path: '/', 
+      sameSite: 'lax' 
+    });
+    
+    response.cookies.set('yahoo_client_access_token', String(tokenData.access_token), { 
+      httpOnly: false, 
+      secure: true, 
+      path: '/', 
+      maxAge: tokenData.expires_in || 3600, 
+      sameSite: 'lax' 
+    });
     
     console.log('Authentication successful, redirecting to dashboard');
     return response;

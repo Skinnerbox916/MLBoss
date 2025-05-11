@@ -1,27 +1,165 @@
+// This file is server-only
 import { getRedisClient } from './cache';
+import type { Redis } from 'ioredis';
+
+// Helper function to get the Redis client and handle async
+async function getClient(): Promise<Redis> {
+  const client = await getRedisClient();
+  if (!client) {
+    throw new Error('Redis client not available');
+  }
+  return client;
+}
+
+/**
+ * Get all cache keys with their sizes
+ */
+export async function getCacheKeys(): Promise<{[key: string]: number}> {
+  try {
+    const client = await getClient();
+    
+    // Get all data keys
+    const dataKeys = await client.keys('data:*');
+    const metaKeys = await client.keys('meta:*');
+    
+    const result: {[key: string]: number} = {};
+    
+    // Get info about each key
+    for (const key of dataKeys) {
+      const value = await client.get(key);
+      if (value) {
+        const size = value.length;
+        const cleanKey = key.replace('data:', '');
+        result[cleanKey] = size;
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error getting cache keys:', error);
+    return {};
+  }
+}
+
+/**
+ * Get cache statistics
+ */
+export async function getCacheStats(): Promise<{
+  totalKeys: number;
+  totalSize: number;
+  largestKeys: {key: string; size: number}[];
+  keysPerCategory: {[category: string]: number};
+}> {
+  try {
+    const keys = await getCacheKeys();
+    
+    // Calculate total size
+    let totalSize = 0;
+    for (const size of Object.values(keys)) {
+      totalSize += size;
+    }
+    
+    // Get largest keys
+    const sortedKeys = Object.entries(keys)
+      .sort(([, sizeA], [, sizeB]) => sizeB - sizeA)
+      .slice(0, 10)
+      .map(([key, size]) => ({key, size}));
+    
+    // Count keys per category
+    const keysPerCategory: {[category: string]: number} = {};
+    
+    for (const key of Object.keys(keys)) {
+      let category = 'unknown';
+      
+      if (key.startsWith('static:')) {
+        category = 'static';
+      } else if (key.startsWith('daily:')) {
+        category = 'daily';
+      } else if (key.startsWith('realtime:')) {
+        category = 'realtime';
+      }
+      
+      keysPerCategory[category] = (keysPerCategory[category] || 0) + 1;
+    }
+    
+    return {
+      totalKeys: Object.keys(keys).length,
+      totalSize,
+      largestKeys: sortedKeys,
+      keysPerCategory
+    };
+  } catch (error) {
+    console.error('Error getting cache stats:', error);
+    return {
+      totalKeys: 0,
+      totalSize: 0,
+      largestKeys: [],
+      keysPerCategory: {}
+    };
+  }
+}
+
+/**
+ * Clear all cache keys with the given prefix
+ */
+export async function clearCache(prefix?: string): Promise<number> {
+  try {
+    const client = await getClient();
+    let keys: string[] = [];
+    
+    if (prefix) {
+      // Get all keys with the given prefix
+      keys = await client.keys(`data:${prefix}*`);
+      const metaKeys = await client.keys(`meta:${prefix}*`);
+      keys = [...keys, ...metaKeys];
+    } else {
+      // Get all keys
+      keys = await client.keys('data:*');
+      const metaKeys = await client.keys('meta:*');
+      keys = [...keys, ...metaKeys];
+    }
+    
+    if (keys.length > 0) {
+      // Delete all keys
+      await client.del(...keys);
+    }
+    
+    return keys.length;
+  } catch (error) {
+    console.error('Error clearing cache:', error);
+    return 0;
+  }
+}
+
+/**
+ * Get a specific cache value for debugging
+ */
+export async function getCacheValue(key: string): Promise<string | null> {
+  try {
+    const client = await getClient();
+    const dataKey = `data:${key}`;
+    const value = await client.get(dataKey);
+    return value;
+  } catch (error) {
+    console.error(`Error getting cache value for ${key}:`, error);
+    return null;
+  }
+}
 
 /**
  * Get Redis instance info and cache statistics
  * @returns Redis cache information and statistics
  */
 export async function getRedisInfo() {
-  const redis = getRedisClient();
-  if (!redis) {
-    return {
-      error: 'Redis is not available',
-      totalKeys: 0,
-      memoryUsage: '0 MB',
-      categories: {},
-    };
-  }
-
   try {
+    const client = await getClient();
+    
     // Get all keys
-    const dataKeys = await redis.keys('data:*');
-    const metaKeys = await redis.keys('meta:*');
+    const dataKeys = await client.keys('data:*');
+    const metaKeys = await client.keys('meta:*');
     
     // Get redis info for memory usage
-    const info = await redis.info();
+    const info = await client.info();
     const memoryMatch = info.match(/used_memory_human:(.*)/);
     const memoryUsage = memoryMatch ? memoryMatch[1].trim() : '0 MB';
     
@@ -39,7 +177,7 @@ export async function getRedisInfo() {
         const dataKey = metaKey.replace('meta:', 'data:');
         
         try {
-          const metaData = await redis.get(metaKey);
+          const metaData = await client.get(metaKey);
           if (!metaData) return null;
           
           const meta = JSON.parse(metaData);
@@ -96,102 +234,88 @@ export async function getRedisInfo() {
     };
   } catch (error) {
     console.error('Error getting Redis info:', error);
-    throw error;
+    return {
+      error: 'Error fetching Redis info',
+      totalKeys: 0,
+      memoryUsage: '0 MB',
+      categories: {},
+    };
   }
 }
 
 /**
  * Clear Redis cache by category
- * @param category Cache category to clear
- * @returns Number of keys cleared
  */
 export async function clearCacheCategory(category: string) {
-  const redis = getRedisClient();
-  if (!redis) {
-    return 0;
-  }
-
   try {
-    let pattern: string;
+    const client = await getClient();
+    let keys: string[] = [];
+    let count = 0;
     
-    // Handle category patterns for standard categories
-    if (category === 'static' || category === 'daily' || category === 'realtime') {
-      pattern = `${category}:*`;
+    // Get all matching data and meta keys
+    if (category === 'all') {
+      // Clear all keys
+      const dataKeys = await client.keys('data:*');
+      const metaKeys = await client.keys('meta:*');
+      keys = [...dataKeys, ...metaKeys];
+    } else {
+      // Clear by specific category - both by prefix and by metadata
+      const categoryKeys = await client.keys(`data:${category}:*`);
+      const categoryMetaKeys = await client.keys(`meta:${category}:*`);
       
-      // For standard pattern-based deletion
-      const dataKeys = await redis.keys(`data:${pattern}`);
-      const metaKeys = await redis.keys(`meta:${pattern}`);
-      const allKeys = [...dataKeys, ...metaKeys];
+      // Also check meta keys for category field
+      const metaKeys = await client.keys('meta:*');
       
-      if (allKeys.length > 0) {
-        await redis.del(...allKeys);
-      }
+      // Add keys from category prefix
+      keys = [...categoryKeys, ...categoryMetaKeys];
+      count = keys.length;
       
-      return dataKeys.length;
-    } 
-    else if (category === 'other') {
-      // For the 'other' category, exclude known categories
-      const allKeys = await redis.keys('data:*');
-      const keysToDelete = allKeys.filter(key => {
-        const keyWithoutPrefix = key.replace('data:', '');
-        return !keyWithoutPrefix.startsWith('static:') && 
-               !keyWithoutPrefix.startsWith('daily:') && 
-               !keyWithoutPrefix.startsWith('realtime:');
-      });
-      
-      // Delete filtered keys and their meta keys
-      const metaKeysToDelete = keysToDelete.map(key => key.replace('data:', 'meta:'));
-      const allKeysToDelete = [...keysToDelete, ...metaKeysToDelete];
-      
-      if (allKeysToDelete.length > 0) {
-        await redis.del(...allKeysToDelete);
-      }
-      
-      return keysToDelete.length;
-    }
-    else {
-      // For custom categories, check metadata
-      const metaKeys = await redis.keys('meta:*');
-      
-      const keysToDelete: string[] = [];
-      
+      // Now check all meta keys for category field
       for (const metaKey of metaKeys) {
-        try {
-          const metaData = await redis.get(metaKey);
-          if (!metaData) continue;
-          
-          const meta = JSON.parse(metaData);
-          if (meta.category === category) {
-            keysToDelete.push(metaKey);
-            keysToDelete.push(metaKey.replace('meta:', 'data:'));
+        const metaValue = await client.get(metaKey);
+        if (metaValue) {
+          try {
+            const meta = JSON.parse(metaValue);
+            if (meta.category === category) {
+              // Include this key and its data key
+              const dataKey = metaKey.replace('meta:', 'data:');
+              if (!keys.includes(metaKey)) keys.push(metaKey);
+              if (!keys.includes(dataKey)) keys.push(dataKey);
+            }
+          } catch (e) {
+            console.error(`Error parsing meta key ${metaKey}:`, e);
           }
-        } catch (e) {
-          console.error(`Error processing key ${metaKey}:`, e);
         }
       }
-      
-      if (keysToDelete.length > 0) {
-        await redis.del(...keysToDelete);
-      }
-      
-      return keysToDelete.length / 2; // Count only data keys
     }
+    
+    // Delete all keys
+    if (keys.length > 0) {
+      await client.del(...keys);
+    }
+    
+    return { 
+      clearedKeys: keys.length,
+      category
+    };
   } catch (error) {
-    console.error('Error clearing cache category:', error);
-    throw error;
+    console.error(`Error clearing cache category ${category}:`, error);
+    return { 
+      error: `Error clearing cache category ${category}`, 
+      clearedKeys: 0,
+      category
+    };
   }
 }
 
 /**
- * Format TTL seconds into human readable format
- * @param seconds TTL in seconds
- * @returns Formatted TTL string
+ * Format TTL seconds to human-readable format
  */
 function formatTTL(seconds: number): string {
-  if (!seconds) return 'N/A';
+  if (!seconds) return 'unknown';
   
   if (seconds >= 86400) {
-    return `${Math.round(seconds / 86400)}h`;
+    return `${Math.round(seconds / 86400)}d`;
   } else if (seconds >= 3600) {
     return `${Math.round(seconds / 3600)}h`;
   } else if (seconds >= 60) {
@@ -202,28 +326,28 @@ function formatTTL(seconds: number): string {
 }
 
 /**
- * Clear all cache entries in Redis
- * @returns Number of keys cleared
+ * Clear all cache
  */
 export async function clearAllCache() {
-  const redis = getRedisClient();
-  if (!redis) {
-    return 0;
-  }
-
   try {
+    const client = await getClient();
     // Get all keys
-    const dataKeys = await redis.keys('data:*');
-    const metaKeys = await redis.keys('meta:*');
-    const allKeys = [...dataKeys, ...metaKeys];
+    const keys = await client.keys('*');
     
-    if (allKeys.length > 0) {
-      await redis.del(...allKeys);
+    if (keys.length > 0) {
+      await client.del(...keys);
     }
     
-    return dataKeys.length; // Return the count of data keys cleared
+    return { 
+      success: true,
+      clearedKeys: keys.length 
+    };
   } catch (error) {
     console.error('Error clearing all cache:', error);
-    throw error;
+    return { 
+      success: false, 
+      error: 'Error clearing cache',
+      clearedKeys: 0 
+    };
   }
 } 

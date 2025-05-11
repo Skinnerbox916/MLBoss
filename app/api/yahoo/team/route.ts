@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAccessToken } from '../../../utils/auth.server';
+import { getAccessToken } from '../../../lib/server/auth';
 import { parseString } from 'xml2js';
-import { getYahooMlbGameId, getYahooTeamKey, fetchYahooApi } from '../../../utils/yahoo-api';
+import { getYahooMlbGameId, getYahooTeamKey, fetchYahooApi } from '../../../utils/yahoo-api-server';
 import { getEspnScoreboard } from '../../../utils/espn-api';
-import { getCachedData, setCachedData, generateYahooCacheKey } from '../../../utils/cache';
+import { getCachedData, setCachedData, generateCacheKey } from '../../../lib/server/cache';
 
 // Declare global namespace for TypeScript - maintain backward compatibility
 declare global {
@@ -54,8 +54,8 @@ export async function GET(req: NextRequest) {
     // Get the current date in YYYY-MM-DD format
     const today = new Date().toISOString().split('T')[0];
     
-    // Generate cache key for team data
-    const teamCacheKey = generateYahooCacheKey('team_data', { date: today }, 'daily');
+    // Generate cache key for team data using our server-side cache utility
+    const teamCacheKey = generateCacheKey('team_data', { date: today }, 'daily');
     
     // Check if we have cached team data
     const cachedTeamData = await getCachedData<any>(teamCacheKey, { category: 'daily' });

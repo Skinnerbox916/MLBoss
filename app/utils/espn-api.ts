@@ -1,4 +1,3 @@
-import { getCachedData, setCachedData } from './cache';
 import { 
   EspnScoreboard,
   EspnGameCheckResult,
@@ -10,6 +9,19 @@ const API_TIMEOUT = 5000;
 
 // Cache key for ESPN scoreboard data
 const ESPN_SCOREBOARD_CACHE_KEY = 'realtime:espn:mlb:scoreboard';
+
+/**
+ * Dynamically import the appropriate cache module based on environment
+ */
+async function getCache() {
+  if (typeof window !== 'undefined') {
+    // Client-side
+    return await import('../lib/client/cache');
+  } else {
+    // Server-side
+    return await import('../lib/server/cache');
+  }
+}
 
 /**
  * Get ESPN MLB scoreboard data with caching
@@ -32,8 +44,11 @@ export async function getEspnScoreboard(): Promise<EspnScoreboard> {
     if (response.ok) {
       const data = await response.json() as EspnScoreboard;
       
+      // Get the appropriate cache implementation
+      const cache = await getCache();
+      
       // Cache the data as fallback
-      await setCachedData(ESPN_SCOREBOARD_CACHE_KEY, data, { 
+      await cache.setCachedData(ESPN_SCOREBOARD_CACHE_KEY, data, { 
         category: 'realtime',
         ttl: 15 * 60
       });
@@ -47,8 +62,11 @@ export async function getEspnScoreboard(): Promise<EspnScoreboard> {
     // Continue to try cache
   }
 
+  // Get the appropriate cache implementation
+  const cache = await getCache();
+  
   // Check cache as fallback
-  const cachedData = await getCachedData<EspnScoreboard>(ESPN_SCOREBOARD_CACHE_KEY, { category: 'realtime' });
+  const cachedData = await cache.getCachedData<EspnScoreboard>(ESPN_SCOREBOARD_CACHE_KEY, { category: 'realtime' });
   if (cachedData) {
     console.log('ESPN API: Using cached scoreboard data as fallback');
     return cachedData;

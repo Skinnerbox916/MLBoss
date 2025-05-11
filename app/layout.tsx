@@ -4,6 +4,7 @@ import { Inter } from 'next/font/google'
 import { Barlow_Condensed, Oswald } from 'next/font/google'
 import ClientLayout from './components/layout/ClientLayout'
 import { TeamProvider } from '@/app/utils/TeamContext'
+import { Providers } from './providers'
 
 const inter = Inter({ subsets: ['latin'] })
 const barlowCondensed = Barlow_Condensed({ 
@@ -34,11 +35,13 @@ export default function RootLayout({
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body className={`${inter.className} ${barlowCondensed.variable} ${oswald.variable} bg-white`}>
-        <TeamProvider>
-          <ClientLayout>
-            {children}
-          </ClientLayout>
-        </TeamProvider>
+        <Providers>
+          <TeamProvider>
+            <ClientLayout>
+              {children}
+            </ClientLayout>
+          </TeamProvider>
+        </Providers>
       </body>
     </html>
   )

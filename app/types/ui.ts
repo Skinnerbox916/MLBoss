@@ -70,9 +70,9 @@ export interface MatchupDisplayProps {
 export interface HeaderProps {
   team?: {
     name: string;
-    team_logo?: string;
+    logo?: string;
     url?: string;
-    league_name: string;
+    league: string;
     record: string;
     rank?: number;
   };

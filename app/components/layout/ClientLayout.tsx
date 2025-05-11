@@ -38,9 +38,6 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
   // Determine if the current path should be wrapped in DashboardFrame
   const isDashboardPath = DASHBOARD_PATHS.some(path => pathname.startsWith(path));
 
-  // Log the current path and whether it's a dashboard path for debugging
-  console.debug(`[ClientLayout] Current path: ${pathname}, isDashboardPath: ${isDashboardPath}`);
-
   // Render either wrapped in DashboardFrame or directly based on the path
   return isDashboardPath ? (
     <DashboardFrame>{children}</DashboardFrame>

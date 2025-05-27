@@ -4,11 +4,10 @@ import {
   EspnTeam
 } from '../types/espn';
 
-// Default timeout for API requests
+// Simple constants
 const API_TIMEOUT = 5000;
-
-// Cache key for ESPN scoreboard data
-const ESPN_SCOREBOARD_CACHE_KEY = 'realtime:espn:mlb:scoreboard';
+const SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard';
+const CACHE_KEY = 'realtime:espn:mlb:scoreboard';
 
 /**
  * Dynamically import the appropriate cache module based on environment
@@ -31,8 +30,11 @@ async function getCache() {
 export async function getEspnScoreboard(): Promise<EspnScoreboard> {
   console.log('ESPN API: Fetching scoreboard data (fallback to Yahoo)');
   
+  // Get the appropriate cache implementation
+  const cache = await getCache();
+  
   try {
-    const response = await fetch('https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard', {
+    const response = await fetch(SCOREBOARD_URL, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -41,40 +43,37 @@ export async function getEspnScoreboard(): Promise<EspnScoreboard> {
       signal: AbortSignal.timeout(API_TIMEOUT)
     });
     
-    if (response.ok) {
-      const data = await response.json() as EspnScoreboard;
-      
-      // Get the appropriate cache implementation
-      const cache = await getCache();
-      
-      // Cache the data as fallback
-      await cache.setCachedData(ESPN_SCOREBOARD_CACHE_KEY, data, { 
-        category: 'realtime',
-        ttl: 15 * 60
-      });
-      
-      console.log('ESPN API: Successfully fetched scoreboard data');
-      return data;
+    if (!response.ok) {
+      throw new Error(`ESPN API error (${response.status})`);
     }
-    // If fetch fails, fall back to cache
+    
+    const data = await response.json() as EspnScoreboard;
+    
+    // Cache the data as fallback
+    await cache.setCachedData(CACHE_KEY, data, { 
+      category: 'realtime',
+      ttl: 15 * 60
+    });
+    
+    console.log('ESPN API: Successfully fetched scoreboard data');
+    return data;
   } catch (error) {
     console.warn('ESPN API: Error fetching scoreboard, will try cache:', error);
-    // Continue to try cache
+    
+    // Try cache as fallback
+    const cachedData = await cache.getCachedData<EspnScoreboard>(CACHE_KEY, { 
+      category: 'realtime' 
+    });
+    
+    if (cachedData) {
+      console.log('ESPN API: Using cached scoreboard data as fallback');
+      return cachedData;
+    }
+    
+    // If we reach here, both fresh and cache attempts failed
+    console.error('ESPN API: Failed to fetch scoreboard data and no cache available');
+    throw new Error('Failed to fetch ESPN scoreboard data');
   }
-
-  // Get the appropriate cache implementation
-  const cache = await getCache();
-  
-  // Check cache as fallback
-  const cachedData = await cache.getCachedData<EspnScoreboard>(ESPN_SCOREBOARD_CACHE_KEY, { category: 'realtime' });
-  if (cachedData) {
-    console.log('ESPN API: Using cached scoreboard data as fallback');
-    return cachedData;
-  }
-  
-  // If we reach here, both fresh and cache attempts failed
-  console.error('ESPN API: Failed to fetch scoreboard data and no cache available');
-  throw new Error('Failed to fetch ESPN scoreboard data');
 }
 
 /**
@@ -95,19 +94,18 @@ export async function checkTeamGameFromEspn(teamAbbr: string): Promise<EspnGameC
   try {
     const espnData = await getEspnScoreboard();
     
-    if (!espnData?.events || !espnData.events.length) {
+    if (!espnData?.events?.length) {
       return { has_game_today: false, game_start_time: null, data_source: 'espn_no_events' };
     }
     
     const teamAbbrUpper = teamAbbr.toUpperCase();
     
     for (const event of espnData.events) {
-      if (!event.competitions || !event.competitions.length) continue;
+      if (!event.competitions?.length) continue;
       
       const competition = event.competitions[0];
       
       for (const team of competition.competitors || []) {
-        // Use the EspnTeam interface
         const espnTeam = team as EspnTeam;
         if (espnTeam.abbreviation?.toUpperCase() === teamAbbrUpper) {
           return {

@@ -1,5 +1,5 @@
 // This file is server-only
-import { getRedisClient } from './cache';
+import { getRedisClient } from '../lib/server/cache';
 import type { Redis } from 'ioredis';
 
 // Helper function to get the Redis client and handle async

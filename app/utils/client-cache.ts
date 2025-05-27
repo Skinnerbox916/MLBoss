@@ -1,7 +1,7 @@
 'use client';
 
-import { CacheOptions, CacheMetadata, CACHE_CATEGORIES } from './cache-types';
-import { generateDataKey, generateMetaKey } from './cache-keys';
+import { CacheOptions, CacheMetadata, CACHE_CATEGORIES } from '../lib/shared/types';
+import { generateDataKey, generateMetaKey } from '../lib/shared/cache-keys';
 
 /**
  * Simple client-side cache implementation using localStorage

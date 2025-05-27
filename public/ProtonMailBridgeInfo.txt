@@ -1,0 +1,11 @@
+SMTP username
+michael@skibri.us
+
+SMTP token
+VV85QLT5EACX4KHA
+
+SMTP server
+smtp.protonmail.ch
+
+SMTP port
+587

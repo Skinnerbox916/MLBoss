@@ -222,7 +222,16 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
                     // Format based on stat type
                     if (cat.name === 'AVG' || cat.name === 'OPS') {
                       // Format batting averages with 3 decimal places, remove leading zeros
-                      diffDisplay = sign + parseFloat(cat.delta.toFixed(3)).toString().replace(/^0\./, '.');
+                      const formatted = cat.delta.toFixed(3);
+                      if (cat.delta < 0) {
+                        // For negative values, handle the minus sign specially
+                        const absValue = Math.abs(cat.delta).toFixed(3);
+                        const withoutLeadingZero = absValue.replace(/^0\./, '.');
+                        diffDisplay = '-' + withoutLeadingZero;
+                      } else {
+                        // For positive values, add plus sign and remove leading zero
+                        diffDisplay = sign + formatted.replace(/^0\./, '.');
+                      }
                     } else if (cat.name === 'ERA' || cat.name === 'WHIP') {
                       // Format ERA/WHIP with 2 decimal places
                       diffDisplay = sign + cat.delta.toFixed(2);
@@ -293,6 +302,9 @@ const MatchupDisplay: React.FC<MatchupProps> = ({
                     if (cat.name === 'ERA' || cat.name === 'WHIP') {
                       // Format ERA/WHIP with 2 decimal places
                       diffDisplay = sign + cat.delta.toFixed(2);
+                    } else if (cat.name === 'IP') {
+                      // Special handling for innings pitched
+                      diffDisplay = sign + cat.delta.toFixed(1);
                     } else {
                       // Standard format for other stats
                       diffDisplay = sign + cat.delta;

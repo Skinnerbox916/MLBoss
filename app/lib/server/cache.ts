@@ -1,6 +1,7 @@
 // Server-side cache implementation
 import type { Redis } from 'ioredis';
-import { CacheInterface, CacheOptions } from '../shared/types';
+import { CacheInterface, CacheOptions, CacheMetadata, CacheStats, CACHE_CATEGORIES } from '../shared/types';
+import { generateDataKey, generateMetaKey, extractOriginalKey, generateYahooCacheKey } from '../shared/cache-keys';
 
 // Set default cache durations
 const DEFAULT_CACHE_TTL = parseInt(process.env.DEFAULT_CACHE_TTL || '900', 10); // 15 minutes
@@ -131,8 +132,8 @@ export const serverCache: CacheInterface = {
       }
       
       // Try to get the data and metadata
-      const cachedData = await redis.get(`data:${key}`);
-      const cachedMeta = await redis.get(`meta:${key}`);
+      const cachedData = await redis.get(generateDataKey(key));
+      const cachedMeta = await redis.get(generateMetaKey(key));
       
       if (!cachedData) {
         if (isDaily) {
@@ -263,8 +264,8 @@ export const serverCache: CacheInterface = {
       const dataSize = dataString.length;
       
       // Store data and metadata
-      await redis.set(`data:${key}`, dataString, 'EX', ttl);
-      await redis.set(`meta:${key}`, JSON.stringify(meta), 'EX', ttl);
+      await redis.set(generateDataKey(key), dataString, 'EX', ttl);
+      await redis.set(generateMetaKey(key), JSON.stringify(meta), 'EX', ttl);
       
       console.log(`Cache: Set key ${key} (${options.category || 'default'}), size: ${dataSize} bytes, ttl: ${ttl}s`);
     } catch (error) {
@@ -281,8 +282,8 @@ export const serverCache: CacheInterface = {
     
     try {
       // Delete both data and metadata
-      await redis.del(`data:${key}`);
-      await redis.del(`meta:${key}`);
+      await redis.del(generateDataKey(key));
+      await redis.del(generateMetaKey(key));
       
       console.log(`Cache: Deleted key ${key}`);
     } catch (error) {
@@ -334,20 +335,136 @@ export const serverCache: CacheInterface = {
     params: Record<string, string> = {},
     category?: 'static' | 'daily' | 'realtime'
   ): string {
-    // Add category prefix if provided
-    const prefix = category ? `${category}:` : '';
-    
-    // Convert params to a sorted key=value string
-    const paramsStr = Object.entries(params)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${key}=${value}`)
-      .join('&');
-    
-    // Create a key based on endpoint and params
-    const key = paramsStr ? `${endpoint}?${paramsStr}` : endpoint;
-    
-    // Return with prefix
-    return `${prefix}yahoo:${key}`;
+    return generateYahooCacheKey(endpoint, params, category);
+  }
+};
+
+/**
+ * Server-side cache administration functions
+ */
+export const serverAdmin = {
+  /**
+   * Get all cache keys with their sizes
+   */
+  async getCacheKeys(): Promise<{[key: string]: number}> {
+    try {
+      const redis = await getRedisClient();
+      if (!redis) return {};
+      
+      const dataKeys = await redis.keys('data:*');
+      const result: {[key: string]: number} = {};
+      
+      for (const key of dataKeys) {
+        const value = await redis.get(key);
+        if (value) {
+          const size = value.length;
+          const cleanKey = extractOriginalKey(key);
+          result[cleanKey] = size;
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Error getting cache keys:', error);
+      return {};
+    }
+  },
+
+  /**
+   * Get cache statistics
+   */
+  async getCacheStats(): Promise<CacheStats> {
+    try {
+      const keys = await this.getCacheKeys();
+      
+      let totalSize = 0;
+      for (const size of Object.values(keys)) {
+        totalSize += size;
+      }
+      
+      const sortedKeys = Object.entries(keys)
+        .sort(([, sizeA], [, sizeB]) => sizeB - sizeA)
+        .slice(0, 10)
+        .map(([key, size]) => ({key, size}));
+      
+      const keysPerCategory: {[category: string]: number} = {};
+      
+      for (const key of Object.keys(keys)) {
+        let category = 'unknown';
+        
+        if (key.startsWith('static:')) {
+          category = 'static';
+        } else if (key.startsWith('daily:')) {
+          category = 'daily';
+        } else if (key.startsWith('realtime:')) {
+          category = 'realtime';
+        }
+        
+        keysPerCategory[category] = (keysPerCategory[category] || 0) + 1;
+      }
+      
+      return {
+        totalKeys: Object.keys(keys).length,
+        totalSize,
+        largestKeys: sortedKeys,
+        keysPerCategory
+      };
+    } catch (error) {
+      console.error('Error getting cache stats:', error);
+      return {
+        totalKeys: 0,
+        totalSize: 0,
+        largestKeys: [],
+        keysPerCategory: {}
+      };
+    }
+  },
+
+  /**
+   * Clear all cache keys with the given prefix
+   */
+  async clearCache(prefix?: string): Promise<number> {
+    try {
+      const redis = await getRedisClient();
+      if (!redis) return 0;
+      
+      let keys: string[] = [];
+      
+      if (prefix) {
+        const dataKeys = await redis.keys(`data:${prefix}*`);
+        const metaKeys = await redis.keys(`meta:${prefix}*`);
+        keys = [...dataKeys, ...metaKeys];
+      } else {
+        const dataKeys = await redis.keys('data:*');
+        const metaKeys = await redis.keys('meta:*');
+        keys = [...dataKeys, ...metaKeys];
+      }
+      
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+      
+      return keys.length;
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      return 0;
+    }
+  },
+
+  /**
+   * Get a specific cache value for debugging
+   */
+  async getCacheValue(key: string): Promise<string | null> {
+    try {
+      const redis = await getRedisClient();
+      if (!redis) return null;
+      
+      const dataKey = generateDataKey(key);
+      return await redis.get(dataKey);
+    } catch (error) {
+      console.error(`Error getting cache value for ${key}:`, error);
+      return null;
+    }
   }
 };
 

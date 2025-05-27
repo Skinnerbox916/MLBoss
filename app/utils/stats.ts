@@ -43,7 +43,47 @@ export function calculateWinning(myStat: string | number, opponentStat: string |
 /**
  * Calculate the delta between my stat and opponent stat
  */
-export function calculateDelta(myStat: string | number, opponentStat: string | number, isHigherBetter: boolean): number {
+export function calculateDelta(myStat: string | number, opponentStat: string | number, isHigherBetter: boolean, statName?: string): number {
+  // Special handling for innings pitched (IP)
+  if (statName === 'IP') {
+    // Convert innings pitched format (12.2 = 12 and 2/3 innings) to actual decimal
+    const convertIP = (ip: string | number): number => {
+      const ipStr = String(ip);
+      const parts = ipStr.split('.');
+      const wholeInnings = parseInt(parts[0] || '0', 10);
+      const fractionalPart = parseInt(parts[1] || '0', 10);
+      // Convert .1 to 1/3 and .2 to 2/3
+      const fractionalInnings = fractionalPart / 3;
+      return wholeInnings + fractionalInnings;
+    };
+    
+    const myValue = convertIP(myStat);
+    const opponentValue = convertIP(opponentStat);
+    
+    // Calculate the difference in decimal innings
+    const decimalDiff = myValue - opponentValue;
+    
+    // Convert back to innings format
+    const wholeInnings = Math.floor(Math.abs(decimalDiff));
+    const fractionalInnings = Math.abs(decimalDiff) - wholeInnings;
+    const thirds = Math.round(fractionalInnings * 3);
+    
+    // Format the result - thirds should be 0, 1, or 2 (never 3)
+    // If thirds is 3, that means we have another whole inning
+    let finalWholeInnings = wholeInnings;
+    let finalThirds = thirds;
+    
+    if (finalThirds >= 3) {
+      finalWholeInnings += Math.floor(finalThirds / 3);
+      finalThirds = finalThirds % 3;
+    }
+    
+    let result = finalWholeInnings + (finalThirds / 10);
+    if (decimalDiff < 0) result = -result;
+    
+    return result;
+  }
+  
   // Handle percentage stats (strings with decimal points)
   if (typeof myStat === 'string' && myStat.includes('.') && !myStat.startsWith('0')) {
     const myValue = parseFloat(myStat);
@@ -70,7 +110,7 @@ export function processCategoryStats(categories: CategoryStat[]): CategoryStat[]
     if (cat.name === 'H/AB') return cat;
     
     // Calculate delta (with appropriate sign inversion for display)
-    const delta = calculateDelta(cat.myStat, cat.opponentStat, cat.isHigherBetter);
+    const delta = calculateDelta(cat.myStat, cat.opponentStat, cat.isHigherBetter, cat.name);
     
     // Always calculate winning here (single source of truth)
     const winning = calculateWinning(cat.myStat, cat.opponentStat, cat.isHigherBetter);

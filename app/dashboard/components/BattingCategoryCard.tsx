@@ -17,7 +17,19 @@ const StatItem = ({ stat }: { stat: CategoryStat }) => (
       {stat.delta === 0 ? '0' : 
         (stat.delta && stat.delta > 0 ? '+' : '') + 
         (stat.name === 'AVG' || stat.name === 'OPS' ? 
-          parseFloat(stat.delta?.toFixed(3) || '0').toString().replace(/^0\./, '.') : 
+          (() => {
+            const formatted = stat.delta?.toFixed(3) || '0';
+            // For negative values, we need to handle the minus sign specially
+            if (stat.delta && stat.delta < 0) {
+              // Remove the minus sign, format, then add it back
+              const absValue = Math.abs(stat.delta).toFixed(3);
+              const withoutLeadingZero = absValue.replace(/^0\./, '.');
+              return '-' + withoutLeadingZero;
+            } else {
+              // For positive values, just remove the leading zero
+              return formatted.replace(/^0\./, '.');
+            }
+          })() : 
           stat.name === 'ERA' || stat.name === 'WHIP' ? 
             stat.delta?.toFixed(2) : 
             stat.delta

@@ -1,9 +1,14 @@
-import { parseString } from 'xml2js';
 import { getAccessToken } from '../lib/server/auth';
 import { YahooApiOptions } from '../lib/shared/types';
 import { serverCache } from '../lib/server/cache';
-
-const API_TIMEOUT = 5000;
+import { 
+  API_TIMEOUT, 
+  processYahooResponse, 
+  YAHOO_ENDPOINTS,
+  extractMlbGameId,
+  extractTeamKey,
+  extractPlayerGameInfo
+} from './yahoo-api-utils';
 
 /**
  * Fetch data from Yahoo API (server-side version with caching)
@@ -42,16 +47,7 @@ export async function fetchYahooApi<T>(
       });
 
       if (response.ok) {
-        // For XML responses, parse and convert to JSON
-        const contentType = response.headers.get('content-type') || '';
-        let responseData: T;
-
-        if (contentType.includes('xml')) {
-          const text = await response.text();
-          responseData = await parseYahooXml<T>(text);
-        } else {
-          responseData = await response.json() as T;
-        }
+        const responseData = await processYahooResponse<T>(response);
 
         // Cache the response
         await cache.setCachedData(cacheKey, responseData, { 
@@ -93,24 +89,7 @@ export async function fetchYahooApi<T>(
     signal: AbortSignal.timeout(options.timeout || API_TIMEOUT),
   });
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error('Token expired or invalid');
-    }
-    const text = await response.text();
-    throw new Error(`Yahoo API error (${response.status}): ${text}`);
-  }
-
-  // For XML responses, parse and convert to JSON
-  const contentType = response.headers.get('content-type') || '';
-  let responseData: T;
-
-  if (contentType.includes('xml')) {
-    const text = await response.text();
-    responseData = await parseYahooXml<T>(text);
-  } else {
-    responseData = await response.json() as T;
-  }
+  const responseData = await processYahooResponse<T>(response);
 
   // Cache the response
   if (useCache) {
@@ -124,36 +103,16 @@ export async function fetchYahooApi<T>(
 }
 
 /**
- * Parse Yahoo XML response
- * @param xmlText XML response text
- * @returns Parsed object
- */
-export async function parseYahooXml<T>(xmlText: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    parseString(xmlText, (err: Error | null, result: T) => {
-      if (err) reject(err);
-      else resolve(result);
-    });
-  });
-}
-
-/**
  * Get MLB game ID from Yahoo API
  * @returns MLB game ID
  */
 export async function getYahooMlbGameId(): Promise<string> {
-  const gameUrl = 'https://fantasysports.yahooapis.com/fantasy/v2/game/mlb';
-  const gameData = await fetchYahooApi<any>(gameUrl, { 
+  const gameData = await fetchYahooApi<any>(YAHOO_ENDPOINTS.MLB_GAME, { 
     category: 'static',
     ttl: 24 * 60 * 60
   });
   
-  const gameId = gameData?.fantasy_content?.game?.[0]?.game_id?.[0];
-  if (!gameId) {
-    throw new Error('Could not find MLB game ID');
-  }
-  
-  return gameId;
+  return extractMlbGameId(gameData);
 }
 
 /**
@@ -162,18 +121,12 @@ export async function getYahooMlbGameId(): Promise<string> {
  * @returns Team key
  */
 export async function getYahooTeamKey(gameId: string): Promise<string> {
-  const teamUrl = `https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=${gameId}/teams`;
-  const teamData = await fetchYahooApi<any>(teamUrl, {
+  const teamData = await fetchYahooApi<any>(YAHOO_ENDPOINTS.USER_TEAMS(gameId), {
     category: 'daily',
     ttl: 60 * 60
   });
   
-  const teamKey = teamData?.fantasy_content?.users?.[0]?.user?.[0]?.games?.[0]?.game?.[0]?.teams?.[0]?.team?.[0]?.team_key?.[0];
-  if (!teamKey) {
-    throw new Error('Could not find team key');
-  }
-  
-  return teamKey;
+  return extractTeamKey(teamData);
 }
 
 /**
@@ -202,7 +155,7 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
     const today = new Date().toISOString().split('T')[0];
     
     // Get player stats for today
-    const playerUrl = `https://fantasysports.yahooapis.com/fantasy/v2/player/${playerKey}/stats;type=date;date=${today}`;
+    const playerUrl = YAHOO_ENDPOINTS.PLAYER_STATS(playerKey, today);
     // Game information is realtime data - use realtime category with skipCache
     const cacheKey = serverCache.generateCacheKey('player_game_info', { playerKey, date: today }, 'realtime');
     console.log(`Player Game Info: Checking game status for player ${playerKey} on ${today}`);
@@ -218,14 +171,10 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
 
       if (response.ok) {
         const data = await response.json();
-        const hasGame = data?.fantasy_content?.player?.[0]?.stats?.[0]?.stats?.[0]?.stat?.[0]?.value?.[0] !== '0';
+        const gameInfo = extractPlayerGameInfo(data);
         
-        if (hasGame) {
-          return {
-            has_game_today: true,
-            game_start_time: null, // Yahoo API doesn't provide game time
-            data_source: 'yahoo'
-          };
+        if (gameInfo.has_game_today) {
+          return gameInfo;
         }
       }
     } catch (error) {
@@ -239,12 +188,10 @@ export async function getPlayerGameInfo(playerKey: string): Promise<{
     });
 
     if (cachedData) {
-      const hasGame = cachedData?.fantasy_content?.player?.[0]?.stats?.[0]?.stats?.[0]?.stat?.[0]?.value?.[0] !== '0';
-      
-      if (hasGame) {
+      const gameInfo = extractPlayerGameInfo(cachedData);
+      if (gameInfo.has_game_today) {
         return {
-          has_game_today: true,
-          game_start_time: null, // Yahoo API doesn't provide game time
+          ...gameInfo,
           data_source: 'yahoo_cache'
         };
       }

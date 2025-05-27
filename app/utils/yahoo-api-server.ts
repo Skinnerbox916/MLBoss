@@ -1,6 +1,7 @@
 import { getAccessToken } from '../lib/server/auth';
 import { YahooApiOptions } from '../lib/shared/types';
 import { serverCache } from '../lib/server/cache';
+import { deduplicateRequest } from '../lib/server/request-deduplication';
 import { 
   API_TIMEOUT, 
   processYahooResponse, 
@@ -11,7 +12,7 @@ import {
 } from './yahoo-api-utils';
 
 /**
- * Fetch data from Yahoo API (server-side version with caching)
+ * Fetch data from Yahoo API (server-side version with caching and request deduplication)
  * @param endpoint API endpoint URL
  * @param options Cache and API options
  * @returns Response data object
@@ -31,32 +32,40 @@ export async function fetchYahooApi<T>(
   // Get cache implementation
   const cache = serverCache;
   
-  // Generate cache key
+  // Generate cache key - this will be used for both caching and deduplication
   const cacheKey = cache.generateCacheKey(endpoint, {}, options.category);
   
   // For realtime data, always fetch fresh data first
   if (options.category === 'realtime' && useCache) {
     try {
-      // Fetch fresh data
-      console.log(`Yahoo API: Fetching fresh realtime data for ${endpoint}`);
-      const response = await fetch(endpoint, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        signal: AbortSignal.timeout(options.timeout || API_TIMEOUT),
-      });
+      // Use deduplication for realtime requests
+      const responseData = await deduplicateRequest<T>(
+        `realtime:${cacheKey}`,
+        async () => {
+          console.log(`Yahoo API: Fetching fresh realtime data for ${endpoint}`);
+          const response = await fetch(endpoint, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+            signal: AbortSignal.timeout(options.timeout || API_TIMEOUT),
+          });
 
-      if (response.ok) {
-        const responseData = await processYahooResponse<T>(response);
+          if (response.ok) {
+            const data = await processYahooResponse<T>(response);
 
-        // Cache the response
-        await cache.setCachedData(cacheKey, responseData, { 
-          ttl: options.ttl,
-          category: options.category
-        });
+            // Cache the response
+            await cache.setCachedData(cacheKey, data, { 
+              ttl: options.ttl,
+              category: options.category
+            });
 
-        return responseData;
-      }
+            return data;
+          }
+          throw new Error(`Response not OK: ${response.status}`);
+        }
+      );
+
+      return responseData;
     } catch (error) {
       console.warn(`Yahoo API: Error fetching fresh realtime data, will try cache: ${error}`);
     }
@@ -80,24 +89,31 @@ export async function fetchYahooApi<T>(
     }
   }
 
-  // Fetch fresh data
-  console.log(`Yahoo API: Fetching ${endpoint}`);
-  const response = await fetch(endpoint, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-    signal: AbortSignal.timeout(options.timeout || API_TIMEOUT),
-  });
+  // Fetch fresh data with deduplication
+  const responseData = await deduplicateRequest<T>(
+    `fetch:${cacheKey}`,
+    async () => {
+      console.log(`Yahoo API: Fetching ${endpoint}`);
+      const response = await fetch(endpoint, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: AbortSignal.timeout(options.timeout || API_TIMEOUT),
+      });
 
-  const responseData = await processYahooResponse<T>(response);
+      const data = await processYahooResponse<T>(response);
 
-  // Cache the response
-  if (useCache) {
-    await cache.setCachedData(cacheKey, responseData, { 
-      ttl: options.ttl,
-      category: options.category
-    });
-  }
+      // Cache the response
+      if (useCache) {
+        await cache.setCachedData(cacheKey, data, { 
+          ttl: options.ttl,
+          category: options.category
+        });
+      }
+
+      return data;
+    }
+  );
 
   return responseData;
 }

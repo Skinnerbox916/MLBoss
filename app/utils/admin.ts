@@ -1,5 +1,6 @@
 // This file is server-only
 import { getRedisClient } from '../lib/server/cache';
+import { getDeduplicationStats } from '../lib/server/request-deduplication';
 import type { Redis } from 'ioredis';
 
 // Helper function to get the Redis client and handle async
@@ -350,4 +351,12 @@ export async function clearAllCache() {
       clearedKeys: 0 
     };
   }
+}
+
+/**
+ * Get request deduplication statistics
+ * @returns Deduplication stats including total requests and deduplicated count
+ */
+export async function getRequestDeduplicationStats() {
+  return getDeduplicationStats();
 } 

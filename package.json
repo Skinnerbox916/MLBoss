@@ -7,7 +7,10 @@
     "build": "next build",
     "build:notypes": "NEXT_DISABLE_TYPESCRIPT=1 next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.75.7",
@@ -25,9 +28,12 @@
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/jest": "^29.5.0",
     "autoprefixer": "^10.4.17",
+    "jest": "^29.5.0",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
+    "ts-jest": "^29.1.0",
     "typescript": "^5.3.3"
   }
 }

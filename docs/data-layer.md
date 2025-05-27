@@ -256,7 +256,124 @@ const [yahooData, espnData, mlbData] = await Promise.all([
 - [ ] Implement hot/cold performance ratings
 - [ ] Add player news aggregation
 - [ ] Add game logs from additional sources
-- [ ] Implement request deduplication for concurrent requests
+- [x] Implement request deduplication for concurrent requests
+
+## Request Deduplication
+
+### Overview
+
+Request deduplication prevents multiple identical API calls from being made simultaneously. When multiple components request the same data at the same time, only one API call is made, and all requests share the same response.
+
+### How It Works
+
+1. **Request Tracking**: When a request starts, it's tracked in memory
+2. **Duplicate Detection**: Subsequent identical requests wait for the first to complete
+3. **Response Sharing**: All waiting requests receive the same response
+4. **Error Handling**: If the request fails, all waiting requests receive the same error
+
+### Implementation
+
+```typescript
+// Automatically applied to all realtime data requests
+const data = await fetchYahooApi('/endpoint', { 
+  category: 'realtime' 
+});
+```
+
+### Benefits
+
+- **Reduced API Calls**: Prevents rate limiting and improves quota usage
+- **Better Performance**: Eliminates redundant network requests
+- **Consistent Data**: All components receive the same data snapshot
+
+## Cache Categories Reference
+
+### Static Data (24h TTL)
+
+**Purpose**: Data that rarely changes during a season
+
+**Examples**:
+- League settings and scoring categories
+- Player eligibility and positions
+- Team names and manager info
+
+**Usage**:
+```typescript
+await setCachedData(key, data, { category: 'static' });
+```
+
+### Daily Data (12h TTL)
+
+**Purpose**: Data that updates once or twice per day
+
+**Examples**:
+- Team rosters and lineups
+- League standings
+- Probable pitchers
+- Transactions
+
+**Usage**:
+```typescript
+await setCachedData(key, data, { category: 'daily' });
+```
+
+### Realtime Data (15m TTL)
+
+**Purpose**: Frequently changing data during games
+
+**Examples**:
+- Live scores and stats
+- Current matchup scores
+- Player game status
+
+**Usage**:
+```typescript
+await setCachedData(key, data, { category: 'realtime' });
+```
+
+## Data Transformers
+
+### Overview
+
+Transformers convert raw API responses into consistent, typed data structures. They handle:
+- Null/undefined safety
+- Type conversions
+- Data normalization
+- Error handling
+
+### Available Transformers
+
+| Transformer | Purpose | Location |
+|------------|---------|----------|
+| LeagueTransformer | League settings, standings, scoreboard | `app/transformers/yahoo/leagueTransformer.ts` |
+| TeamTransformer | Team info, rosters, matchups | `app/transformers/yahoo/teamTransformer.ts` |
+| PlayerTransformer | Player details, stats, game info | `app/transformers/yahoo/playerTransformer.ts` |
+
+### Usage Example
+
+```typescript
+import { TeamTransformer } from '@/app/transformers/yahoo/teamTransformer';
+
+const rawResponse = await fetch(yahooApiUrl);
+const team = TeamTransformer.transformTeamResponse(rawResponse);
+```
+
+### Transformer Methods
+
+#### LeagueTransformer
+- `transformLeagueResponse()` - Full league data with settings
+- `transformStandings()` - League standings
+- `transformScoreboard()` - Weekly matchups
+
+#### TeamTransformer
+- `transformTeamResponse()` - Team with optional roster
+- `transformMatchup()` - Single matchup details
+- `transformMatchupsResponse()` - Season matchups
+
+#### PlayerTransformer
+- `transformPlayer()` - Player details
+- `transformStats()` - Player statistics
+- `transformPlayerGameInfo()` - Game schedule info
 
 ## Monitoring and Debugging
 

@@ -1,26 +1,173 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* --------------- MLBoss Brand Palette --------------- */
+  --background: #F9F6F1;       /* Isabelline – primary background */
+  --foreground: #132F43;       /* Prussian blue – default text */
+
+  /* Brand colours */
+  --primary: #132F43;          /* Prussian blue */
+  --accent:  #C89222;          /* Dark goldenrod */
+
+  /* Semantic colours */
+  --success:       #2C6E49;   /* Dark spring green */
+  --success-light: #4C956C;   /* Sea green */
+
+  /* Error colours */
+  --error: #B91C1C;          /* Deep red – primary error */
+  --error-light: #DC2626;    /* Crimson red – lighter error */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-primary:   var(--primary);
+  --color-accent:    var(--accent);
+  --color-success:   var(--success);
+  --color-success-light: var(--success-light);
+
+  /* Wire up semantic color utilities */
+  --color-primary-50:  color-mix(in srgb, var(--primary) 10%, white);
+  --color-primary-100: color-mix(in srgb, var(--primary) 20%, white);
+  --color-primary-200: color-mix(in srgb, var(--primary) 40%, white);
+  --color-primary-300: color-mix(in srgb, var(--primary) 60%, white);
+  --color-primary-400: color-mix(in srgb, var(--primary) 80%, white);
+  --color-primary-500: var(--primary);
+  --color-primary-600: color-mix(in srgb, var(--primary) 80%, black);
+  --color-primary-700: color-mix(in srgb, var(--primary) 60%, black);
+  --color-primary-800: color-mix(in srgb, var(--primary) 40%, black);
+  --color-primary-900: color-mix(in srgb, var(--primary) 20%, black);
+
+  --color-accent-50:  color-mix(in srgb, var(--accent) 10%, white);
+  --color-accent-100: color-mix(in srgb, var(--accent) 20%, white);
+  --color-accent-200: color-mix(in srgb, var(--accent) 40%, white);
+  --color-accent-300: color-mix(in srgb, var(--accent) 60%, white);
+  --color-accent-400: color-mix(in srgb, var(--accent) 80%, white);
+  --color-accent-500: var(--accent);
+  --color-accent-600: color-mix(in srgb, var(--accent) 80%, black);
+  --color-accent-700: color-mix(in srgb, var(--accent) 60%, black);
+  --color-accent-800: color-mix(in srgb, var(--accent) 40%, black);
+  --color-accent-900: color-mix(in srgb, var(--accent) 20%, black);
+
+  --color-success-50:  color-mix(in srgb, var(--success) 10%, white);
+  --color-success-100: color-mix(in srgb, var(--success) 20%, white);
+  --color-success-200: color-mix(in srgb, var(--success) 40%, white);
+  --color-success-300: color-mix(in srgb, var(--success) 60%, white);
+  --color-success-400: color-mix(in srgb, var(--success) 80%, white);
+  --color-success-500: var(--success);
+  --color-success-600: color-mix(in srgb, var(--success) 80%, black);
+  --color-success-700: color-mix(in srgb, var(--success) 60%, black);
+  --color-success-800: color-mix(in srgb, var(--success) 40%, black);
+  --color-success-900: color-mix(in srgb, var(--success) 20%, black);
+
+  --color-error:   var(--error);
+  --color-error-light: var(--error-light);
+
+  --color-error-50:  color-mix(in srgb, var(--error) 10%, white);
+  --color-error-100: color-mix(in srgb, var(--error) 20%, white);
+  --color-error-200: color-mix(in srgb, var(--error) 40%, white);
+  --color-error-300: color-mix(in srgb, var(--error) 60%, white);
+  --color-error-400: color-mix(in srgb, var(--error) 80%, white);
+  --color-error-500: var(--error);
+  --color-error-600: color-mix(in srgb, var(--error) 80%, black);
+  --color-error-700: color-mix(in srgb, var(--error) 60%, black);
+  --color-error-800: color-mix(in srgb, var(--error) 40%, black);
+  --color-error-900: color-mix(in srgb, var(--error) 20%, black);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* Dark-mode inversion (tweak as needed) */
+    --background: #132F43;   /* Prussian blue */
+    --foreground: #F9F6F1;   /* Isabelline */
+
+    /* Dark-mode accents for better contrast */
+    --accent:        #d9a63a;
+    --success:       #4C956C;
+    --success-light: #86C39A;
+
+    /* Dark-mode error colours */
+    --error: #DC2626;
+    --error-light: #EF4444;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+/* --------------- Typography System --------------- */
+@layer base {
+  /* Headings use Berkshire Swash */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display), system-ui, sans-serif;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--foreground);
+  }
+  
+  h1 { font-size: clamp(2rem, 5vw, 3rem); }      /* ~32-48px */
+  h2 { font-size: clamp(1.75rem, 4vw, 2.5rem); } /* ~28-40px */
+  h3 { font-size: clamp(1.5rem, 3vw, 2rem); }    /* ~24-32px */
+  h4 { font-size: clamp(1.25rem, 2.5vw, 1.75rem); } /* ~20-28px */
+  h5 { font-size: 1.125rem; }                     /* 18px */
+  h6 { font-size: 1rem; }                         /* 16px */
+
+  /* Body text uses Quicksand */
+  p, li, ul, ol, blockquote {
+    font-family: var(--font-body), system-ui, sans-serif;
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--foreground);
+    opacity: 0.9;
+  }
+
+  /* Code uses JetBrains Mono */
+  code, pre {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.875rem;
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+  }
+
+  /* Small text */
+  small {
+    font-family: var(--font-body), system-ui, sans-serif;
+    font-size: 0.875rem;
+    color: var(--foreground);
+    opacity: 0.7;
+  }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  @layer base {
+    h1, h2, h3, h4, h5, h6 {
+      color: var(--foreground);
+    }
+    
+    p, li, ul, ol, blockquote {
+      color: var(--foreground);
+      opacity: 0.9;
+    }
+    
+    code, pre {
+      background: color-mix(in srgb, var(--foreground) 15%, transparent);
+    }
+  }
+}
+
+/* Utility classes */
+@layer utilities {
+  .font-display { font-family: var(--font-display), system-ui, sans-serif; }
+  .font-body { font-family: var(--font-body), system-ui, sans-serif; }
+  .font-mono { font-family: var(--font-mono), ui-monospace, monospace; }
+  
+  .font-numeric { 
+    font-variant-numeric: tabular-nums; 
+    font-feature-settings: "tnum";
+  }
 }

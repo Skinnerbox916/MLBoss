@@ -22,19 +22,27 @@ class RedisClient {
       
       // Add connection event listeners
       RedisClient.instance.on('connect', () => {
-        console.log('✅ Redis connected successfully');
+        console.log('✅ Redis connected');
       });
       
-      RedisClient.instance.on('error', (error) => {
-        console.error('❌ Redis connection error:', error);
+      RedisClient.instance.on('ready', () => {
+        // Redis is ready to receive commands
       });
       
-      RedisClient.instance.on('close', () => {
+      RedisClient.instance.on('end', () => {
         console.log('🔴 Redis connection closed');
       });
       
       RedisClient.instance.on('reconnecting', () => {
-        console.log('🔄 Redis reconnecting...');
+        console.log('�� Redis reconnecting');
+      });
+      
+      RedisClient.instance.on('error', (err) => {
+        console.error('❌ Redis error:', err);
+      });
+      
+      RedisClient.instance.on('close', () => {
+        console.log('🔌 Redis client disconnected');
       });
     }
     
@@ -103,5 +111,22 @@ export const redisUtils = {
 
   async rpop(key: string): Promise<string | null> {
     return await redis.rpop(key);
+  },
+
+  // Cache management utilities
+  async keys(pattern: string = '*'): Promise<string[]> {
+    return await redis.keys(pattern);
+  },
+
+  async flushdb(): Promise<'OK'> {
+    return await redis.flushdb();
+  },
+
+  async dbsize(): Promise<number> {
+    return await redis.dbsize();
+  },
+
+  async memoryInfo(): Promise<string> {
+    return await redis.info('memory');
   },
 }; 

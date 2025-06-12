@@ -1,0 +1,12 @@
+{
+  "agent/api": "Redis-based state management for agents.",
+  "agent/implementation": "**Last Updated:** January 2025",
+  "agent/patterns": "This document contains common patterns and code examples for working with the MLBoss agent system.",
+  "agent/README": "The AGENT library provides intelligent task automation with Yahoo Fantasy Sports integration, built on top of Redis caching and OAuth authentication.",
+  "agent/stats": "MLBoss uses `stat_id` as the canonical identifier for all player and team statistics. This numeric key system eliminates ambiguity between similar statistics (like pitcher vs batter strikeouts) and provides consistent identification across all API calls.",
+  "product-spec": "MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.",
+  "for-ai-developers": "This guide is specifically written for LLMs working on the MLBoss codebase. It contains documentation strategy and key patterns to follow.",
+  "README": "This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files.",
+  "setup": "This document is the single source of truth for all environment variables and the Yahoo OAuth setup required to run MLBoss.",
+  "yahoo-api-reference": "* [Introduction](#introduction)"
+}

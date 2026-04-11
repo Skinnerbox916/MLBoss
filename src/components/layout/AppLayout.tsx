@@ -8,7 +8,6 @@ import { type IconType } from 'react-icons';
 import { GiBaseballBat, GiBaseballGlove } from 'react-icons/gi';
 import { FiHome, FiUsers, FiSettings, FiList, FiChevronLeft, FiChevronRight, FiUser, FiLogOut } from 'react-icons/fi';
 import Icon from '@/components/Icon';
-import { Heading } from '@/components/typography';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
@@ -78,12 +77,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="flex h-screen bg-background">
       {/* Sidebar */}
-      <div className={`${isSidebarOpen ? 'w-48' : 'w-16'} bg-white dark:bg-gray-800 shadow-lg transition-all duration-300 relative`}>
+      <div className={`${isSidebarOpen ? 'w-48' : 'w-16'} bg-surface shadow-lg transition-all duration-300 relative`}>
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className={`flex items-center justify-center border-b border-gray-200 dark:border-gray-700 transition-all duration-300 ${isSidebarOpen ? 'h-32 px-4' : 'h-16 px-2'}`}>
+          <div className={`flex items-center justify-center border-b border-border transition-all duration-300 ${isSidebarOpen ? 'h-32 px-4' : 'h-16 px-2'}`}>
             <Link href="/dashboard">
               {isSidebarOpen ? (
                 <Image
@@ -122,7 +121,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   className={cn(
                     'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
                     isActive
-                      ? 'bg-primary/10 text-primary-foreground dark:bg-primary/20 border-l-4 border-primary'
+                      ? 'bg-accent/10 text-accent-foreground dark:bg-accent/20 border-l-4 border-accent'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                     !isSidebarOpen && 'justify-center'
                   )}
@@ -132,13 +131,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     size={18}
                     className={cn(
                       'flex-shrink-0',
-                      isActive ? 'text-primary' : 'group-hover:text-foreground'
+                      isActive ? 'text-accent' : 'group-hover:text-foreground'
                     )} 
                   />
                   {isSidebarOpen && (
-                    <Heading as="h6" size="h6" className="font-normal m-0 p-0 truncate">
+                    <span className="font-body text-sm font-semibold truncate">
                       {item.name}
-                    </Heading>
+                    </span>
                   )}
                 </Link>
               );
@@ -152,7 +151,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               className={cn(
                 'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors w-full',
                 isAccountOpen
-                  ? 'bg-primary/10 text-primary-foreground dark:bg-primary/20 border-l-4 border-primary'
+                  ? 'bg-accent/10 text-accent-foreground dark:bg-accent/20 border-l-4 border-accent'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                 !isSidebarOpen && 'justify-center'
               )}
@@ -163,13 +162,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 size={18}
                 className={cn(
                   'flex-shrink-0',
-                  isAccountOpen ? 'text-primary' : 'group-hover:text-foreground'
+                  isAccountOpen ? 'text-accent' : 'group-hover:text-foreground'
                 )} 
               />
               {isSidebarOpen && (
-                <Heading as="h6" size="h6" className="font-normal m-0 p-0 truncate">
+                <span className="font-body text-sm font-semibold truncate">
                   Account
-                </Heading>
+                </span>
               )}
             </button>
           </div>
@@ -178,13 +177,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Floating Collapse Button */}
         <button
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="absolute top-6 -right-3 w-6 h-6 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full shadow-md hover:shadow-lg transition-shadow flex items-center justify-center"
+          className="absolute top-6 -right-3 w-6 h-6 bg-surface border border-border rounded-full shadow-md hover:shadow-lg transition-shadow flex items-center justify-center"
           aria-label={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
         >
           <Icon
             icon={isSidebarOpen ? FiChevronLeft : FiChevronRight}
             size={12}
-            className="text-gray-600 dark:text-gray-400"
+            className="text-muted-foreground"
           />
         </button>
       </div>
@@ -192,7 +191,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Account Drawer */}
       <div 
         className={cn(
-          'account-drawer fixed w-48 bg-white dark:bg-gray-800 shadow-xl border border-gray-200 dark:border-gray-700 rounded-lg transition-all duration-300 z-50',
+          'account-drawer fixed w-48 bg-surface shadow-xl border border-border rounded-lg transition-all duration-300 z-50',
           isAccountOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
         )}
         style={{ 
@@ -203,7 +202,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       >
         <div className="flex flex-col">
           {/* Drawer Header */}
-          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+          <div className="px-4 py-3 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                 <Icon icon={FiUser} size={16} className="text-primary" />
@@ -260,7 +259,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
 
             {/* Sign Out */}
-            <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <div className="pt-2 border-t border-border">
               <button
                 onClick={handleLogout}
                 disabled={isLoggingOut}

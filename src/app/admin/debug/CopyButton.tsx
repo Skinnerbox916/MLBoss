@@ -2,17 +2,21 @@
 
 import { useState } from 'react';
 
-interface CopyButtonProps {
-  data: any;
+// Generic CopyButton so callers can preserve the type of `data`
+export default function CopyButton<T = unknown>({
+  data,
+  className = '',
+}: {
+  data: T;
   className?: string;
-}
-
-export default function CopyButton({ data, className = '' }: CopyButtonProps) {
+}) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      await navigator.clipboard.writeText(
+        JSON.stringify(data, null, 2),
+      );
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
@@ -26,7 +30,7 @@ export default function CopyButton({ data, className = '' }: CopyButtonProps) {
       className={`px-3 py-1 text-white text-sm rounded transition-colors ${
         copied 
           ? 'bg-green-600' 
-          : 'bg-blue-600 hover:bg-blue-700'
+          : 'bg-primary hover:bg-primary-600'
       } ${className}`}
     >
       {copied ? 'Copied!' : 'Copy JSON'}

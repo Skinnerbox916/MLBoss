@@ -1,67 +1,61 @@
 {
-  "generated": "2025-06-10T00:23:16.622Z",
+  "generated": "2026-04-10T17:45:56.165Z",
   "baseDir": "docs",
-  "count": 10,
+  "count": 9,
   "docs": {
-    "agent/api": {
-      "path": "agent/api.md",
-      "title": "Agent API Reference",
-      "description": "Redis-based state management for agents.",
-      "lastModified": "2025-06-09T21:47:08.702Z"
+    "README": {
+      "path": "README.md",
+      "title": "MLBoss Documentation Index",
+      "description": "This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files.",
+      "lastModified": "2026-04-10T17:45:28.544Z"
     },
-    "agent/implementation": {
-      "path": "agent/implementation.md",
-      "title": "Agent Implementation Status",
-      "description": "**Last Updated:** January 2025",
-      "lastModified": "2025-06-09T21:45:19.196Z"
+    "dashboard-components": {
+      "path": "dashboard-components.md",
+      "title": "Dashboard Component System",
+      "description": "The dashboard is built from **self-contained React components** (\"cards\") rendered inside a flexible grid.",
+      "lastModified": "2026-04-10T17:45:47.954Z"
     },
-    "agent/patterns": {
-      "path": "agent/patterns.md",
-      "title": "Agent Patterns & Examples",
-      "description": "This document contains common patterns and code examples for working with the MLBoss agent system.",
-      "lastModified": "2025-06-09T21:43:04.176Z"
+    "data-layer": {
+      "path": "data-layer.md",
+      "title": "Fantasy Data Layer",
+      "description": "The fantasy data layer (`src/lib/fantasy/`) sits between page/API-route code and the raw Yahoo Fantasy API client. It adds caching, token management, type safety, and domain-specific logic.",
+      "lastModified": "2026-04-10T17:45:01.429Z"
     },
-    "agent/README": {
-      "path": "agent/README.md",
-      "title": "Agent System Documentation",
-      "description": "The AGENT library provides intelligent task automation with Yahoo Fantasy Sports integration, built on top of Redis caching and OAuth authentication.",
-      "lastModified": "2025-06-09T23:57:25.067Z"
-    },
-    "agent/stats": {
-      "path": "agent/stats.md",
-      "title": "Statistical Data Architecture",
-      "description": "MLBoss uses `stat_id` as the canonical identifier for all player and team statistics. This numeric key system eliminates ambiguity between similar statistics (like pitcher vs batter strikeouts) and provides consistent identification across all API calls.",
-      "lastModified": "2025-06-10T00:22:51.223Z"
-    },
-          "product-spec": {
-      "path": "product-spec.md",
-      "title": "MLBoss: Fantasy Baseball Decision Support System",
-      "description": "MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.",
-      "lastModified": "2025-06-10T00:22:57.030Z"
+    "design-system": {
+      "path": "design-system.md",
+      "title": "MLBoss Design System",
+      "description": "This document defines the visual design standards for MLBoss, including colors, typography, and component patterns. All design tokens are implemented as CSS variables and wired into Tailwind CSS utilities.",
+      "lastModified": "2025-06-12T17:13:18.000Z"
     },
     "for-ai-developers": {
       "path": "for-ai-developers.md",
       "title": "For AI Developers",
       "description": "This guide is specifically written for LLMs working on the MLBoss codebase. It contains documentation strategy and key patterns to follow.",
-      "lastModified": "2025-06-09T23:57:21.438Z"
+      "lastModified": "2026-04-10T17:45:37.243Z"
     },
-    "README": {
-      "path": "README.md",
-      "title": "MLBoss Documentation Index",
-      "description": "This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files.",
-      "lastModified": "2025-06-09T23:57:13.225Z"
+    "product-spec": {
+      "path": "product-spec.md",
+      "title": "MLBoss: Fantasy Baseball Decision Support System",
+      "description": "MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.",
+      "lastModified": "2026-04-10T17:45:49.292Z"
     },
     "setup": {
       "path": "setup.md",
       "title": "Setup & Configuration",
       "description": "This document is the single source of truth for all environment variables and the Yahoo OAuth setup required to run MLBoss.",
-      "lastModified": "2025-06-10T00:22:40.740Z"
+      "lastModified": "2025-06-10T22:16:43.000Z"
+    },
+    "stats": {
+      "path": "stats.md",
+      "title": "Statistical Data Architecture",
+      "description": "MLBoss uses `stat_id` as the canonical identifier for all player and team statistics. This numeric key system eliminates ambiguity between similar statistics (like pitcher vs batter strikeouts) and provides consistent identification across all API calls.",
+      "lastModified": "2026-04-10T17:45:18.798Z"
     },
     "yahoo-api-reference": {
       "path": "yahoo-api-reference.md",
       "title": "Yahoo Fantasy Baseball API Guide",
       "description": "* [Introduction](#introduction)",
-      "lastModified": "2025-06-09T21:29:17.254Z"
+      "lastModified": "2025-06-09T21:29:17.000Z"
     }
   }
 }

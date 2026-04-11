@@ -8,7 +8,7 @@ interface YahooFantasyAPIError {
   status?: number;
 }
 
-interface League {
+export interface League {
   league_key: string;
   league_id: string;
   name: string;
@@ -35,7 +35,17 @@ interface League {
   is_finished?: number;
 }
 
-interface Team {
+export interface Manager {
+  manager_id: string;
+  nickname?: string;
+  guid: string;
+  is_commissioner?: string;
+  is_current_login?: string;
+  email?: string;
+  image_url?: string;
+}
+
+export interface Team {
   team_key: string;
   team_id: string;
   name: string;
@@ -55,18 +65,10 @@ interface Team {
   };
   clinched_playoffs?: number;
   league_scoring_type?: string;
-  managers?: Array<{
-    manager_id: string;
-    nickname?: string;
-    guid: string;
-    is_commissioner?: string;
-    is_current_login?: string;
-    email?: string;
-    image_url?: string;
-  }>;
+  managers?: Manager[];
 }
 
-interface StatCategory {
+export interface StatCategory {
   stat_id: number;
   name: string;
   display_name: string;
@@ -76,8 +78,150 @@ interface StatCategory {
   base_stats?: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Stat value (shared across standings, scoreboard, team stats)
+// ---------------------------------------------------------------------------
+
+export interface StatValue {
+  stat_id: number;
+  value: string;
+}
+
+// ---------------------------------------------------------------------------
+// Standings
+// ---------------------------------------------------------------------------
+
+export interface StandingsEntry {
+  team_key: string;
+  team_id: string;
+  name: string;
+  is_owned_by_current_login?: number;
+  url: string;
+  team_logos: Array<{ size: string; url: string }>;
+  rank?: number;
+  wins?: number;
+  losses?: number;
+  ties?: number;
+  percentage?: string;
+  points_for?: number;
+  points_against?: number;
+  points_back?: string;
+  streak?: string;
+  stats?: StatValue[];
+}
+
+// ---------------------------------------------------------------------------
+// Scoreboard / Matchups
+// ---------------------------------------------------------------------------
+
+export interface MatchupTeam {
+  team_key: string;
+  team_id: string;
+  name: string;
+  is_owned_by_current_login?: number;
+  team_logos: Array<{ size: string; url: string }>;
+  points?: string;
+  stats: StatValue[];
+}
+
+export interface MatchupData {
+  week?: number;
+  status: string;
+  is_playoffs: boolean;
+  is_tied: boolean;
+  winner_team_key?: string;
+  teams: MatchupTeam[];
+}
+
+// ---------------------------------------------------------------------------
+// Team Stats
+// ---------------------------------------------------------------------------
+
+export interface TeamStats {
+  team_key: string;
+  team_id: string;
+  name: string;
+  week?: number;
+  stats: StatValue[];
+}
+
+// ---------------------------------------------------------------------------
+// Roster
+// ---------------------------------------------------------------------------
+
+export interface RosterEntry {
+  player_key: string;
+  player_id: string;
+  name: string;
+  editorial_team_abbr: string;
+  display_position: string;
+  eligible_positions: string[];
+  selected_position: string;
+  status?: string;          // 'IL', 'IL10', 'IL60', 'DTD', 'NA', 'DL', etc.
+  status_full?: string;     // 'Injured Reserve', 'Day-to-Day', etc.
+  image_url?: string;
+  on_disabled_list: boolean;
+  uniform_number?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Transactions
+// ---------------------------------------------------------------------------
+
+export interface TransactionPlayer {
+  player_key: string;
+  player_id: string;
+  name: string;
+  editorial_team_abbr: string;
+  display_position: string;
+  type: string;             // 'add' | 'drop'
+  source_team_key?: string;
+  destination_team_key?: string;
+}
+
+export interface TransactionEntry {
+  transaction_key: string;
+  transaction_id: string;
+  type: string;             // 'add', 'drop', 'add/drop', 'trade'
+  status: string;           // 'successful', 'pending', etc.
+  timestamp?: number;       // Unix timestamp
+  trader_team_key?: string;
+  tradee_team_key?: string;
+  players: TransactionPlayer[];
+}
+
 interface YahooAPIResponse<T> {
   fantasy_content: T;
+}
+
+/**
+ * Normalize Yahoo's variable position_types format to a plain string array.
+ *
+ * Yahoo JSON may return any of these shapes:
+ *   "B"                              → ["B"]
+ *   {"position_type": "B"}           → ["B"]
+ *   {"position_type": ["B","P"]}     → ["B","P"]
+ *   {"position_type": {"0":"B","count":1}}  → ["B"]
+ *   ["B","P"]                        → ["B","P"]
+ */
+function normalizePositionTypes(raw: unknown): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter(v => typeof v === 'string');
+  if (typeof raw === 'string') return [raw];
+  if (typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    const pt = obj['position_type'];
+    if (pt === undefined) return [];
+    if (typeof pt === 'string') return [pt];
+    if (Array.isArray(pt)) return pt.filter(v => typeof v === 'string');
+    if (typeof pt === 'object') {
+      // Numeric-key object: {"0": "B", "count": 1}
+      return Object.entries(pt as Record<string, unknown>)
+        .filter(([k, v]) => k !== 'count' && typeof v === 'string')
+        .map(([, v]) => v as string);
+    }
+  }
+  return [];
 }
 
 /**
@@ -109,6 +253,14 @@ export class YahooFantasyAPI {
         this.userId = user?.id;
       } else {
         user = await this.getUserFromRedis(this.userId);
+        // Redis may have been cleared (e.g. cache flush) — fall back to the
+        // session cookie, which is the encrypted source of truth for auth data.
+        if (!user) {
+          const session = await getSession();
+          if (session.user?.id === this.userId) {
+            user = session.user;
+          }
+        }
       }
 
       if (!user) {
@@ -584,14 +736,14 @@ export class YahooFantasyAPI {
               name: stat.name,
               display_name: stat.display_name,
               sort_order: stat.sort_order,
-              position_types: stat.position_types?.position_type || stat.position_types || [],
+              position_types: normalizePositionTypes(stat.position_types),
               is_composite_stat: stat.is_composite_stat,
               base_stats: stat.base_stats?.base_stat || stat.base_stats || []
             });
           }
         }
       }
-      
+
       return categories;
     } catch (error) {
       console.error('Failed to get stat categories:', error);
@@ -608,6 +760,561 @@ export class YahooFantasyAPI {
     return Object.fromEntries(
       categories.map(cat => [cat.stat_id, cat])
     );
+  }
+
+  /**
+   * Get league settings including stat categories
+   * @param leagueKey - The league key (e.g., "458.l.123456")
+   * @returns League settings with stat categories
+   */
+  async getLeagueSettings(leagueKey: string): Promise<any> {
+    try {
+      const endpoint = `/league/${leagueKey}/settings`;
+      const response = await this.request<YahooAPIResponse<any>>(endpoint);
+      
+      // Parse the nested Yahoo API response structure
+      if (response.fantasy_content?.league?.[1]?.settings) {
+        return response.fantasy_content.league[1].settings;
+      }
+      
+      throw new Error('League settings not found in response');
+    } catch (error) {
+      console.error('Failed to get league settings for league', leagueKey, ':', error);
+      throw new Error(`Failed to get league settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get stat categories used by a specific league
+   * @param leagueKey - The league key (e.g., "458.l.123456")
+   * @returns Array of stat categories used by this league with enriched metadata
+   */
+  async getLeagueStatCategories(leagueKey: string): Promise<StatCategory[]> {
+    try {
+      // Get league settings to find which stat categories are used
+      const settings = await this.getLeagueSettings(leagueKey);
+      
+      // Yahoo responses sometimes wrap settings and sub-resources in an extra
+      // array layer ( e.g. `settings[0].stat_categories[0].stats` ).
+      // Resolve the correct reference defensively.
+      let statsContainer: any | undefined = undefined;
+
+      if (settings.stat_categories?.stats) {
+        statsContainer = settings.stat_categories.stats;
+      } else if (Array.isArray(settings.stat_categories) && settings.stat_categories[0]?.stats) {
+        statsContainer = settings.stat_categories[0].stats;
+      } else if (Array.isArray(settings) && settings[0]?.stat_categories?.stats) {
+        statsContainer = settings[0].stat_categories.stats;
+      }
+
+      if (!statsContainer) {
+        throw new Error('No stat categories found in league settings');
+      }
+      
+      const categories: StatCategory[] = [];
+      
+      // Parse league-specific stat categories
+      for (const statData of Object.values(statsContainer)) {
+        if (typeof statData === 'object' && statData && 'stat' in statData) {
+          const stat = (statData as any).stat;
+          categories.push({
+            stat_id: Number(stat.stat_id),
+            name: stat.name,
+            display_name: stat.display_name,
+            sort_order: stat.sort_order,
+            position_types: normalizePositionTypes(stat.position_types),
+            is_composite_stat: stat.is_composite_stat,
+            base_stats: stat.base_stats?.base_stat || stat.base_stats || []
+          });
+        }
+      }
+
+      return categories;
+    } catch (error) {
+      console.error('Failed to get league stat categories for league', leagueKey, ':', error);
+      throw new Error(`Failed to get league stat categories: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // =========================================================================
+  // Standings
+  // =========================================================================
+
+  /**
+   * Get league standings (team records, ranks, points, stats).
+   * @param leagueKey - The league key (e.g., "458.l.123456")
+   */
+  async getLeagueStandings(leagueKey: string): Promise<StandingsEntry[]> {
+    const endpoint = `/league/${leagueKey}/standings`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const entries: StandingsEntry[] = [];
+    const teamsData =
+      response.fantasy_content?.league?.[1]?.standings?.[0]?.teams ??
+      response.fantasy_content?.league?.[1]?.standings?.teams;
+
+    if (!teamsData) return entries;
+
+    for (const [key, container] of Object.entries(teamsData)) {
+      if (key === 'count') continue;
+      if (typeof container !== 'object' || !container || !('team' in container)) continue;
+
+      const teamArray = (container as any).team;
+      if (!Array.isArray(teamArray)) continue;
+
+      // First element: array of property objects. Remaining elements: sub-resources.
+      const props: any = {};
+      if (Array.isArray(teamArray[0])) {
+        for (const p of teamArray[0]) {
+          if (typeof p === 'object' && p) Object.assign(props, p);
+        }
+      }
+
+      // Find team_standings sub-resource
+      let standings: any = null;
+      for (const el of teamArray) {
+        if (typeof el === 'object' && el && 'team_standings' in el) {
+          standings = el.team_standings;
+          break;
+        }
+      }
+
+      // Find team_stats sub-resource (standings endpoint may include season stats)
+      let teamStats: StatValue[] = [];
+      for (const el of teamArray) {
+        if (typeof el === 'object' && el && 'team_stats' in el) {
+          const rawStats = el.team_stats?.stats;
+          if (rawStats) {
+            for (const s of Object.values(rawStats)) {
+              if (typeof s === 'object' && s && 'stat' in s) {
+                const stat = (s as any).stat;
+                teamStats.push({ stat_id: Number(stat.stat_id), value: stat.value });
+              }
+            }
+          }
+          break;
+        }
+      }
+
+      entries.push({
+        team_key: props.team_key ?? '',
+        team_id: props.team_id ?? '',
+        name: props.name ?? 'Unknown',
+        is_owned_by_current_login: props.is_owned_by_current_login,
+        url: props.url ?? '',
+        team_logos: props.team_logos ?? [],
+        rank: standings?.rank ? Number(standings.rank) : undefined,
+        wins: standings?.outcome_totals?.wins ? Number(standings.outcome_totals.wins) : undefined,
+        losses: standings?.outcome_totals?.losses ? Number(standings.outcome_totals.losses) : undefined,
+        ties: standings?.outcome_totals?.ties ? Number(standings.outcome_totals.ties) : undefined,
+        percentage: standings?.outcome_totals?.percentage ?? undefined,
+        points_for: standings?.points_for ? Number(standings.points_for) : undefined,
+        points_against: standings?.points_against ? Number(standings.points_against) : undefined,
+        points_back: standings?.points_back ?? undefined,
+        streak: standings?.streak?.type && standings?.streak?.value
+          ? `${standings.streak.type}${standings.streak.value}`
+          : undefined,
+        stats: teamStats.length > 0 ? teamStats : undefined,
+      });
+    }
+
+    return entries;
+  }
+
+  // =========================================================================
+  // Scoreboard (matchups for a given week)
+  // =========================================================================
+
+  /**
+   * Get the league scoreboard (all matchups for a given week).
+   * Omit `week` for the current week.
+   */
+  async getLeagueScoreboard(leagueKey: string, week?: number): Promise<MatchupData[]> {
+    const weekParam = week !== undefined ? `;week=${week}` : '';
+    const endpoint = `/league/${leagueKey}/scoreboard${weekParam}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const matchups: MatchupData[] = [];
+
+    const matchupsContainer =
+      response.fantasy_content?.league?.[1]?.scoreboard?.['0']?.matchups ??
+      response.fantasy_content?.league?.[1]?.scoreboard?.matchups;
+
+    if (!matchupsContainer) return matchups;
+
+    for (const [key, mContainer] of Object.entries(matchupsContainer)) {
+      if (key === 'count') continue;
+      if (typeof mContainer !== 'object' || !mContainer || !('matchup' in mContainer)) continue;
+
+      const matchup = (mContainer as any).matchup;
+      const matchupWeek = matchup.week ? Number(matchup.week) : week;
+      const status = matchup.status ?? 'unknown';
+      const isPlayoffs = matchup.is_playoffs === '1';
+      const isTied = matchup.is_tied === '1';
+      const winnerTeamKey = matchup.winner_team_key ?? undefined;
+
+      // Parse teams in this matchup
+      const teamsInMatchup: MatchupTeam[] = [];
+      const teamsData = matchup['0']?.teams ?? matchup.teams;
+
+      if (teamsData) {
+        for (const [tKey, tContainer] of Object.entries(teamsData)) {
+          if (tKey === 'count') continue;
+          if (typeof tContainer !== 'object' || !tContainer || !('team' in tContainer)) continue;
+
+          const teamArray = (tContainer as any).team;
+          if (!Array.isArray(teamArray)) continue;
+
+          const teamProps: any = {};
+          if (Array.isArray(teamArray[0])) {
+            for (const p of teamArray[0]) {
+              if (typeof p === 'object' && p) Object.assign(teamProps, p);
+            }
+          }
+
+          // Extract team stats from remaining elements
+          const stats: StatValue[] = [];
+          let teamPoints: string | undefined;
+          for (const el of teamArray) {
+            if (typeof el !== 'object' || !el) continue;
+            if ('team_stats' in el) {
+              const rawStats = el.team_stats?.stats;
+              if (rawStats) {
+                for (const s of Object.values(rawStats)) {
+                  if (typeof s === 'object' && s && 'stat' in s) {
+                    const stat = (s as any).stat;
+                    stats.push({ stat_id: Number(stat.stat_id), value: stat.value });
+                  }
+                }
+              }
+            }
+            if ('team_points' in el) {
+              teamPoints = el.team_points?.total;
+            }
+          }
+
+          teamsInMatchup.push({
+            team_key: teamProps.team_key ?? '',
+            team_id: teamProps.team_id ?? '',
+            name: teamProps.name ?? 'Unknown',
+            is_owned_by_current_login: teamProps.is_owned_by_current_login,
+            team_logos: teamProps.team_logos ?? [],
+            points: teamPoints,
+            stats,
+          });
+        }
+      }
+
+      matchups.push({
+        week: matchupWeek,
+        status,
+        is_playoffs: isPlayoffs,
+        is_tied: isTied,
+        winner_team_key: winnerTeamKey,
+        teams: teamsInMatchup,
+      });
+    }
+
+    return matchups;
+  }
+
+  // =========================================================================
+  // Team Stats
+  // =========================================================================
+
+  /**
+   * Get team stats — season-to-date or for a specific week.
+   */
+  async getTeamStats(teamKey: string, week?: number): Promise<TeamStats> {
+    const weekParam = week !== undefined ? `;type=week;week=${week}` : '';
+    const endpoint = `/team/${teamKey}/stats${weekParam}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const teamArray = response.fantasy_content?.team;
+    const teamProps: any = {};
+    const stats: StatValue[] = [];
+
+    if (Array.isArray(teamArray)) {
+      // Parse team properties from first element
+      if (Array.isArray(teamArray[0])) {
+        for (const p of teamArray[0]) {
+          if (typeof p === 'object' && p) Object.assign(teamProps, p);
+        }
+      }
+
+      // Find team_stats in remaining elements
+      for (const el of teamArray) {
+        if (typeof el !== 'object' || !el || !('team_stats' in el)) continue;
+        const rawStats = el.team_stats?.stats;
+        if (rawStats) {
+          for (const s of Object.values(rawStats)) {
+            if (typeof s === 'object' && s && 'stat' in s) {
+              const stat = (s as any).stat;
+              stats.push({ stat_id: Number(stat.stat_id), value: stat.value });
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      team_key: teamProps.team_key ?? teamKey,
+      team_id: teamProps.team_id ?? '',
+      name: teamProps.name ?? 'Unknown',
+      week: week,
+      stats,
+    };
+  }
+
+  // =========================================================================
+  // Roster
+  // =========================================================================
+
+  /**
+   * Get team roster (players and their positions/status).
+   * @param date - Specific date (YYYY-MM-DD) or omit for today
+   * @param week - Week number (for weekly leagues)
+   */
+  async getTeamRoster(teamKey: string, options?: { date?: string; week?: number }): Promise<RosterEntry[]> {
+    let param = '';
+    if (options?.date) param = `;date=${options.date}`;
+    else if (options?.week) param = `;week=${options.week}`;
+
+    const endpoint = `/team/${teamKey}/roster${param}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const roster: RosterEntry[] = [];
+    const teamArray = response.fantasy_content?.team;
+
+    if (!Array.isArray(teamArray)) return roster;
+
+    // Find the roster sub-resource
+    let playersData: any = null;
+    for (const el of teamArray) {
+      if (typeof el === 'object' && el && 'roster' in el) {
+        // roster -> 0 -> players  OR  roster -> players
+        playersData =
+          el.roster?.['0']?.players ??
+          el.roster?.players;
+        break;
+      }
+    }
+
+    if (!playersData) return roster;
+
+    for (const [key, pContainer] of Object.entries(playersData)) {
+      if (key === 'count') continue;
+      if (typeof pContainer !== 'object' || !pContainer || !('player' in pContainer)) continue;
+
+      const playerArray = (pContainer as any).player;
+      if (!Array.isArray(playerArray)) continue;
+
+      const playerProps: any = {};
+      if (Array.isArray(playerArray[0])) {
+        for (const p of playerArray[0]) {
+          if (typeof p === 'object' && p) Object.assign(playerProps, p);
+        }
+      }
+
+      // Find selected_position in remaining elements
+      let selectedPosition: string | undefined;
+      for (const el of playerArray) {
+        if (typeof el === 'object' && el && 'selected_position' in el) {
+          const selPos = el.selected_position;
+          selectedPosition =
+            selPos?.[1]?.position ??
+            selPos?.position ??
+            (Array.isArray(selPos) ? selPos.find((x: any) => x?.position)?.position : undefined);
+          break;
+        }
+      }
+
+      // Extract eligible positions
+      const eligiblePositions: string[] = [];
+      if (playerProps.eligible_positions) {
+        const ep = playerProps.eligible_positions;
+        if (Array.isArray(ep)) {
+          for (const pos of ep) {
+            if (typeof pos === 'string') eligiblePositions.push(pos);
+            else if (pos?.position) eligiblePositions.push(pos.position);
+          }
+        }
+      }
+
+      roster.push({
+        player_key: playerProps.player_key ?? '',
+        player_id: playerProps.player_id ?? '',
+        name: playerProps.name?.full ?? playerProps.name?.first + ' ' + playerProps.name?.last ?? 'Unknown',
+        editorial_team_abbr: playerProps.editorial_team_abbr ?? '',
+        display_position: playerProps.display_position ?? '',
+        eligible_positions: eligiblePositions,
+        selected_position: selectedPosition ?? 'BN',
+        status: playerProps.status ?? undefined,
+        status_full: playerProps.status_full ?? undefined,
+        image_url: playerProps.image_url ?? playerProps.headshot?.url ?? undefined,
+        on_disabled_list: playerProps.on_disabled_list === 1,
+        uniform_number: playerProps.uniform_number ?? undefined,
+      });
+    }
+
+    return roster;
+  }
+
+  // =========================================================================
+  // Transactions
+  // =========================================================================
+
+  /**
+   * Get league transactions (adds, drops, trades).
+   * @param type - Filter by type: 'add', 'drop', 'trade', or omit for all
+   */
+  async getLeagueTransactions(leagueKey: string, type?: 'add' | 'drop' | 'trade'): Promise<TransactionEntry[]> {
+    const typeParam = type ? `;type=${type}` : '';
+    const endpoint = `/league/${leagueKey}/transactions${typeParam}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const transactions: TransactionEntry[] = [];
+    const txContainer =
+      response.fantasy_content?.league?.[1]?.transactions;
+
+    if (!txContainer) return transactions;
+
+    for (const [key, tContainer] of Object.entries(txContainer)) {
+      if (key === 'count') continue;
+      if (typeof tContainer !== 'object' || !tContainer || !('transaction' in tContainer)) continue;
+
+      const tx = (tContainer as any).transaction;
+      const txData = Array.isArray(tx) ? tx[0] : tx;
+      const playersContainer = Array.isArray(tx) && tx[1]?.players ? tx[1].players : null;
+
+      // Parse players involved
+      const players: TransactionPlayer[] = [];
+      if (playersContainer) {
+        for (const [pKey, pContainer] of Object.entries(playersContainer)) {
+          if (pKey === 'count') continue;
+          if (typeof pContainer !== 'object' || !pContainer || !('player' in pContainer)) continue;
+
+          const playerArray = (pContainer as any).player;
+          if (!Array.isArray(playerArray)) continue;
+
+          const playerProps: any = {};
+          if (Array.isArray(playerArray[0])) {
+            for (const p of playerArray[0]) {
+              if (typeof p === 'object' && p) Object.assign(playerProps, p);
+            }
+          }
+
+          // Find transaction_data
+          let txPlayerData: any = null;
+          for (const el of playerArray) {
+            if (typeof el === 'object' && el && 'transaction_data' in el) {
+              const td = el.transaction_data;
+              txPlayerData = Array.isArray(td) ? td[0] : td;
+              break;
+            }
+          }
+
+          players.push({
+            player_key: playerProps.player_key ?? '',
+            player_id: playerProps.player_id ?? '',
+            name: playerProps.name?.full ?? 'Unknown',
+            editorial_team_abbr: playerProps.editorial_team_abbr ?? '',
+            display_position: playerProps.display_position ?? '',
+            type: txPlayerData?.type ?? '',
+            source_team_key: txPlayerData?.source_team_key ?? undefined,
+            destination_team_key: txPlayerData?.destination_team_key ?? undefined,
+          });
+        }
+      }
+
+      transactions.push({
+        transaction_key: txData.transaction_key ?? '',
+        transaction_id: txData.transaction_id ?? '',
+        type: txData.type ?? '',
+        status: txData.status ?? '',
+        timestamp: txData.timestamp ? Number(txData.timestamp) : undefined,
+        trader_team_key: txData.trader_team_key ?? undefined,
+        tradee_team_key: txData.tradee_team_key ?? undefined,
+        players,
+      });
+    }
+
+    return transactions;
+  }
+
+  // =========================================================================
+  // Team Matchups (schedule)
+  // =========================================================================
+
+  /**
+   * Get matchup schedule for a specific team.
+   * @param weeks - Comma-separated week numbers or omit for all
+   */
+  async getTeamMatchups(teamKey: string, weeks?: number[]): Promise<MatchupData[]> {
+    const weeksParam = weeks ? `;weeks=${weeks.join(',')}` : '';
+    const endpoint = `/team/${teamKey}/matchups${weeksParam}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const matchups: MatchupData[] = [];
+    const teamArray = response.fantasy_content?.team;
+    if (!Array.isArray(teamArray)) return matchups;
+
+    // Find matchups sub-resource
+    let matchupsData: any = null;
+    for (const el of teamArray) {
+      if (typeof el === 'object' && el && 'matchups' in el) {
+        matchupsData = el.matchups;
+        break;
+      }
+    }
+
+    if (!matchupsData) return matchups;
+
+    for (const [key, mContainer] of Object.entries(matchupsData)) {
+      if (key === 'count') continue;
+      if (typeof mContainer !== 'object' || !mContainer || !('matchup' in mContainer)) continue;
+
+      const matchup = (mContainer as any).matchup;
+      const teams: MatchupTeam[] = [];
+      const teamsData = matchup['0']?.teams ?? matchup.teams;
+
+      if (teamsData) {
+        for (const [tKey, tContainer] of Object.entries(teamsData)) {
+          if (tKey === 'count') continue;
+          if (typeof tContainer !== 'object' || !tContainer || !('team' in tContainer)) continue;
+
+          const tArray = (tContainer as any).team;
+          if (!Array.isArray(tArray)) continue;
+
+          const tProps: any = {};
+          if (Array.isArray(tArray[0])) {
+            for (const p of tArray[0]) {
+              if (typeof p === 'object' && p) Object.assign(tProps, p);
+            }
+          }
+
+          teams.push({
+            team_key: tProps.team_key ?? '',
+            team_id: tProps.team_id ?? '',
+            name: tProps.name ?? 'Unknown',
+            is_owned_by_current_login: tProps.is_owned_by_current_login,
+            team_logos: tProps.team_logos ?? [],
+            stats: [],
+          });
+        }
+      }
+
+      matchups.push({
+        week: matchup.week ? Number(matchup.week) : undefined,
+        status: matchup.status ?? 'unknown',
+        is_playoffs: matchup.is_playoffs === '1',
+        is_tied: matchup.is_tied === '1',
+        winner_team_key: matchup.winner_team_key ?? undefined,
+        teams,
+      });
+    }
+
+    return matchups;
   }
 
   /**

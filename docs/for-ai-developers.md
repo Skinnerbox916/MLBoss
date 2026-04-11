@@ -6,17 +6,17 @@ This guide is specifically written for LLMs working on the MLBoss codebase. It c
 
 ## Quick Links
 
-- **Implementation Status** - See [agent/implementation.md](./agent/implementation.md)
-- **Agent Patterns** - See [agent/patterns.md](./agent/patterns.md)
-- **Agent API** - See [agent/api.md](./agent/api.md)
-- **Statistical Architecture** - See [agent/stats.md](./agent/stats.md)
+- **Data Layer Architecture** - See [data-layer.md](./data-layer.md)
+- **Statistical Architecture** - See [stats.md](./stats.md)
+- **Yahoo API Reference** - See [yahoo-api-reference.md](./yahoo-api-reference.md)
+- **Dashboard Components** - See [dashboard-components.md](./dashboard-components.md)
 
 ## Documentation Strategy
 
 ### Core Principles
 
 1. **Keep docs near code** - Documentation lives next to the code it describes
-   - `docs/agent/README.md` for agent library
+   - `docs/data-layer.md` for data layer
    - Component-level docs in their directories
 
 2. **One README per package root** - Don't over-nest documentation
@@ -34,14 +34,13 @@ This guide is specifically written for LLMs working on the MLBoss codebase. It c
 
 ## Common Patterns
 
-All authentication, caching, error-handling, and analysis patterns are now maintained in **[agent/patterns.md](./agent/patterns.md)**. Please refer to that document for up-to-date examples and contribute new patterns there to avoid duplication.
+Authentication, caching, and stat enrichment patterns are documented in **[data-layer.md](./data-layer.md)**.
 
 ## Navigation Tips
 
-1. **Start with implementation** - Check [agent/implementation.md](./agent/implementation.md) before planning features
-2. **Use existing patterns** - See [agent/patterns.md](./agent/patterns.md) for working examples
-3. **Check agent docs** - [agent/README.md](./agent/README.md) has the overview
-4. **Reference Yahoo API guide** - [yahoo-api-reference.md](./yahoo-api-reference.md) for API details
+1. **Check the data layer** - See [data-layer.md](./data-layer.md) for stats, caching, and auth patterns
+2. **Reference Yahoo API guide** - [yahoo-api-reference.md](./yahoo-api-reference.md) for API details
+3. **Dashboard architecture** - [dashboard-components.md](./dashboard-components.md) for card system
 
 ## Environment Variables
 
@@ -53,6 +52,9 @@ Complete and up-to-date environment variable definitions live in **[Setup & Conf
 2. **Token expiration** - Access tokens last ~1 hour, use refresh tokens
 3. **Rate limits** - Yahoo allows ~60-100 requests/hour, implement tiered caching (Static/Semi-dynamic/Dynamic)
 4. **JSON structure** - Yahoo's JSON has numeric keys, consider using XML
+5. **`position_types` from Yahoo JSON is unreliable** - The field can be absent, a plain string (`"B"`), a nested object (`{"position_type":"B"}`), or a numeric-key object (`{"position_type":{"0":"B","count":1}}`). Always use `normalizePositionTypes()` in `yahoo-fantasy-api.ts` when parsing it. `getEnrichedLeagueStatCategories` also falls back to `COMMON_MLB_STATS` in `src/constants/statCategories.ts` as a last resort.
+6. **Never use `flushdb` to clear cache** - It wipes `user:*` auth data alongside cache keys, breaking all Yahoo API calls. Use the `/admin/cache` page (targets `cache:*` only) or `invalidateCachePattern()`. See also the cache tier key format note in [data-layer.md](./data-layer.md).
+7. **Cache Redis key format** - `withCache` stores keys as `cache:{tier}:{resource}:{id}` (e.g. `cache:static:stat_category_map:458`). The `CACHE_CATEGORIES` prefix constants are the tier segment only — you must include the `cache:` namespace when querying Redis directly.
 
 ## Quick Command Reference
 
@@ -71,7 +73,7 @@ npm run test-redis
 
 - **OAuth logic**: `/src/lib/yahoo-oauth.ts`
 - **Fantasy API**: `/src/lib/yahoo-fantasy-api.ts`
-- **Agent system**: `/src/agent/`
+- **Fantasy data layer**: `/src/lib/fantasy/`
 - **API routes**: `/src/app/api/`
 - **Session config**: `/src/lib/session.ts`
 - **Redis client**: `/src/lib/redis.ts`

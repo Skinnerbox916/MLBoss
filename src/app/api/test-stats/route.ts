@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/session';
-import { agentFantasy } from '@/agent';
+import { getStatCategories, getStatCategoryMap, enrichStats } from '@/lib/fantasy';
 
 export async function GET(request: Request) {
   try {
@@ -14,21 +14,21 @@ export async function GET(request: Request) {
     const gameKey = searchParams.get('game') || '458';
 
     // Get stat categories
-    const categories = await agentFantasy.getStatCategories(gameKey, session.user.id);
+    const categories = await getStatCategories(gameKey, session.user.id);
     
     // Get stat category map
-    const categoryMap = await agentFantasy.getStatCategoryMap(gameKey, session.user.id);
+    const categoryMap = await getStatCategoryMap(gameKey, session.user.id);
 
     // Example stat IDs to demonstrate disambiguation
     const exampleStats = [
       { stat_id: "21", value: "14" }, // Batter strikeouts
-      { stat_id: "30", value: "26" }, // Pitcher strikeouts
+      { stat_id: "42", value: "26" }, // Pitcher strikeouts
       { stat_id: "12", value: "8" },  // Home runs
       { stat_id: "13", value: "22" }, // RBIs
     ];
 
     // Enrich example stats with category info using the new utility
-    const enrichedStats = await agentFantasy.enrichStats(gameKey, exampleStats, session.user.id);
+    const enrichedStats = await enrichStats(gameKey, exampleStats, session.user.id);
 
     return NextResponse.json({
       game_key: gameKey,
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       // Show how to disambiguate strikeouts
       disambiguation_example: {
         batter_strikeouts: categoryMap[21],
-        pitcher_strikeouts: categoryMap[30],
+        pitcher_strikeouts: categoryMap[42],
       }
     });
   } catch (error) {

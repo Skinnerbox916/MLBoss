@@ -14,7 +14,8 @@ export async function middleware(request: NextRequest) {
     '/lineup',
     '/roster',
     '/league',
-    '/api/fantasy'
+    '/api/fantasy',
+    '/api/test-stats'
   ];
   
   // Check if the current path matches any protected route

@@ -2,10 +2,10 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 
 const variants = {
-  body: 'font-body text-base leading-relaxed text-gray-800 dark:text-gray-200',
-  muted: 'font-body text-base leading-relaxed text-gray-600 dark:text-gray-300',
-  small: 'font-body text-sm text-gray-700 dark:text-gray-300',
-  caption: 'font-body text-xs text-gray-500 dark:text-gray-400',
+  body: 'font-body text-base leading-relaxed text-foreground',
+  muted: 'font-body text-base leading-relaxed text-muted-foreground',
+  small: 'font-body text-sm text-muted-foreground',
+  caption: 'font-body text-xs text-muted-foreground opacity-80',
   mono: 'font-mono text-sm',
 } as const;
 

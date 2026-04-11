@@ -1,33 +1,37 @@
-import { getSession } from '@/lib/session';
-import { redirect } from 'next/navigation';
 import AppLayout from '@/components/layout/AppLayout';
-import AppHeader from '@/components/layout/AppHeader';
+import GridLayout from '@/components/dashboard/GridLayout';
+import { CurrentScoreCard, SeasonComparisonCard } from '@/components/matchup/cards';
+import { getSession } from '@/lib/session';
+import { getCurrentMLBGameKey, analyzeUserFantasyLeagues } from '@/lib/fantasy';
 
 export default async function MatchupPage() {
+  // Authentication handled by middleware
+
+  // Determine user's primary MLB league to display matchup for
   const session = await getSession();
-  const user = session?.user;
-  
-  if (!user) {
-    redirect('/auth/signin');
+  const user = session.user as NonNullable<import('@/lib/session').SessionData['user']>;
+
+  // Get current MLB game key (e.g., 458 for 2025)
+  const currentMLB = await getCurrentMLBGameKey(user.id);
+
+  // Fallbacks to ensure we don't break UI
+  let leagueKey: string | undefined = undefined;
+
+  if (currentMLB?.game_key) {
+    const result = await analyzeUserFantasyLeagues(user.id, [currentMLB.game_key]);
+    if (result.ok && result.data.leagues && result.data.leagues.length > 0) {
+      leagueKey = result.data.leagues[0].league_key;
+    }
   }
 
   return (
     <AppLayout>
-      <AppHeader title="Matchup Analysis" userName={user.name} />
-      
-      <main className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
+      <main className="flex-1 overflow-y-auto bg-background">
         <div className="p-6">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8">
-            <div className="text-center">
-              <span className="text-6xl mb-4 block">⚔️</span>
-              <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">
-                Matchup Analysis
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400">
-                Analyze your upcoming matchups and opponent strategies
-              </p>
-            </div>
-          </div>
+          <GridLayout>
+            <CurrentScoreCard leagueKey={leagueKey} />
+            <SeasonComparisonCard leagueKey={leagueKey} />
+          </GridLayout>
         </div>
       </main>
     </AppLayout>

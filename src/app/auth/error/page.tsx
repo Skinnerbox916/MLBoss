@@ -2,8 +2,9 @@
 
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { Suspense } from 'react';
 
-export default function AuthErrorPage() {
+function AuthErrorContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
   const yahooError = searchParams.get('yahoo_error');
@@ -71,54 +72,54 @@ export default function AuthErrorPage() {
   const errorDetails = getErrorDetails();
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-surface-muted py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         {/* Header */}
         <div className="text-center">
           <div className="mx-auto h-12 w-auto flex items-center justify-center">
-            <div className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            <div className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
               MLBoss
             </div>
           </div>
           <div className="mt-6">
-            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 dark:bg-red-900/20">
-              <svg className="h-8 w-8 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-error-100 dark:bg-error-900/20">
+              <svg className="h-8 w-8 text-error dark:text-error-light" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
               </svg>
             </div>
           </div>
-          <h2 className="mt-4 text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
+          <h2 className="mt-4 text-2xl font-bold tracking-tight text-foreground">
             {errorDetails.title}
           </h2>
         </div>
 
         {/* Error Card */}
-        <div className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 px-8 py-8">
+        <div className="bg-surface shadow-xl rounded-xl border border-border px-8 py-8">
           <div className="space-y-6">
             {/* Error Message */}
             <div className="text-center">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              <p className="text-sm text-muted-foreground mb-3">
                 {errorDetails.message}
               </p>
-              <p className="text-xs text-gray-500 dark:text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 {errorDetails.suggestion}
               </p>
             </div>
 
             {/* Error Code */}
             {error && (
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 space-y-2">
-                <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                  Error Code: <span className="font-mono text-red-600 dark:text-red-400">{error}</span>
+              <div className="bg-primary-50 dark:bg-primary-700 rounded-lg p-3 space-y-2">
+                <p className="text-xs text-muted-foreground text-center">
+                  Error Code: <span className="font-mono text-error dark:text-error-light">{error}</span>
                 </p>
                 {yahooError && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                    Yahoo Error: <span className="font-mono text-red-600 dark:text-red-400">{yahooError}</span>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Yahoo Error: <span className="font-mono text-error dark:text-error-light">{yahooError}</span>
                   </p>
                 )}
                 {yahooDescription && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                    Details: <span className="font-mono text-red-600 dark:text-red-400">{yahooDescription}</span>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Details: <span className="font-mono text-error dark:text-error-light">{yahooDescription}</span>
                   </p>
                 )}
               </div>
@@ -128,7 +129,7 @@ export default function AuthErrorPage() {
             <div className="space-y-3">
               <Link
                 href="/"
-                className="w-full flex justify-center items-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 dark:focus:ring-offset-gray-800 transition-all duration-200 shadow-lg hover:shadow-xl"
+                className="w-full flex justify-center items-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-primary to-accent hover:from-primary-600 hover:to-accent-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring focus:ring-offset-background transition-all duration-200 shadow-lg hover:shadow-xl"
               >
                 Try Sign In Again
               </Link>
@@ -138,11 +139,30 @@ export default function AuthErrorPage() {
 
         {/* Support Info */}
         <div className="text-center">
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-muted-foreground">
             If you continue to experience issues, please contact support
           </p>
         </div>
       </div>
     </div>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-surface-muted">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent mx-auto"></div>
+        <p className="mt-2 text-sm text-muted-foreground">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+export default function AuthErrorPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <AuthErrorContent />
+    </Suspense>
   );
 } 

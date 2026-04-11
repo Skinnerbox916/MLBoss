@@ -135,7 +135,7 @@ This returns metadata for each stat including:
 
 **Common MLB stat_ids:**
 - Batting: 7 (R), 8 (H), 12 (HR), 13 (RBI), 16 (SB), 21 (K)
-- Pitching: 26 (ERA), 27 (WHIP), 28 (W), 30 (K), 32 (SV)
+- Pitching: 26 (ERA), 27 (WHIP), 28 (W), 32 (SV), 42 (K), 50 (IP), 83 (QS)
 
 Use Static caching (24-48h TTL) as stat categories never change during a season.
 

@@ -3,7 +3,7 @@
 >**LLM Agents Please Read:**
 >**Purpose of this document**: This file captures the **product vision, user requirements, and high-level architecture**. It does **not** describe the source-code implementation. For engineering details and API contracts, start at `docs/README.md`.
 
-➜ Environment setup: [setup.md](setup.md) | Agent docs: [agent/README.md](agent/README.md)
+➜ Environment setup: [setup.md](setup.md) | Data layer: [data-layer.md](data-layer.md)
 
 ## Overview
 MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.

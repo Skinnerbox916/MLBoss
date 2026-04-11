@@ -1,60 +1,69 @@
 import { getSession } from '@/lib/session';
-import { redirect } from 'next/navigation';
-import LogoutButton from './LogoutButton';
 import CopyButton from './CopyButton';
-import { agentFantasy, analyzeUserFantasyLeagues, agentAuth } from '@/agent';
+import MLBDebugPanel from './MLBDebugPanel';
+import { getCurrentMLBGameKey, analyzeUserFantasyLeagues, isTokenValid, refreshUserTokens, getEnrichedLeagueStatCategories, type LeagueAnalysis, type LeagueAnalysisEntry, type LeagueAnalysisSummary } from '@/lib/fantasy';
+import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import AppLayout from '@/components/layout/AppLayout';
-import AppHeader from '@/components/layout/AppHeader';
+
+// ---------------------------------------------------------------------------
+// Local types specific to this debug page (lightweight, not exported elsewhere)
+// ---------------------------------------------------------------------------
+// interface CacheStats {
+//   totalKeys: number;
+//   staticKeys: number;
+//   // … add more fields here as needed when cache details are displayed
+// }
+
+interface MLBSeason {
+  game_key: string;
+  season: string;
+  is_active: boolean;
+}
+
+type FantasyData = LeagueAnalysis;
 
 export default async function AdminDebugPage() {
-  // Fetch session data server-side
-  let user;
-  try {
-    const session = await getSession();
-    user = session.user;
-    
-    // If no user in session, redirect to signin
-    if (!user) {
-      redirect('/');
-    }
-  } catch (error) {
-    console.error('Failed to get session:', error);
-    redirect('/?reason=error');
-  }
+  // Authentication handled by middleware - get user from session
+  const session = await getSession();
+  const user = session.user!; // Non-null assertion safe due to middleware
 
   // Fetch current MLB season data efficiently
-  let fantasyData = null;
-  let fantasyError = null;
-  let mlbLeagues: any[] | null = null;
-  let mlbSummary: any | null = null;
-  let currentMLBSeason: { game_key: string; season: string; is_active: boolean } | null = null;
+  let fantasyData: FantasyData | null = null;
+  let fantasyError: string | null = null;
+  let mlbLeagues: LeagueAnalysisEntry[] | null = null;
+  let mlbSummary: LeagueAnalysisSummary | null = null;
+  let currentMLBSeason: MLBSeason | null = null;
   
   try {
     // Check if user has valid tokens
-    const isTokenValid = await agentAuth.isTokenValid(user.id);
-    if (!isTokenValid) {
-      const refreshed = await agentAuth.refreshUserTokens(user.id);
+    const tokenValid = await isTokenValid(user.id);
+    if (!tokenValid) {
+      const refreshed = await refreshUserTokens(user.id);
       if (!refreshed) {
         throw new Error('Unable to refresh authentication tokens');
       }
     }
 
     // Get current MLB season first (cached, fast call)
-    currentMLBSeason = await agentFantasy.getCurrentMLBGameKey(user.id);
+    currentMLBSeason = await getCurrentMLBGameKey(user.id);
     
     if (currentMLBSeason?.game_key) {
       // 🚀 EFFICIENCY: Only load leagues for current MLB season instead of all leagues
       console.log(`🎯 Loading only ${currentMLBSeason.season} MLB leagues (game key: ${currentMLBSeason.game_key})`);
-      fantasyData = await analyzeUserFantasyLeagues(user.id, [currentMLBSeason.game_key]);
-      
+      const result = await analyzeUserFantasyLeagues(user.id, [currentMLBSeason.game_key]);
+      if (!result.ok) throw new Error(result.error);
+      fantasyData = result.data;
+
       if (fantasyData?.leagues) {
         mlbLeagues = fantasyData.leagues;
-        mlbSummary = fantasyData.summary;
-        console.log(`✅ Efficiently loaded ${mlbLeagues?.length || 0} current season leagues instead of all historical leagues`);
+        mlbSummary = fantasyData.summary ?? null;
+        console.log(`✅ Loaded ${mlbLeagues?.length || 0} current season leagues`);
       }
     } else {
       console.log('⚠️ Could not determine current MLB season, falling back to all leagues');
-      fantasyData = await analyzeUserFantasyLeagues(user.id);
+      const result = await analyzeUserFantasyLeagues(user.id);
+      if (!result.ok) throw new Error(result.error);
+      fantasyData = result.data;
       mlbLeagues = [];
     }
   } catch (error) {
@@ -63,21 +72,34 @@ export default async function AdminDebugPage() {
     mlbLeagues = [];
   }
 
+  // Fetch enriched league categories for the first league (for debugging)
+  let leagueCategories: EnrichedLeagueStatCategory[] = [];
+  let leagueCategoriesError: string | null = null;
+  const firstLeagueKey = mlbLeagues?.[0]?.league_key;
+  if (firstLeagueKey) {
+    try {
+      leagueCategories = await getEnrichedLeagueStatCategories(user.id, firstLeagueKey);
+    } catch (error) {
+      leagueCategoriesError = error instanceof Error ? error.message : 'Unknown error';
+    }
+  }
+
   // Format the token expiration date
   const expirationDate = user.expiresAt ? new Date(user.expiresAt).toLocaleString() : 'Unknown';
   const isTokenExpired = user.expiresAt ? Date.now() >= user.expiresAt : false;
 
   return (
     <AppLayout>
-      <AppHeader title="Debug Dashboard" userName={user.name} />
-      
-      <main className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
+      <main className="flex-1 overflow-y-auto bg-background">
         <div className="max-w-7xl mx-auto py-4 px-4">
           <div className="space-y-4">
-            
+
+            {/* MLB Stats API debug probe — surfaces raw pipeline output */}
+            <MLBDebugPanel />
+
             {/* Account Information - Compact Table */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+            <div className="bg-surface rounded-lg border border-border p-4">
+              <h2 className="text-lg font-semibold text-foreground mb-3">
                 Account Information
               </h2>
               
@@ -85,16 +107,16 @@ export default async function AdminDebugPage() {
                 <table className="text-sm">
                   <tbody>
                     <tr>
-                      <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Name</td>
-                      <td className="text-gray-900 dark:text-white">{user.name}</td>
+                      <td className="font-medium text-muted-foreground pr-3 py-1">Name</td>
+                      <td className="text-foreground">{user.name}</td>
                     </tr>
                     <tr>
-                      <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Email</td>
-                      <td className="text-gray-900 dark:text-white">{user.email || 'Not provided'}</td>
+                      <td className="font-medium text-muted-foreground pr-3 py-1">Email</td>
+                      <td className="text-foreground">{user.email || 'Not provided'}</td>
                     </tr>
                     <tr>
-                      <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">User ID</td>
-                      <td className="text-gray-900 dark:text-white font-mono text-xs">{user.id}</td>
+                      <td className="font-medium text-muted-foreground pr-3 py-1">User ID</td>
+                      <td className="text-foreground font-mono text-xs">{user.id}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -102,8 +124,8 @@ export default async function AdminDebugPage() {
                 <table className="text-sm">
                   <tbody>
                     <tr>
-                      <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Session Status</td>
-                      <td className="text-gray-900 dark:text-white">
+                      <td className="font-medium text-muted-foreground pr-3 py-1">Session Status</td>
+                      <td className="text-foreground">
                         <div className="flex items-center">
                           <div className={`h-2 w-2 rounded-full mr-2 ${
                             isTokenExpired ? 'bg-red-500' : 'bg-green-500'
@@ -119,12 +141,12 @@ export default async function AdminDebugPage() {
                       </td>
                     </tr>
                     <tr>
-                      <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Token Expires</td>
-                      <td className="text-gray-900 dark:text-white">{expirationDate}</td>
+                      <td className="font-medium text-muted-foreground pr-3 py-1">Token Expires</td>
+                      <td className="text-foreground">{expirationDate}</td>
                     </tr>
                     <tr>
-                      <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Authentication Provider</td>
-                      <td className="text-gray-900 dark:text-white">Yahoo OAuth 2.0</td>
+                      <td className="font-medium text-muted-foreground pr-3 py-1">Authentication Provider</td>
+                      <td className="text-foreground">Yahoo OAuth 2.0</td>
                     </tr>
                   </tbody>
                 </table>
@@ -147,8 +169,8 @@ export default async function AdminDebugPage() {
             </div>
 
             {/* MLB Fantasy Baseball Data Section - Compact */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+            <div className="bg-surface rounded-lg border border-border p-4">
+              <h2 className="text-lg font-semibold text-foreground mb-3">
                 MLB Fantasy Baseball Data
               </h2>
               
@@ -188,28 +210,28 @@ export default async function AdminDebugPage() {
                   {/* MLB Leagues and Teams - Compact Table */}
                   {mlbLeagues && mlbLeagues.length > 0 && (
                     <div>
-                      <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+                      <h3 className="text-base font-semibold text-foreground mb-2">
                         Your {currentMLBSeason?.season || '2025'} MLB Fantasy Teams
                       </h3>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm border border-gray-200 dark:border-gray-600 rounded-lg">
-                          <thead className="bg-gray-50 dark:bg-gray-700">
+                        <table className="w-full text-sm border border-border rounded-lg">
+                          <thead className="bg-primary-50 dark:bg-primary-700">
                             <tr>
-                              <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-200">League</th>
-                              <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-200">Your Team</th>
-                              <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-200">League Info</th>
-                              <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-200">Team Info</th>
+                              <th className="px-3 py-2 text-left font-medium text-foreground">League</th>
+                              <th className="px-3 py-2 text-left font-medium text-foreground">Your Team</th>
+                              <th className="px-3 py-2 text-left font-medium text-foreground">League Info</th>
+                              <th className="px-3 py-2 text-left font-medium text-foreground">Team Info</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
-                            {mlbLeagues.map((league: any, index: number) => (
-                              <tr key={league.league_key || index} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                          <tbody className="divide-y divide-border">
+                            {mlbLeagues.map((league, index) => (
+                              <tr key={league.league_key || index} className="hover:bg-primary-50 dark:hover:bg-primary-800">
                                 <td className="px-3 py-2">
                                   <div>
-                                    <div className="font-medium text-gray-900 dark:text-white">
+                                    <div className="font-medium text-foreground">
                                       ⚾ {league.league_name}
                                     </div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                                    <div className="text-xs text-muted-foreground font-mono">
                                       {league.league_key}
                                     </div>
                                   </div>
@@ -224,38 +246,20 @@ export default async function AdminDebugPage() {
                                       <div className="font-medium text-green-800 dark:text-green-200">
                                         {league.user_team.team_name}
                                       </div>
-                                      <div className="text-xs text-green-600 dark:text-green-300 font-mono">
-                                        {league.user_team.team_key}
-                                      </div>
                                     </div>
                                   ) : (
-                                    <div className="text-gray-500 dark:text-gray-400 text-xs">
+                                    <div className="text-muted-foreground text-xs">
                                       No team found
                                     </div>
                                   )}
                                 </td>
                                 <td className="px-3 py-2">
-                                  <div className="text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
-                                    <div>Teams: {league.total_teams}</div>
-                                    {league.league_type && <div>Type: {league.league_type}</div>}
-                                    {league.scoring_type && <div>Scoring: {league.scoring_type}</div>}
-                                    {league.current_week && <div>Week: {league.current_week}</div>}
+                                  <div className="text-xs text-muted-foreground space-y-0.5">
+                                    {/* League info can be added here */}
                                   </div>
                                 </td>
                                 <td className="px-3 py-2">
-                                  {league.user_team && (
-                                    <div className="text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
-                                      {league.user_team.waiver_priority && (
-                                        <div>Waiver: {league.user_team.waiver_priority}</div>
-                                      )}
-                                      {league.user_team.number_of_moves && (
-                                        <div>Moves: {league.user_team.number_of_moves}</div>
-                                      )}
-                                      {league.user_team.number_of_trades && (
-                                        <div>Trades: {league.user_team.number_of_trades}</div>
-                                      )}
-                                    </div>
-                                  )}
+                                  {/* Team info can be added here */}
                                 </td>
                               </tr>
                             ))}
@@ -266,9 +270,9 @@ export default async function AdminDebugPage() {
                   )}
 
                   {/* Data Preview for Development - Compact */}
-                  <div className="border-t border-gray-200 dark:border-gray-600 pt-4">
+                  <div className="border-t border-border pt-4">
                     <details className="group">
-                      <summary className="cursor-pointer text-base font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
+                      <summary className="cursor-pointer text-base font-semibold text-foreground hover:text-primary dark:hover:text-primary-400">
                         🔧 MLB Data Preview (Development)
                       </summary>
                       <div className="mt-3 space-y-3">
@@ -276,20 +280,20 @@ export default async function AdminDebugPage() {
                         <table className="text-sm w-full">
                           <tbody>
                             <tr>
-                              <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Data Status</td>
-                              <td className="text-gray-900 dark:text-white">Successfully connected to Yahoo Fantasy API</td>
+                              <td className="font-medium text-muted-foreground pr-3 py-1">Data Status</td>
+                              <td className="text-foreground">Successfully connected to Yahoo Fantasy API</td>
                             </tr>
                             <tr>
-                              <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Current Season MLB Leagues</td>
-                              <td className="text-gray-900 dark:text-white">{mlbSummary?.total_leagues || 0}</td>
+                              <td className="font-medium text-muted-foreground pr-3 py-1">Current Season MLB Leagues</td>
+                              <td className="text-foreground">{mlbSummary?.total_leagues || 0}</td>
                             </tr>
                             <tr>
-                              <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">MLB Leagues Identified</td>
-                              <td className="text-gray-900 dark:text-white">{mlbLeagues?.length || 0}</td>
+                              <td className="font-medium text-muted-foreground pr-3 py-1">MLB Leagues Identified</td>
+                              <td className="text-foreground">{mlbLeagues?.length || 0}</td>
                             </tr>
                             <tr>
-                              <td className="font-medium text-gray-500 dark:text-gray-400 pr-3 py-1">Current MLB Season</td>
-                              <td className="text-gray-900 dark:text-white">
+                              <td className="font-medium text-muted-foreground pr-3 py-1">Current MLB Season</td>
+                              <td className="text-foreground">
                                 {currentMLBSeason?.game_key || '458'} ({currentMLBSeason?.season || '2025'} season, {currentMLBSeason?.is_active ? 'Active' : 'Inactive'})
                               </td>
                             </tr>
@@ -297,7 +301,7 @@ export default async function AdminDebugPage() {
                         </table>
                         
                         {/* API Features */}
-                        <div className="text-sm text-gray-600 dark:text-gray-400">
+                        <div className="text-sm text-muted-foreground">
                           <p><strong>API Features Available:</strong></p>
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-1 text-xs mt-1">
                             <div>• League info & settings</div>
@@ -313,17 +317,17 @@ export default async function AdminDebugPage() {
                         <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded">
                           <p className="text-sm font-medium text-blue-800 dark:text-blue-200">🔧 Team Data Retrieval Issue - Testing Fix</p>
                           <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                            Using <code className="bg-white dark:bg-gray-800 px-1 rounded">/teams;out=managers</code> to get manager data needed for team identification.
+                            Using <code className="bg-surface px-1 rounded">/teams;out=managers</code> to get manager data needed for team identification.
                           </p>
                         </div>
                         
                         {/* Raw Data */}
                         <div className="flex justify-between items-center">
-                          <span className="text-sm text-gray-600 dark:text-gray-400">Raw API data for debugging</span>
+                          <span className="text-sm text-muted-foreground">Raw API data for debugging</span>
                           <CopyButton data={fantasyData} />
                         </div>
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 overflow-auto max-h-64 text-xs">
-                          <pre className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                        <div className="bg-surface-muted rounded p-3 overflow-auto max-h-64 text-xs">
+                          <pre className="text-foreground whitespace-pre-wrap">
                             {JSON.stringify(fantasyData, null, 2)}
                           </pre>
                         </div>
@@ -334,19 +338,19 @@ export default async function AdminDebugPage() {
               ) : (
                 <div className="text-center py-6">
                   <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
-                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">Loading MLB fantasy data...</p>
+                  <p className="mt-2 text-sm text-muted-foreground">Loading MLB fantasy data...</p>
                 </div>
               )}
             </div>
 
             {/* Stat Categories Section - Compact */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+            <div className="bg-surface rounded-lg border border-border p-4">
+              <h2 className="text-lg font-semibold text-foreground mb-3">
                 MLB Stat Categories (Data Layer Test)
               </h2>
               
               <div className="space-y-3">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
+                <p className="text-sm text-muted-foreground">
                   Testing stat_id mapping for disambiguating statistics like pitcher vs batter strikeouts.
                 </p>
                 
@@ -354,7 +358,7 @@ export default async function AdminDebugPage() {
                   <a 
                     href="/api/test-stats" 
                     target="_blank"
-                    className="inline-flex items-center px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+                    className="inline-flex items-center px-3 py-1 bg-primary text-white text-sm rounded hover:bg-primary-600"
                   >
                     Test Stat Categories API
                   </a>
@@ -367,19 +371,19 @@ export default async function AdminDebugPage() {
                   </a>
                 </div>
                 
-                <div className="bg-gray-50 dark:bg-gray-900 rounded p-3">
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Key MLB Stat IDs:</h3>
+                <div className="bg-surface-muted rounded p-3">
+                  <h3 className="text-sm font-semibold text-foreground mb-2">Key MLB Stat IDs:</h3>
                   <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs font-mono">
-                    <div><span className="text-gray-500">21:</span> Batter K</div>
-                    <div><span className="text-gray-500">30:</span> Pitcher K</div>
-                    <div><span className="text-gray-500">12:</span> HR</div>
-                    <div><span className="text-gray-500">13:</span> RBI</div>
-                    <div><span className="text-gray-500">7:</span> Runs</div>
-                    <div><span className="text-gray-500">26:</span> ERA</div>
+                    <div><span className="text-muted-foreground">21:</span> Batter K</div>
+                    <div><span className="text-muted-foreground">42:</span> Pitcher K</div>
+                    <div><span className="text-muted-foreground">12:</span> HR</div>
+                    <div><span className="text-muted-foreground">13:</span> RBI</div>
+                    <div><span className="text-muted-foreground">7:</span> Runs</div>
+                    <div><span className="text-muted-foreground">26:</span> ERA</div>
                   </div>
                 </div>
                 
-                <div className="text-sm text-gray-600 dark:text-gray-400">
+                <div className="text-sm text-muted-foreground">
                   <p><strong>Implementation Status:</strong></p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-1 text-xs mt-1">
                     <div>✅ Added getStatCategories() to YahooFantasyAPI</div>
@@ -389,6 +393,56 @@ export default async function AdminDebugPage() {
                     <div>⏳ Next: Enrich player/team stats with category metadata</div>
                   </div>
                 </div>
+
+                {/* League Categories Debug */}
+                {firstLeagueKey && (
+                  <div className="border-t border-border pt-3 mt-3">
+                    <h3 className="text-sm font-semibold text-foreground mb-2">
+                      Enriched League Categories ({firstLeagueKey})
+                    </h3>
+                    {leagueCategoriesError ? (
+                      <p className="text-sm text-red-500">Error: {leagueCategoriesError}</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs font-mono border border-border rounded">
+                          <thead className="bg-primary-50 dark:bg-primary-700">
+                            <tr>
+                              <th className="px-2 py-1 text-left">stat_id</th>
+                              <th className="px-2 py-1 text-left">display</th>
+                              <th className="px-2 py-1 text-left">name</th>
+                              <th className="px-2 py-1 text-left">position_types</th>
+                              <th className="px-2 py-1 text-left">is_batter</th>
+                              <th className="px-2 py-1 text-left">is_pitcher</th>
+                              <th className="px-2 py-1 text-left">betterIs</th>
+                              <th className="px-2 py-1 text-left">sort_order</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {leagueCategories.map(cat => (
+                              <tr key={cat.stat_id} className={
+                                cat.is_pitcher_stat ? 'bg-blue-50 dark:bg-blue-900/20' :
+                                cat.is_batter_stat ? 'bg-green-50 dark:bg-green-900/20' :
+                                'bg-red-50 dark:bg-red-900/20'
+                              }>
+                                <td className="px-2 py-1 font-bold">{cat.stat_id}</td>
+                                <td className="px-2 py-1">{cat.display_name}</td>
+                                <td className="px-2 py-1">{cat.name}</td>
+                                <td className="px-2 py-1">{JSON.stringify(cat.position_types)}</td>
+                                <td className="px-2 py-1">{cat.is_batter_stat ? '✅' : '❌'}</td>
+                                <td className="px-2 py-1">{cat.is_pitcher_stat ? '✅' : '❌'}</td>
+                                <td className="px-2 py-1">{cat.betterIs}</td>
+                                <td className="px-2 py-1">{cat.sort_order}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Green = batter, Blue = pitcher, Red = unclassified (missing position_types)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

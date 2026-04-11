@@ -16,7 +16,7 @@ export default async function HomePage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background dark:bg-primary-900">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background">
       {/* Logo for light theme */}
       <Image
         src="/assets/mlboss-logo-light.svg"

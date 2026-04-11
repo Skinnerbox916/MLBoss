@@ -11,39 +11,37 @@ The dashboard is built from **self-contained React components** ("cards") render
 
 ## Data flow
 
-1. A thin React **hook** under `src/lib/hooks/` fetches data from the **agent API** (see `src/agent/index.ts`).
+1. A thin React **hook** under `src/lib/hooks/` fetches data from the **fantasy data layer** (see `src/lib/fantasy/`).
 2. Each card calls its hook and renders the result inside `<DashboardCard>`.
 3. The page composes cards via `<GridLayout>`.
 
 ```mermaid
 flowchart TD
-  A[Agent API] --> B[Custom React Hook]
+  A[Fantasy Data Layer] --> B[Custom React Hook]
   B --> C[Card Component]
   C --> D[DashboardCard Wrapper]
   D --> E[GridLayout]
   E --> F[Dashboard Page]
 ```
 
-## Key agent methods
-(Defined in `src/agent/index.ts`, documented in `docs/agent/api.md`)
+## Key data layer functions
+(Defined in `src/lib/fantasy/`, documented in `docs/data-layer.md`)
 
-- `getCurrentMatchup()`
-- `getTeamStats()`
-- `getLineupIssues()`
-- `getWaiverWire()`
-- `getPlayerNews()`
-- `getNextWeekPreview()`
-- `getRecentActivity()`
+- `getCurrentMLBGameKey()` — current season info
+- `analyzeUserFantasyLeagues()` — league/team discovery
+- `getStatCategories()` / `getStatCategoryMap()` — stat metadata
+- `enrichStats()` — add metadata to raw Yahoo stats
+- `getEnrichedLeagueStatCategories()` — league-specific scored categories
 
-_Note: stubs exist today; they will be filled in as data integration progresses._
+_Note: dashboard cards currently use dummy data; hooks will be connected as data integration progresses._
 
 ## Adding a new card
 
 1. Create `NewCard.tsx` in `cards/` that returns `<DashboardCard title="..." icon={IconComponent}>…`.
 2. Add the card to `dashboardCards` array in `page.tsx` with desired `size`.
-3. Write a hook -> agent method if new data is required.
+3. Write a hook -> data layer function if new data is required.
 
 **Icon Usage**: Cards use the `icon` prop which expects a react-icons component (not emoji). See the "Icon System" section in `docs/design-system.md` for guidelines on choosing appropriate icons from Game Icons (`react-icons/gi`) for baseball-specific graphics or Feather Icons (`react-icons/fi`) for general UI elements.
 
 ---
-For UI guidelines (colors, typography) see `docs/design-system.md`. For agent integration details start with `docs/agent/README.md`. 
+For UI guidelines (colors, typography) see `docs/design-system.md`. For data layer details see `docs/data-layer.md`. 

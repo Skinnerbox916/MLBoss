@@ -1,15 +1,18 @@
-import { getSession } from '@/lib/session';
-import { redirect } from 'next/navigation';
+// Authentication handled by middleware
 import { redisUtils } from '@/lib/redis';
 import AppLayout from '@/components/layout/AppLayout';
-import AppHeader from '@/components/layout/AppHeader';
 
 // Server actions for cache operations
+
+// Clear all fantasy data cache without touching auth (user:* / token:* keys).
 async function clearAllCache() {
   'use server';
   try {
-    await redisUtils.flushdb();
-    console.log('✅ Cleared all cache');
+    const keys = await redisUtils.keys('cache:*');
+    if (keys.length > 0) {
+      await Promise.all(keys.map(key => redisUtils.del(key)));
+    }
+    console.log(`✅ Cleared ${keys.length} cache keys (auth preserved)`);
   } catch (error) {
     console.error('❌ Failed to clear cache:', error);
     throw error;
@@ -19,7 +22,7 @@ async function clearAllCache() {
 async function clearStaticCache() {
   'use server';
   try {
-    const keys = await redisUtils.keys('static:*');
+    const keys = await redisUtils.keys('cache:static:*');
     if (keys.length > 0) {
       await Promise.all(keys.map(key => redisUtils.del(key)));
       console.log(`✅ Cleared ${keys.length} static cache keys`);
@@ -33,7 +36,7 @@ async function clearStaticCache() {
 async function clearSemiDynamicCache() {
   'use server';
   try {
-    const keys = await redisUtils.keys('semi-dynamic:*');
+    const keys = await redisUtils.keys('cache:semi-dynamic:*');
     if (keys.length > 0) {
       await Promise.all(keys.map(key => redisUtils.del(key)));
       console.log(`✅ Cleared ${keys.length} semi-dynamic cache keys`);
@@ -47,7 +50,7 @@ async function clearSemiDynamicCache() {
 async function clearDynamicCache() {
   'use server';
   try {
-    const keys = await redisUtils.keys('dynamic:*');
+    const keys = await redisUtils.keys('cache:dynamic:*');
     if (keys.length > 0) {
       await Promise.all(keys.map(key => redisUtils.del(key)));
       console.log(`✅ Cleared ${keys.length} dynamic cache keys`);
@@ -87,12 +90,7 @@ async function clearAgentCache() {
 }
 
 export default async function CachePage() {
-  const session = await getSession();
-  const user = session?.user;
-  
-  if (!user) {
-    redirect('/auth/signin');
-  }
+  // Authentication handled by middleware
 
   // Get basic cache stats
   let cacheStats = {
@@ -107,9 +105,9 @@ export default async function CachePage() {
   try {
     const [totalKeys, staticKeys, semiDynamicKeys, dynamicKeys, userKeys, memoryInfo] = await Promise.all([
       redisUtils.dbsize(),
-      redisUtils.keys('static:*').then(keys => keys.length),
-      redisUtils.keys('semi-dynamic:*').then(keys => keys.length),
-      redisUtils.keys('dynamic:*').then(keys => keys.length),
+      redisUtils.keys('cache:static:*').then(keys => keys.length),
+      redisUtils.keys('cache:semi-dynamic:*').then(keys => keys.length),
+      redisUtils.keys('cache:dynamic:*').then(keys => keys.length),
       redisUtils.keys('user:*').then(keys => keys.length),
       redisUtils.memoryInfo().catch(() => 'Not available')
     ]);
@@ -128,61 +126,59 @@ export default async function CachePage() {
 
   return (
     <AppLayout>
-      <AppHeader title="Cache Control" userName={user.name} />
-      
-      <main className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
+      <main className="flex-1 overflow-y-auto bg-background">
         <div className="p-6">
           <div className="mb-6">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
+            <h2 className="text-lg font-medium text-foreground">
               Redis Cache Management
             </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-muted-foreground">
               View cache statistics and clear cached data
             </p>
           </div>
 
           {/* Cache Statistics */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+            <div className="bg-surface rounded-lg shadow p-4">
+              <div className="text-2xl font-bold text-foreground">
                 {cacheStats.totalKeys}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="text-sm text-muted-foreground">
                 Total Keys
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+            <div className="bg-surface rounded-lg shadow p-4">
               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
                 {cacheStats.staticKeys}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="text-sm text-muted-foreground">
                 Static Cache
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+            <div className="bg-surface rounded-lg shadow p-4">
               <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
                 {cacheStats.semiDynamicKeys}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="text-sm text-muted-foreground">
                 Semi-Dynamic Cache
               </div>
             </div>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+            <div className="bg-surface rounded-lg shadow p-4">
               <div className="text-2xl font-bold text-green-600 dark:text-green-400">
                 {cacheStats.dynamicKeys}
               </div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
+              <div className="text-sm text-muted-foreground">
                 Dynamic Cache
               </div>
             </div>
           </div>
 
           {/* Cache Operations */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+          <div className="bg-surface rounded-lg shadow p-6">
+            <h3 className="text-lg font-medium text-foreground mb-4">
               Cache Operations
             </h3>
             
@@ -201,7 +197,7 @@ export default async function CachePage() {
               <form action={clearStaticCache}>
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                  className="w-full bg-primary hover:bg-primary-600 text-white font-medium py-2 px-4 rounded-lg transition-colors"
                 >
                   Clear Static Cache
                 </button>
@@ -241,7 +237,7 @@ export default async function CachePage() {
               <form action={clearAgentCache}>
                 <button
                   type="submit"
-                  className="w-full bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                  className="w-full bg-muted-foreground hover:bg-muted-foreground/80 text-white font-medium py-2 px-4 rounded-lg transition-colors"
                 >
                   Clear Agent Cache
                 </button>
@@ -250,26 +246,26 @@ export default async function CachePage() {
           </div>
 
           {/* Additional Stats */}
-          <div className="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+          <div className="mt-6 bg-surface rounded-lg shadow p-6">
+            <h3 className="text-lg font-medium text-foreground mb-4">
               Additional Information
             </h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <div className="text-sm font-medium text-foreground">
                   User Keys: {cacheStats.userKeys}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
+                <div className="text-xs text-muted-foreground">
                   Session and authentication data
                 </div>
               </div>
               
               <div>
-                <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                <div className="text-sm font-medium text-foreground">
                   Memory Info: {typeof cacheStats.memoryInfo === 'string' ? 'Available' : 'Not available'}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
+                <div className="text-xs text-muted-foreground">
                   Redis memory usage statistics
                 </div>
               </div>

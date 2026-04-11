@@ -9,13 +9,10 @@ This index is the single authoritative table of contents for all Markdown docs i
 - **yahoo-api-reference.md** — Comprehensive Yahoo Fantasy Sports API guide.
 - **dashboard-components.md** — Component-based dashboard architecture and integration guide.
 
-Agent subsystem docs:
+Fantasy data layer:
 
-- **agent/README.md** — Overview of the LLM agent library.
-- **agent/patterns.md** — Re-usable code patterns and examples.
-- **agent/implementation.md** — Implementation status checklist and roadmap.
-- **agent/stats.md** — Canonical `stat_id` model and stat enrichment utilities.
-- **agent/api.md** — TypeScript API reference for the agent library.
+- **data-layer.md** — Architecture, caching, types, error handling, and full API reference.
+- **stats.md** — Canonical `stat_id` model, stat enrichment, and disambiguation patterns.
 
 ---
 

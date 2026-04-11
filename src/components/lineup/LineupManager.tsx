@@ -1,0 +1,109 @@
+'use client';
+
+import { useState, useMemo, useCallback } from 'react';
+import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
+import { useRoster } from '@/lib/hooks/useRoster';
+import { useGameDay } from '@/lib/hooks/useGameDay';
+import { resolveMatchup, type MatchupContext } from '@/lib/mlb/analysis';
+import DatePicker from './DatePicker';
+import PositionFilter from './PositionFilter';
+import RosterList from './RosterList';
+import LineupGrid from './LineupGrid';
+
+function todayStr(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export default function LineupManager() {
+  const { teamKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
+
+  // Yahoo roster for the selected date
+  const { roster, isLoading: rosterLoading, isError: rosterError } = useRoster(teamKey, selectedDate);
+
+  // MLB schedule for the selected date — one call for the whole page
+  const { games, isLoading: gamesLoading, isError: gamesError } = useGameDay(selectedDate);
+
+  // Build a lookup: team abbr → MatchupContext. Memoized so row renders don't rebuild it.
+  const matchupIndex = useMemo(() => {
+    const map = new Map<string, MatchupContext>();
+    for (const game of games) {
+      const homeCtx = resolveMatchup(games, game.park, game.homeTeam.abbreviation);
+      if (homeCtx) map.set(game.homeTeam.abbreviation.toUpperCase(), homeCtx);
+      const awayCtx = resolveMatchup(games, game.park, game.awayTeam.abbreviation);
+      if (awayCtx) map.set(game.awayTeam.abbreviation.toUpperCase(), awayCtx);
+    }
+    return map;
+  }, [games]);
+
+  const getMatchupContext = useCallback(
+    (teamAbbr: string): MatchupContext | null => {
+      return matchupIndex.get(teamAbbr.toUpperCase()) ?? null;
+    },
+    [matchupIndex],
+  );
+
+  const isLoading = ctxLoading || rosterLoading;
+  const isError = ctxError || rosterError;
+
+  return (
+    <div className="p-6 space-y-4">
+      {/* Header row: title + date picker */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">Set Your Lineup</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Click any player for full splits vs. today&apos;s matchup
+          </p>
+        </div>
+        <DatePicker selected={selectedDate} onSelect={setSelectedDate} />
+      </div>
+
+      {/* Position filter */}
+      <div className="bg-surface rounded-lg shadow p-4">
+        <PositionFilter selected={selectedPosition} onSelect={setSelectedPosition} />
+      </div>
+
+      {ctxError ? (
+        <div className="bg-surface rounded-lg shadow p-8 text-center">
+          <p className="text-sm text-error">Failed to load fantasy context</p>
+        </div>
+      ) : (
+        /* Two-column layout: roster list + lineup grid */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Roster list — takes 2/3 */}
+          <div className="lg:col-span-2 bg-surface rounded-lg shadow p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-foreground">
+                {selectedPosition ?? 'All'} Players
+              </h2>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                {gamesLoading && <span>Loading games...</span>}
+                {gamesError && <span className="text-error">Game data unavailable</span>}
+                {!isLoading && <span>{roster.length} on roster</span>}
+              </div>
+            </div>
+            <RosterList
+              roster={roster}
+              selectedPosition={selectedPosition}
+              isLoading={isLoading}
+              isError={isError}
+              getMatchupContext={getMatchupContext}
+            />
+          </div>
+
+          {/* Lineup grid — takes 1/3 */}
+          <div className="bg-surface rounded-lg shadow p-4">
+            <h2 className="text-sm font-semibold text-foreground mb-3">Current Lineup</h2>
+            <LineupGrid roster={roster} isLoading={isLoading} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

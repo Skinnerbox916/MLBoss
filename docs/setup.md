@@ -51,7 +51,26 @@ MLBoss uses a custom OAuth 2.0 integration (no NextAuth). Below is a condensed o
 * All sensitive variables must be supplied via environment configuration – never hard-code them.
 * Use HTTPS in development (ngrok or similar) so Yahoo will redirect properly.
 
-## Quick Start Recap
+## Local Development
+
+### Port & Tunnel Requirements
+
+The dev server **must run on port 3000**. A Cloudflare tunnel maps `mlboss-dev.skibri.us` → `localhost:3000`, and the Yahoo OAuth redirect URI is configured against that domain. If the server starts on a different port, OAuth callbacks will fail silently.
+
+Next.js will auto-increment to port 3001, 3002, etc. if 3000 is already in use (e.g., from a stale process). If you see a port-in-use warning at startup:
+
+```bash
+# Find and kill stale Next.js processes on ports 3000-3002
+ss -tlnp | grep -E '300[0-2]'           # see what's listening
+kill <pid>                                # kill stale processes
+
+# Then restart
+npm run dev
+```
+
+Confirm the output says `Local: http://localhost:3000` before testing.
+
+### Quick Start
 
 ```bash
 # 1. Install dependencies
@@ -60,8 +79,11 @@ npm install
 # 2. Start Redis (Docker example)
 docker run -d -p 6379:6379 redis:alpine
 
-# 3. Run the dev server
+# 3. Kill any stale dev servers first
+pkill -f "next-server" 2>/dev/null
+
+# 4. Run the dev server (must be on port 3000)
 npm run dev
 ```
 
-Once the server is running, open `http://localhost:3000` and click "Login with Yahoo" to begin the OAuth flow. 
+Once the server is running, open `https://mlboss-dev.skibri.us` (or `http://localhost:3000` for non-OAuth pages) and click "Login with Yahoo" to begin the OAuth flow. 

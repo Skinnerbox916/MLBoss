@@ -1,9 +1,110 @@
+'use client';
+
 import { FiTarget } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
+import { useFantasy } from '../FantasyProvider';
+import { useScoreboard } from '@/lib/hooks/useScoreboard';
+import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
+
+interface CategoryRow {
+  label: string;
+  delta: number;
+  relDelta: number;
+  winning: boolean | null;
+  deltaStr: string;
+}
+
+function formatDelta(delta: number, name: string): string {
+  if (delta === 0) return '0';
+  const sign = delta > 0 ? '+' : '';
+  if (name === 'ERA' || name === 'WHIP') {
+    return sign + delta.toFixed(2);
+  }
+  if (name === 'IP') {
+    return sign + delta.toFixed(1);
+  }
+  return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(3));
+}
+
+function DivergingRow({ row, maxRel }: { row: CategoryRow; maxRel: number }) {
+  const barPct = maxRel > 0 ? (row.relDelta / maxRel) * 45 : 0;
+  const isWin = row.winning === true;
+  const isLoss = row.winning === false;
+  const barColor = isWin ? 'bg-success' : isLoss ? 'bg-error' : 'bg-muted-foreground';
+  const textColor = isWin ? 'text-success' : isLoss ? 'text-error' : 'text-muted-foreground';
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-10 text-xs font-medium text-foreground shrink-0 truncate">{row.label}</span>
+      <div className="flex-1 flex items-center h-5 relative">
+        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-border" />
+        {barPct > 0 && isWin && (
+          <div
+            className={`absolute left-1/2 top-0.5 bottom-0.5 rounded-r ${barColor}`}
+            style={{ width: `${barPct}%` }}
+          />
+        )}
+        {barPct > 0 && isLoss && (
+          <div
+            className={`absolute top-0.5 bottom-0.5 rounded-l ${barColor}`}
+            style={{ width: `${barPct}%`, right: '50%' }}
+          />
+        )}
+      </div>
+      <span className={`w-12 text-xs text-right font-bold shrink-0 ${textColor}`}>
+        {row.deltaStr}
+      </span>
+    </div>
+  );
+}
 
 export default function PitchingCard() {
-  // TODO: Add usePitchingStats hook for data fetching
-  const isLoading = false;
+  const { leagueKey, teamKey, isLoading: contextLoading } = useFantasy();
+  const { matchups, isLoading: scoreLoading } = useScoreboard(leagueKey);
+  const { categories, isLoading: catsLoading, isError } = useLeagueCategories(leagueKey);
+
+  const isLoading = contextLoading || scoreLoading || catsLoading;
+
+  const userMatchup = matchups.find(m => m.teams.some(t => t.team_key === teamKey));
+  const userTeam = userMatchup?.teams.find(t => t.team_key === teamKey);
+  const opponent = userMatchup?.teams.find(t => t.team_key !== teamKey);
+
+  const pitchingCats = categories.filter(c => c.is_pitcher_stat);
+
+  const rows: CategoryRow[] = [];
+  if (userTeam?.stats && opponent?.stats) {
+    const myMap = new Map(userTeam.stats.map(s => [s.stat_id, s.value]));
+    const oppMap = new Map(opponent.stats.map(s => [s.stat_id, s.value]));
+
+    for (const cat of pitchingCats) {
+      const myRaw = myMap.get(cat.stat_id);
+      const oppRaw = oppMap.get(cat.stat_id);
+      if (myRaw === undefined || oppRaw === undefined) continue;
+
+      const myNum = parseFloat(myRaw);
+      const oppNum = parseFloat(oppRaw);
+      if (isNaN(myNum) || isNaN(oppNum)) continue;
+
+      const delta = myNum - oppNum;
+      const maxVal = Math.max(Math.abs(myNum), Math.abs(oppNum), 0.001);
+      const relDelta = Math.abs(delta) / maxVal;
+
+      let winning: boolean | null = null;
+      if (delta !== 0) {
+        winning = cat.betterIs === 'higher' ? delta > 0 : delta < 0;
+      }
+
+      rows.push({
+        label: cat.display_name,
+        delta,
+        relDelta,
+        winning,
+        deltaStr: formatDelta(delta, cat.name),
+      });
+    }
+  }
+
+  const maxRel = rows.reduce((m, r) => Math.max(m, r.relDelta), 0);
 
   return (
     <DashboardCard
@@ -12,34 +113,22 @@ export default function PitchingCard() {
       size="md"
       isLoading={isLoading}
     >
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <p className="text-foreground opacity-60">ERA</p>
-            <p className="text-lg font-semibold">3.45</p>
-          </div>
-          <div>
-            <p className="text-foreground opacity-60">WHIP</p>
-            <p className="text-lg font-semibold">1.23</p>
-          </div>
-          <div>
-            <p className="text-foreground opacity-60">K</p>
-            <p className="text-lg font-semibold">178</p>
-          </div>
-          <div>
-            <p className="text-foreground opacity-60">SV</p>
-            <p className="text-lg font-semibold">8</p>
+      {isError ? (
+        <p className="text-sm text-error">Failed to load pitching stats</p>
+      ) : !userMatchup ? (
+        <p className="text-sm text-muted-foreground">No matchup data available</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No pitching categories available</p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            vs. <span className="font-medium text-foreground">{opponent?.name ?? 'Opponent'}</span> — this week
+          </p>
+          <div className="space-y-1">
+            {rows.map(row => <DivergingRow key={row.label} row={row} maxRel={maxRel} />)}
           </div>
         </div>
-        
-        <div className="pt-2 border-t border-primary-200 dark:border-primary-700">
-          <p className="text-xs text-foreground opacity-60 mb-1">This Week</p>
-          <div className="flex justify-between text-sm">
-            <span>vs League Avg</span>
-            <span className="text-error">-8%</span>
-          </div>
-        </div>
-      </div>
+      )}
     </DashboardCard>
   );
-} 
+}

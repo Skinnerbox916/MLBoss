@@ -63,8 +63,6 @@ export default function Icon({
       className={cn(
         // Base styles for consistent rendering
         'inline-block flex-shrink-0',
-        // Allow text color inheritance by default
-        'text-current',
         className
       )}
       // Accessibility: if no label provided, mark as decorative

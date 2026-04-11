@@ -1,9 +1,38 @@
+'use client';
+
 import { FiActivity } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
+import { useFantasy } from '../FantasyProvider';
+import { useTransactions } from '@/lib/hooks/useTransactions';
+
+function timeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() / 1000) - timestamp);
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function txColor(type: string): string {
+  if (type.includes('add')) return 'bg-success';
+  if (type.includes('drop')) return 'bg-error';
+  if (type.includes('trade')) return 'bg-primary';
+  return 'bg-muted-foreground';
+}
+
+function txLabel(type: string): string {
+  if (type === 'add/drop') return 'Add/Drop';
+  if (type === 'add') return 'Added';
+  if (type === 'drop') return 'Dropped';
+  if (type === 'trade') return 'Traded';
+  return type;
+}
 
 export default function RecentActivityCard() {
-  // TODO: Add useRecentActivity hook for data fetching
-  const isLoading = false;
+  const { leagueKey } = useFantasy();
+  const { transactions, isLoading } = useTransactions(leagueKey);
+
+  // Show the 5 most recent transactions
+  const recent = transactions.slice(0, 5);
 
   return (
     <DashboardCard
@@ -13,46 +42,25 @@ export default function RecentActivityCard() {
       isLoading={isLoading}
     >
       <div className="space-y-3">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-2 h-2 bg-success rounded-full"></span>
-            <span className="text-foreground opacity-60">2h ago</span>
-          </div>
-          <div className="text-sm">
-            <span className="font-medium">Added</span> K. Schwarber
-            <span className="text-foreground opacity-60 ml-1">from waivers</span>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-2 h-2 bg-error rounded-full"></span>
-            <span className="text-foreground opacity-60">1d ago</span>
-          </div>
-          <div className="text-sm">
-            <span className="font-medium">Dropped</span> T. Anderson
-            <span className="text-foreground opacity-60 ml-1">to waivers</span>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-2 h-2 bg-primary rounded-full"></span>
-            <span className="text-foreground opacity-60">2d ago</span>
-          </div>
-          <div className="text-sm">
-            <span className="font-medium">Traded</span> J. Altuve
-            <span className="text-foreground opacity-60 ml-1">+ pick for N. Arenado</span>
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-primary-200 dark:border-primary-700">
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-foreground opacity-60">Moves this week</span>
-            <span className="font-medium">3 of 7</span>
-          </div>
-        </div>
+        {recent.length > 0 ? (
+          recent.map(tx => (
+            <div key={tx.transaction_key} className="space-y-1">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`w-2 h-2 ${txColor(tx.type)} rounded-full`}></span>
+                <span className="text-muted-foreground">
+                  {tx.timestamp ? timeAgo(tx.timestamp) : ''}
+                </span>
+              </div>
+              <div className="text-sm">
+                <span className="font-medium">{txLabel(tx.type)}</span>{' '}
+                {tx.players.map(p => p.name).join(', ')}
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="text-sm text-muted-foreground">No recent activity</p>
+        )}
       </div>
     </DashboardCard>
   );
-} 
+}

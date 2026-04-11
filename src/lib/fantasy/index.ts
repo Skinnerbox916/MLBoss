@@ -44,6 +44,13 @@ export { getLeagueScoreboard, getTeamMatchups } from './matchups';
 
 export { getTeamStatsSeason, getTeamStatsWeek } from './teamStats';
 
-export { getTeamRoster, getTeamRosterByDate } from './roster';
+export {
+  getTeamRoster,
+  getTeamRosterByDate,
+  setTeamRoster,
+  getLeagueRosterPositions,
+} from './roster';
 
 export { getLeagueTransactions } from './transactions';
+
+export { getAvailablePitchers } from './players';

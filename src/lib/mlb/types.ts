@@ -30,6 +30,12 @@ export interface ProbablePitcher {
   whip: number | null;
   wins: number;
   losses: number;
+  // Extended stats (parsed from season pitching line)
+  strikeoutsPer9: number | null;  // K/9
+  strikeOuts: number | null;
+  gamesStarted: number | null;
+  pitchesPerInning: number | null;
+  inningsPerStart: number | null; // derived: IP / GS
   // Recent form
   eraLast30: number | null;
   inningsPitched: number;

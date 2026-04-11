@@ -5,7 +5,7 @@ import { FiChevronDown, FiTrendingUp, FiTrendingDown } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { MatchupContext } from '@/lib/mlb/analysis';
-import { getHandednessVerdict, getVenueVerdict, getDayNightVerdict, getFormTrend, getWeatherFlag, getPitcherQualityPill } from '@/lib/mlb/analysis';
+import { getHandednessVerdict, getVenueVerdict, getDayNightVerdict, getFormTrend, getWeatherFlag, getPitcherQualityPill, getParkVerdict } from '@/lib/mlb/analysis';
 import { usePlayerSplits } from '@/lib/hooks/usePlayerSplits';
 import PlayerSplitsPanel from './PlayerSplitsPanel';
 
@@ -169,7 +169,7 @@ export default function PlayerRow({ player, context }: PlayerRowProps) {
   // Injured players are excluded — splits won't inform a realistic lineup move.
   const shouldFetchSplits = status !== 'injured' && !!context?.game;
 
-  const { splits, careerVsPitcher, isLoading: splitsLoading, isError: splitsError } = usePlayerSplits(
+  const { identity, splits, careerVsPitcher, isLoading: splitsLoading, isError: splitsError } = usePlayerSplits(
     shouldFetchSplits ? player.name : undefined,
     shouldFetchSplits ? player.editorial_team_abbr : undefined,
     {
@@ -188,15 +188,8 @@ export default function PlayerRow({ player, context }: PlayerRowProps) {
   // Pitcher quality pill — independent of splits data (lives on the probable pitcher)
   const pitcherPill = getPitcherQualityPill(context?.opposingPitcher);
 
-  // Park pill: only surface non-neutral parks. Extreme parks get a stronger label.
-  const parkPill = ((): { verdict: 'strong' | 'weak'; label: string } | null => {
-    const tendency = context?.park?.tendency;
-    if (!tendency || tendency === 'neutral') return null;
-    if (tendency === 'extreme-hitter') return { verdict: 'strong', label: 'Extreme hitter park' };
-    if (tendency === 'hitter') return { verdict: 'strong', label: 'Hitter park' };
-    if (tendency === 'extreme-pitcher') return { verdict: 'weak', label: 'Extreme pitcher park' };
-    return { verdict: 'weak', label: 'Pitcher park' };
-  })();
+  // Park pill: handedness-aware, outliers only. See getParkVerdict in analysis.ts.
+  const parkPill = getParkVerdict(context?.park, identity?.bats);
 
   const hasAnyPill =
     handednessVerdict.label ||

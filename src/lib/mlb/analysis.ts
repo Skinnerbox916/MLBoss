@@ -1,6 +1,18 @@
 import type { BatterSplits, SplitLine, MLBGame, ParkData, ProbablePitcher } from './types';
 
 // ---------------------------------------------------------------------------
+// Park verdict thresholds
+//
+// Use the handedness-split park factor when the batter's side is known
+// (parkFactorL / parkFactorR), falling back to overall for switch hitters.
+// Only surface truly extreme parks — 108+ / 92- catches Coors and handedness
+// outliers like Fenway for LHB, T-Mobile for RHB. Anything less is noise.
+// ---------------------------------------------------------------------------
+
+const PARK_EXTREME_HITTER = 108;
+const PARK_EXTREME_PITCHER = 92;
+
+// ---------------------------------------------------------------------------
 // Matchup context for a single batter
 // ---------------------------------------------------------------------------
 
@@ -49,11 +61,12 @@ export interface VerdictLabel {
 /**
  * Compare a split line to season totals. Uses OPS delta as the primary signal.
  * Returns 'strong' if split OPS is ≥ .050 above season, 'weak' if ≥ .050 below.
+ * minPA defaults to 20; pass a higher value for noisier splits (e.g. home/away).
  */
-function compareToSeason(split: SplitLine | null, season: SplitLine | null): Verdict {
+function compareToSeason(split: SplitLine | null, season: SplitLine | null, minPA = 20): Verdict {
   if (!split || !season || split.ops === null || season.ops === null) return 'unknown';
   // Need enough PA for the split to be meaningful
-  if (split.plateAppearances < 20) return 'unknown';
+  if (split.plateAppearances < minPA) return 'unknown';
 
   const delta = split.ops - season.ops;
   if (delta >= 0.05) return 'strong';
@@ -89,7 +102,6 @@ export function getHandednessVerdict(
 
   if (verdict === 'strong') return { verdict, label: `Crushes ${pitcherThrows === 'L' ? 'L' : 'R'}`, detail };
   if (verdict === 'weak') return { verdict, label: `Weak vs ${pitcherThrows === 'L' ? 'L' : 'R'}`, detail };
-  if (verdict === 'neutral') return { verdict, label: `Neutral vs ${pitcherThrows === 'L' ? 'L' : 'R'}`, detail };
   return { verdict: 'unknown', label: '' };
 }
 
@@ -141,6 +153,31 @@ export function getDayNightVerdict(
     ? (verdict === 'strong' ? 'Day hitter' : 'Weak in day')
     : (verdict === 'strong' ? 'Night owl' : 'Weak at night');
   return { verdict, label, detail: `${ops} OPS` };
+}
+
+/**
+ * Decide whether to surface a park pill for this batter.
+ *
+ * Picks the park factor matching the batter's side (parkFactorL for LHB,
+ * parkFactorR for RHB, overall for switch hitters). Only fires on true
+ * outliers — handedness-aware thresholds catch Yankee Stadium for LHB (short
+ * RF porch), T-Mobile for RHB (marine air), etc., without polluting the row
+ * with every park that's mildly off-average.
+ */
+export function getParkVerdict(
+  park: ParkData | null | undefined,
+  bats: 'L' | 'R' | 'S' | undefined,
+): { verdict: 'strong' | 'weak'; label: string } | null {
+  if (!park) return null;
+
+  const pf =
+    bats === 'L' ? park.parkFactorL :
+    bats === 'R' ? park.parkFactorR :
+    park.parkFactor;
+
+  if (pf >= PARK_EXTREME_HITTER) return { verdict: 'strong', label: 'Hitter park' };
+  if (pf <= PARK_EXTREME_PITCHER) return { verdict: 'weak', label: 'Pitcher park' };
+  return null;
 }
 
 // ---------------------------------------------------------------------------

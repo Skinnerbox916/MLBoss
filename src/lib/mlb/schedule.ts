@@ -1,6 +1,6 @@
 import { mlbFetchSchedule } from './client';
 import { getParkByVenueId } from './parks';
-import { getPitcherQuality } from './players';
+import { getPitcherQuality, fetchPitcherFullLine } from './players';
 import type { MLBGame, ProbablePitcher, GameWeather } from './types';
 
 // ---------------------------------------------------------------------------
@@ -15,6 +15,10 @@ interface RawPitcherStats {
       wins?: number;
       losses?: number;
       inningsPitched?: string;
+      strikeoutsPer9Inn?: string;
+      strikeOuts?: number;
+      gamesStarted?: number;
+      pitchesPerInning?: string;
     };
   }>;
 }
@@ -39,7 +43,7 @@ interface RawVenue {
 }
 
 interface RawWeather {
-  temperature?: string;
+  temp?: string;       // MLB API returns this as 'temp', not 'temperature'
   condition?: string;
   wind?: string;
 }
@@ -84,25 +88,43 @@ function parseWind(raw: string | undefined): { speed: number | null; direction: 
   };
 }
 
+function parsePitcherStats(stat: NonNullable<RawPitcherStats['splits']>[number]['stat']) {
+  const ip = parseFloat2(stat.inningsPitched) ?? 0;
+  const gs = stat.gamesStarted ?? null;
+  return {
+    era: parseFloat2(stat.era),
+    whip: parseFloat2(stat.whip),
+    wins: stat.wins ?? 0,
+    losses: stat.losses ?? 0,
+    inningsPitched: ip,
+    strikeoutsPer9: parseFloat2(stat.strikeoutsPer9Inn),
+    strikeOuts: stat.strikeOuts ?? null,
+    gamesStarted: gs,
+    pitchesPerInning: parseFloat2(stat.pitchesPerInning),
+    inningsPerStart: gs && gs > 0 ? Math.round((ip / gs) * 100) / 100 : null,
+  };
+}
+
 function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
   if (!raw) return null;
 
-  // Pull season stats from the first stats group if present
-  let era: number | null = null;
-  let whip: number | null = null;
-  let wins = 0;
-  let losses = 0;
-  let ip = 0;
+  let stats = {
+    era: null as number | null,
+    whip: null as number | null,
+    wins: 0,
+    losses: 0,
+    inningsPitched: 0,
+    strikeoutsPer9: null as number | null,
+    strikeOuts: null as number | null,
+    gamesStarted: null as number | null,
+    pitchesPerInning: null as number | null,
+    inningsPerStart: null as number | null,
+  };
 
   if (raw.stats && raw.stats.length > 0) {
     const splits = raw.stats[0]?.splits;
     if (splits && splits.length > 0) {
-      const s = splits[0].stat;
-      era = parseFloat2(s.era);
-      whip = parseFloat2(s.whip);
-      wins = s.wins ?? 0;
-      losses = s.losses ?? 0;
-      ip = parseFloat2(s.inningsPitched) ?? 0;
+      stats = parsePitcherStats(splits[0].stat);
     }
   }
 
@@ -112,12 +134,8 @@ function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
     mlbId: raw.id,
     name: raw.fullName,
     throws,
-    era,
-    whip,
-    wins,
-    losses,
+    ...stats,
     eraLast30: null, // requires a separate splits call; populated lazily if needed
-    inningsPitched: ip,
     quality: null, // enriched after parseGame in getGameDay
   };
 }
@@ -126,7 +144,7 @@ function parseWeather(raw: RawWeather | undefined): GameWeather {
   if (!raw) return { temperature: null, condition: null, wind: null, windSpeed: null, windDirection: null };
   const { speed, direction } = parseWind(raw.wind);
   return {
-    temperature: raw.temperature ? parseInt(raw.temperature, 10) : null,
+    temperature: raw.temp ? parseInt(raw.temp, 10) : null,
     condition: raw.condition ?? null,
     wind: raw.wind ?? null,
     windSpeed: speed,
@@ -188,28 +206,35 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
 
   const games = dateEntry.games.map(parseGame);
 
-  // Enrich probable pitchers with tiered quality (parallel, cached at the
-  // underlying fetch layer). Falls back to prior season when current IP is
-  // too thin to classify — important in early April.
+  // Enrich probable pitchers with tiered quality and extended stats
+  // (parallel, cached at the underlying fetch layer). Falls back to prior
+  // season when current IP is too thin — important in early April.
+  const enrichPitcher = async (p: ProbablePitcher) => {
+    const [quality, line] = await Promise.all([
+      getPitcherQuality(p.mlbId),
+      // Back-fill when schedule hydration returned no stats
+      p.era === null ? fetchPitcherFullLine(p.mlbId) : Promise.resolve(null),
+    ]);
+    p.quality = quality;
+    if (line) {
+      p.era = p.era ?? line.era;
+      p.whip = p.whip ?? line.whip;
+      p.wins = p.wins || line.wins;
+      p.losses = p.losses || line.losses;
+      p.inningsPitched = p.inningsPitched || line.ip;
+      p.strikeoutsPer9 = p.strikeoutsPer9 ?? line.strikeoutsPer9;
+      p.strikeOuts = p.strikeOuts ?? line.strikeOuts;
+      p.gamesStarted = p.gamesStarted ?? line.gamesStarted;
+      p.pitchesPerInning = p.pitchesPerInning ?? line.pitchesPerInning;
+      p.inningsPerStart = p.inningsPerStart ?? line.inningsPerStart;
+    }
+  };
+
   await Promise.all(
     games.flatMap(game => {
       const jobs: Promise<void>[] = [];
-      if (game.homeProbablePitcher) {
-        const p = game.homeProbablePitcher;
-        jobs.push(
-          getPitcherQuality(p.mlbId).then(q => {
-            p.quality = q;
-          }),
-        );
-      }
-      if (game.awayProbablePitcher) {
-        const p = game.awayProbablePitcher;
-        jobs.push(
-          getPitcherQuality(p.mlbId).then(q => {
-            p.quality = q;
-          }),
-        );
-      }
+      if (game.homeProbablePitcher) jobs.push(enrichPitcher(game.homeProbablePitcher));
+      if (game.awayProbablePitcher) jobs.push(enrichPitcher(game.awayProbablePitcher));
       return jobs;
     }),
   );

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { type IconType } from 'react-icons';
-import { GiBaseballBat, GiBaseballGlove } from 'react-icons/gi';
+import { GiBaseballBat, GiBaseballGlove, GiThrowingBall } from 'react-icons/gi';
 import { FiHome, FiUsers, FiSettings, FiList, FiChevronLeft, FiChevronRight, FiUser, FiLogOut } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import { cn } from '@/lib/utils';
@@ -20,6 +20,7 @@ const navigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: FiHome },
   { name: 'Matchup', href: '/matchup', icon: GiBaseballBat },
   { name: 'Lineup', href: '/lineup', icon: FiList },
+  { name: 'Pitching', href: '/pitching', icon: GiThrowingBall },
   { name: 'Roster', href: '/roster', icon: FiUsers },
   { name: 'League', href: '/league', icon: GiBaseballGlove },
 ];

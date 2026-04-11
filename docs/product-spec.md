@@ -6,10 +6,10 @@
 ➜ Environment setup: [setup.md](setup.md) | Data layer: [data-layer.md](data-layer.md)
 
 ## Overview
-MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.
+MLBoss is a fantasy baseball decision support tool designed to help users make informed daily lineup and pitcher-streaming decisions through comprehensive data analysis. The system provides parallel batter and pitcher analysis surfaces backed by fantasy league-wide context for strategic decision-making.
 
 ## Core Purpose
-To provide fantasy baseball managers with data-driven insights for daily lineup decisions, with a focus on batter performance against opposing pitchers and contextual factors that influence player performance in fantasy baseball contexts.
+To provide fantasy baseball managers with data-driven insights for daily lineup and roster decisions — both batter sit/start choices against opposing pitchers and pitcher streaming choices against opposing offenses — plus the contextual factors (park, weather, splits) that influence player performance in fantasy baseball contexts.
 
 ## Target Users
 - Primary: Individual fantasy baseball managers
@@ -21,10 +21,22 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
 
 ### Batter Analysis
 - **Opposing Pitcher Analysis**
-  - Pitcher handedness (L/R)
+  - Pitcher handedness (L/R) and quality tier (ACE → Bad)
   - Current season performance metrics (ERA, WHIP)
   - Future: Pitch mix and bullpen strength analysis
-  - Note: Probable pitcher data integration required
+- **Lineup decisions** (sit/start against a given matchup)
+
+### Pitcher Analysis
+- **Streaming Board**
+  - Free-agent and waiver starting pitchers with tomorrow's probable starts
+  - Per-pitcher "Stream for:" category indicators (QS / K / W / ERA / WHIP) showing which fantasy categories each start is likely to help or hurt
+  - Quality tier and composite quality score (color-coded row backgrounds)
+  - Daily-lineup workflow: today's roster shows sit/start candidates; tomorrow's board surfaces streaming pickups
+- **Opposing Offense Analysis**
+  - Team OPS vs LHP / RHP (handedness-aware matchup strength)
+  - Team strikeout rate and runs per game
+- **Matchup Pulse**
+  - Live pitching-category scoreboard vs this week's opponent (which categories you're winning/losing/tied)
 
 ### Performance Context
 - **Hot/Cold Tracking**
@@ -32,14 +44,16 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
   - Streak identification
 
 ### Statistical Analysis
-- **Park Factors**
+- **Park Factors** (applied to both batters and pitchers)
   - Existing park factor data integration
+  - Hitter-friendly vs pitcher-friendly tendencies surfaced on pitcher streaming decisions
   - Future: Historical player performance at specific parks
+- **Weather**
+  - Temperature, wind direction/speed, and rain flagged on the streaming board when available from MLB
 
 ### Splits Analysis
-- Left/Right handed pitching
-- Day/Night games
-- Home/Away performance
+- **Batter splits**: Left/Right handed pitching, Day/Night, Home/Away
+- **Team offense splits**: Team OPS and strikeout rate vs LHP/RHP (drives handedness-aware pitcher streaming)
 - Future: Individual pitcher matchups (with sample size validation)
 
 ### Fantasy League Analysis
@@ -57,10 +71,11 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
   - Key metrics and alerts
 
 ### Dedicated Pages
-- Matchup Analysis
-- Lineup Management
-- Roster Management (including future waiver wire and trade features)
-- League Overview (rankings, matchups, statistics)
+- **Matchup Analysis** — weekly head-to-head category comparison
+- **Lineup Management** — batter-only daily sit/start decisions with splits and context
+- **Pitching** — dedicated pitcher tool with a Today tab (sit/start for rostered pitchers) and a Tomorrow tab (streaming board for free-agent pickups)
+- **Roster Management** — including future waiver wire and trade features
+- **League Overview** — rankings, matchups, statistics
 
 ### Admin Panel
 - User management
@@ -128,11 +143,11 @@ This mapping is fetched once per game/season and cached for 48 hours, allowing i
 ### Future Considerations
 - Automated lineup suggestions
 - Notification system
-- Advanced pitcher analysis
 - Custom user preferences
 - Multi-platform support
-- Individual pitcher matchup analysis
 - Historical park performance analysis
+- Pitcher hot/cold trend analysis (last N starts vs season baseline)
+- Expandable splits panel for streaming candidates (pitch mix, career vs opponent)
 
 ## Development Priorities
 1. Yahoo Fantasy integration

@@ -12,6 +12,7 @@ export async function middleware(request: NextRequest) {
     '/admin',
     '/matchup',
     '/lineup',
+    '/pitching',
     '/roster',
     '/league',
     '/api/fantasy',

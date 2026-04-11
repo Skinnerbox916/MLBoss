@@ -162,6 +162,32 @@ export interface RosterEntry {
   image_url?: string;
   on_disabled_list: boolean;
   uniform_number?: string;
+  /**
+   * False when Yahoo has locked this player for the selected date —
+   * typically because their game has already started. Moving a locked
+   * player via the roster PUT will fail with "Player is not editable".
+   * Defaults to true when Yahoo omits the flag.
+   */
+  is_editable: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Free agent / league players
+// ---------------------------------------------------------------------------
+
+export interface FreeAgentPlayer {
+  player_key: string;
+  player_id: string;
+  name: string;
+  editorial_team_abbr: string;
+  display_position: string;
+  eligible_positions: string[];
+  status?: string;
+  status_full?: string;
+  image_url?: string;
+  on_disabled_list: boolean;
+  uniform_number?: string;
+  ownership_type: 'freeagent' | 'waivers';
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +218,20 @@ export interface TransactionEntry {
 
 interface YahooAPIResponse<T> {
   fantasy_content: T;
+}
+
+/**
+ * Minimal XML escaper for values we interpolate into write-request bodies.
+ * Yahoo player_keys and position codes are ASCII-safe in practice, but we
+ * still escape defensively so a future odd value can't break the payload.
+ */
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 /**
@@ -399,6 +439,67 @@ export class YahooFantasyAPI {
         throw error;
       }
       throw new Error('Unknown error occurred during API request');
+    }
+  }
+
+  /**
+   * Make an authenticated write request to the Yahoo Fantasy API.
+   * Yahoo's write endpoints require XML bodies and do NOT accept `format=json`
+   * on the URL (even though reads can). The response is still JSON when the
+   * Accept header asks for it.
+   */
+  private async writeXml<T>(
+    endpoint: string,
+    method: 'PUT' | 'POST' | 'DELETE',
+    xmlBody?: string,
+  ): Promise<T> {
+    const accessToken = await this.getValidAccessToken();
+    const url = `${this.baseUrl}${endpoint}`;
+
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/xml',
+      },
+      body: xmlBody,
+    });
+
+    if (!response.ok) {
+      const rawBody = await response.text().catch(() => '');
+      // Yahoo write errors come back as XML with a <description> element.
+      // Pull it out so the caller gets a human-readable reason instead of
+      // a pile of namespaced XML.
+      const xmlDescription = rawBody.match(/<description>([^<]*)<\/description>/)?.[1]?.trim();
+
+      let errorMessage: string;
+      if (xmlDescription) {
+        errorMessage = xmlDescription;
+      } else if (response.status === 401) {
+        errorMessage = 'Authentication failed — token may be invalid';
+      } else if (response.status === 403) {
+        errorMessage = 'Access forbidden — scope may be missing fspt-w';
+      } else if (response.status === 429) {
+        errorMessage = 'Rate limit exceeded for Yahoo Fantasy API';
+      } else {
+        errorMessage = `Yahoo Fantasy write error: ${response.status}`;
+      }
+
+      console.error('Yahoo Fantasy write failed:', { endpoint, method, status: response.status, body: rawBody });
+      // Attach the original HTTP status so callers can branch on it.
+      const err = new Error(errorMessage) as Error & { status?: number };
+      err.status = response.status;
+      throw err;
+    }
+
+    // Some write endpoints return 201 with an empty body — return {} in that case.
+    const text = await response.text();
+    if (!text) return {} as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return {} as T;
     }
   }
 
@@ -785,6 +886,65 @@ export class YahooFantasyAPI {
   }
 
   /**
+   * Get the league's roster slot template — the set of positions and how
+   * many of each are rostered (e.g. { 'C': 1, 'OF': 3, 'Util': 2, 'BN': 3 }).
+   * Yahoo leagues vary: some have 2 C, CI/MI slots, more UTIL, etc.
+   * Returns an ordered list so callers can preserve Yahoo's display order.
+   */
+  async getLeagueRosterPositions(leagueKey: string): Promise<Array<{ position: string; count: number; position_type?: string }>> {
+    const settings = await this.getLeagueSettings(leagueKey);
+
+    // roster_positions can be wrapped in several shapes across Yahoo responses:
+    //   settings.roster_positions                        → array of { roster_position }
+    //   settings[0].roster_positions                     → when settings itself is wrapped
+    //   settings.roster_positions as numeric-key object  → { '0': {...}, 'count': N }
+    let rpContainer: unknown = undefined;
+    if (settings && typeof settings === 'object') {
+      if ('roster_positions' in settings) {
+        rpContainer = (settings as any).roster_positions;
+      } else if (Array.isArray(settings) && settings[0]?.roster_positions) {
+        rpContainer = settings[0].roster_positions;
+      }
+    }
+
+    if (!rpContainer) {
+      console.warn('[roster positions] not found in league settings for', leagueKey);
+      return [];
+    }
+
+    // Normalize into a plain array of wrapper entries.
+    let entries: any[] = [];
+    if (Array.isArray(rpContainer)) {
+      entries = rpContainer;
+    } else if (typeof rpContainer === 'object') {
+      for (const [k, v] of Object.entries(rpContainer)) {
+        if (k === 'count') continue;
+        entries.push(v);
+      }
+    }
+
+    const out: Array<{ position: string; count: number; position_type?: string }> = [];
+    for (const e of entries) {
+      const rp = e?.roster_position ?? e;
+      if (!rp || typeof rp !== 'object') continue;
+      const position = rp.position;
+      if (typeof position !== 'string' || !position) continue;
+      const rawCount = rp.count;
+      const count =
+        typeof rawCount === 'number' ? rawCount :
+        typeof rawCount === 'string' ? parseInt(rawCount, 10) :
+        1;
+      out.push({
+        position,
+        count: Number.isFinite(count) && count > 0 ? count : 1,
+        position_type: typeof rp.position_type === 'string' ? rp.position_type : undefined,
+      });
+    }
+
+    return out;
+  }
+
+  /**
    * Get stat categories used by a specific league
    * @param leagueKey - The league key (e.g., "458.l.123456")
    * @returns Array of stat categories used by this league with enriched metadata
@@ -1116,16 +1276,31 @@ export class YahooFantasyAPI {
         }
       }
 
-      // Find selected_position in remaining elements
+      // Walk the sibling objects after the flat props block at index 0.
+      // They look like: { selected_position: [...] }, { starting_status: [...] },
+      // { is_editable: 0|1 }. `is_editable` is its OWN sibling, not nested
+      // inside selected_position — false when the player's game has already
+      // started and their slot is locked for the day.
       let selectedPosition: string | undefined;
+      let isEditable: boolean | undefined;
+      const toBool = (v: unknown): boolean | undefined => {
+        if (v === 0 || v === '0') return false;
+        if (v === 1 || v === '1') return true;
+        return undefined;
+      };
       for (const el of playerArray) {
-        if (typeof el === 'object' && el && 'selected_position' in el) {
-          const selPos = el.selected_position;
+        if (typeof el !== 'object' || !el) continue;
+
+        if ('selected_position' in el) {
+          const selPos = (el as any).selected_position;
           selectedPosition =
             selPos?.[1]?.position ??
             selPos?.position ??
             (Array.isArray(selPos) ? selPos.find((x: any) => x?.position)?.position : undefined);
-          break;
+        }
+
+        if ('is_editable' in el) {
+          isEditable = toBool((el as any).is_editable);
         }
       }
 
@@ -1154,10 +1329,47 @@ export class YahooFantasyAPI {
         image_url: playerProps.image_url ?? playerProps.headshot?.url ?? undefined,
         on_disabled_list: playerProps.on_disabled_list === 1,
         uniform_number: playerProps.uniform_number ?? undefined,
+        is_editable: isEditable ?? true,
       });
     }
 
     return roster;
+  }
+
+  /**
+   * Set the full roster for a team on a given date.
+   * Yahoo requires the ENTIRE roster to be sent in one PUT — partial updates
+   * that would temporarily produce an illegal lineup are rejected. Callers
+   * should pass every player currently on the team with their target slot.
+   *
+   * @param teamKey  e.g. '458.l.123456.t.1'
+   * @param date     YYYY-MM-DD — day the lineup applies to
+   * @param players  full list of { player_key, position } for every rostered player
+   */
+  async setRoster(
+    teamKey: string,
+    date: string,
+    players: Array<{ player_key: string; position: string }>,
+  ): Promise<void> {
+    const playerXml = players
+      .map(
+        (p) =>
+          `<player><player_key>${escapeXml(p.player_key)}</player_key>` +
+          `<position>${escapeXml(p.position)}</position></player>`,
+      )
+      .join('');
+
+    const body =
+      `<?xml version="1.0"?>` +
+      `<fantasy_content>` +
+      `<roster>` +
+      `<coverage_type>date</coverage_type>` +
+      `<date>${escapeXml(date)}</date>` +
+      `<players>${playerXml}</players>` +
+      `</roster>` +
+      `</fantasy_content>`;
+
+    await this.writeXml<unknown>(`/team/${teamKey}/roster`, 'PUT', body);
   }
 
   // =========================================================================
@@ -1315,6 +1527,107 @@ export class YahooFantasyAPI {
     }
 
     return matchups;
+  }
+
+  // =========================================================================
+  // League Players (Free Agents)
+  // =========================================================================
+
+  /**
+   * Get free agent players from a league, optionally filtered by position.
+   * Yahoo caps at 25 per page. This fetches up to `maxPages` pages.
+   * @param status - 'FA' for free agents only, 'A' for all available (FA + waivers)
+   */
+  async getLeaguePlayers(
+    leagueKey: string,
+    options?: { position?: string; status?: 'FA' | 'A'; count?: number; maxPages?: number },
+  ): Promise<FreeAgentPlayer[]> {
+    const status = options?.status ?? 'A';
+    const count = options?.count ?? 25;
+    const maxPages = options?.maxPages ?? 4; // 100 players max
+    const posParam = options?.position ? `;position=${options.position}` : '';
+
+    const players: FreeAgentPlayer[] = [];
+
+    for (let page = 0; page < maxPages; page++) {
+      const start = page * count;
+      const endpoint = `/league/${leagueKey}/players;status=${status}${posParam};start=${start};count=${count}`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const response = await this.request<YahooAPIResponse<any>>(endpoint);
+      const leagueArray = response.fantasy_content?.league;
+      if (!Array.isArray(leagueArray)) break;
+
+      // Find the players sub-resource
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let playersData: any = null;
+      for (const el of leagueArray) {
+        if (typeof el === 'object' && el && 'players' in el) {
+          playersData = el.players;
+          break;
+        }
+      }
+      if (!playersData) break;
+
+      let foundAny = false;
+      for (const [key, pContainer] of Object.entries(playersData)) {
+        if (key === 'count') continue;
+        if (typeof pContainer !== 'object' || !pContainer || !('player' in pContainer)) continue;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const playerArray = (pContainer as any).player;
+        if (!Array.isArray(playerArray)) continue;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const playerProps: any = {};
+        if (Array.isArray(playerArray[0])) {
+          for (const p of playerArray[0]) {
+            if (typeof p === 'object' && p) Object.assign(playerProps, p);
+          }
+        }
+
+        // Extract eligible positions
+        const eligiblePositions: string[] = [];
+        if (playerProps.eligible_positions) {
+          const ep = playerProps.eligible_positions;
+          if (Array.isArray(ep)) {
+            for (const pos of ep) {
+              if (typeof pos === 'string') eligiblePositions.push(pos);
+              else if (pos?.position) eligiblePositions.push(pos.position);
+            }
+          }
+        }
+
+        // Determine ownership type
+        let ownershipType: 'freeagent' | 'waivers' = 'freeagent';
+        if (playerProps.ownership?.ownership_type === 'waivers') {
+          ownershipType = 'waivers';
+        }
+
+        players.push({
+          player_key: playerProps.player_key ?? '',
+          player_id: playerProps.player_id ?? '',
+          name: playerProps.name?.full ?? (playerProps.name?.first + ' ' + playerProps.name?.last) ?? 'Unknown',
+          editorial_team_abbr: playerProps.editorial_team_abbr ?? '',
+          display_position: playerProps.display_position ?? '',
+          eligible_positions: eligiblePositions,
+          status: playerProps.status ?? undefined,
+          status_full: playerProps.status_full ?? undefined,
+          image_url: playerProps.image_url ?? playerProps.headshot?.url ?? undefined,
+          on_disabled_list: playerProps.on_disabled_list === 1,
+          uniform_number: playerProps.uniform_number ?? undefined,
+          ownership_type: ownershipType,
+        });
+        foundAny = true;
+      }
+
+      // If no players found on this page, we've exhausted results
+      if (!foundAny) break;
+      // If we got fewer than count, this was the last page
+      if (players.length < (page + 1) * count) break;
+    }
+
+    return players;
   }
 
   /**

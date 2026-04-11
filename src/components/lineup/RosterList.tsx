@@ -3,6 +3,7 @@
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { MatchupContext } from '@/lib/mlb/analysis';
 import PlayerRow from './PlayerRow';
+import type { LineupMode } from './types';
 
 // ---------------------------------------------------------------------------
 // Filter + sort helpers
@@ -26,7 +27,20 @@ function sortRoster(players: RosterEntry[]): RosterEntry[] {
 }
 
 function isPitcher(p: RosterEntry): boolean {
-  return p.display_position === 'SP' || p.display_position === 'RP' || p.display_position === 'P';
+  // Check eligible positions — covers two-way players and keeps roles stable
+  // across injury designations that temporarily hide display_position.
+  return (
+    p.eligible_positions.includes('P') ||
+    p.eligible_positions.includes('SP') ||
+    p.eligible_positions.includes('RP') ||
+    p.display_position === 'SP' ||
+    p.display_position === 'RP' ||
+    p.display_position === 'P'
+  );
+}
+
+function filterByMode(players: RosterEntry[], mode: LineupMode): RosterEntry[] {
+  return mode === 'pitching' ? players.filter(isPitcher) : players.filter(p => !isPitcher(p));
 }
 
 function filterByPosition(players: RosterEntry[], position: string | null): RosterEntry[] {
@@ -42,6 +56,7 @@ function filterByPosition(players: RosterEntry[], position: string | null): Rost
 // ---------------------------------------------------------------------------
 
 interface RosterListProps {
+  mode: LineupMode;
   roster: RosterEntry[];
   selectedPosition: string | null;
   isLoading: boolean;
@@ -50,6 +65,7 @@ interface RosterListProps {
 }
 
 export default function RosterList({
+  mode,
   roster,
   selectedPosition,
   isLoading,
@@ -77,13 +93,18 @@ export default function RosterList({
     return <p className="text-sm text-error py-4 text-center">Failed to load roster</p>;
   }
 
-  const filtered = filterByPosition(roster, selectedPosition);
+  const scoped = filterByMode(roster, mode);
+  const filtered = filterByPosition(scoped, selectedPosition);
   const sorted = sortRoster(filtered);
 
   if (sorted.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">
-        {roster.length === 0 ? 'No roster data available' : 'No players for this position'}
+        {scoped.length === 0
+          ? mode === 'pitching'
+            ? 'No pitchers on roster'
+            : 'No batters on roster'
+          : 'No players for this position'}
       </p>
     );
   }

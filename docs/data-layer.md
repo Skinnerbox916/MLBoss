@@ -6,11 +6,17 @@ The fantasy data layer (`src/lib/fantasy/`) sits between page/API-route code and
 
 ```
 src/lib/fantasy/
-├── cache.ts    — Redis caching: withCache, TTL tiers, invalidation
-├── auth.ts     — Token validation and refresh via Redis
-├── stats.ts    — Stat categories, enrichment, league-specific categories
-├── leagues.ts  — League/team discovery, user team identification
-└── index.ts    — Barrel re-exports (import everything from @/lib/fantasy)
+├── cache.ts         — Redis caching: withCache, TTL tiers, invalidation
+├── auth.ts          — Token validation and refresh via Redis
+├── stats.ts         — Stat categories, enrichment, league-specific categories
+├── leagues.ts       — League/team discovery, user team identification
+├── standings.ts     — League standings (ranks, records, points)
+├── matchups.ts      — Scoreboard (weekly matchup scores) and team schedule
+├── teamStats.ts     — Team stats (season-to-date and weekly)
+├── roster.ts        — Team roster (players, positions, injury status)
+├── players.ts       — Available players (free agents + waivers) by position
+├── transactions.ts  — League transactions (adds, drops, trades)
+└── index.ts         — Barrel re-exports (import everything from @/lib/fantasy)
 ```
 
 ### How it fits together
@@ -119,6 +125,12 @@ User auth data (`user:{id}` hash and `token:{accessToken}` lookup) is stored in 
 | `Team` | Yahoo team with managers, roster adds, waiver priority |
 | `Manager` | Team manager with guid, login status, commissioner flag |
 | `StatCategory` | Raw stat category (stat_id, name, display_name, sort_order, position_types) |
+| `StandingsEntry` | A row in the league standings (team, rank, record, points) |
+| `MatchupData` | A weekly matchup (teams, stats per side, winner) |
+| `TeamStats` | Team stat totals (season or week) keyed by `stat_id` |
+| `RosterEntry` | A player on a team's roster (name, positions, status, image, etc.) |
+| `TransactionEntry` | A league transaction (add, drop, trade) |
+| `FreeAgentPlayer` | An available player (free agent or waivers) with `ownership_type` |
 
 ### Exported from `@/lib/fantasy`
 
@@ -154,6 +166,59 @@ getLeagueTeams(userId, leagueKey): Promise<Team[]>
 checkUserFantasyAccess(userId): Promise<{ hasAccess, error? }>
 analyzeUserFantasyLeagues(userId, gameKeys?): Promise<Result<LeagueAnalysis>>
 ```
+
+### `players.ts`
+
+```typescript
+getAvailablePitchers(userId, leagueKey): Promise<FreeAgentPlayer[]>
+```
+
+Returns free-agent + waiver starting pitchers for the league. Internally runs two parallel paginated queries against Yahoo — `position=SP` (up to ~400 results) and `position=RP` (up to ~100) — then merges and dedupes by `player_key`. The split is deliberate: Yahoo's `position=P` filter returns an unpredictably narrow slice in leagues with split SP/RP slots, so filtering explicitly by SP/RP is the reliable way to capture the full streamable pitcher pool. Cached 5 minutes (`SEMI_DYNAMIC`).
+
+### `standings.ts`
+
+```typescript
+getLeagueStandings(userId, leagueKey): Promise<StandingsEntry[]>
+```
+
+Returns the full league standings (ranks, records, points). Cached 10 minutes (`SEMI_DYNAMIC.ttlMedium`).
+
+### `matchups.ts`
+
+```typescript
+getLeagueScoreboard(userId, leagueKey, week?): Promise<MatchupData[]>
+getTeamMatchups(userId, teamKey, weeks?): Promise<MatchupData[]>
+```
+
+- `getLeagueScoreboard` — all matchups for a given week (or the current week if `week` is omitted). Cached 1 minute (`DYNAMIC`) because live game scores drive the values.
+- `getTeamMatchups` — schedule for a specific team, optionally filtered to a subset of weeks. Cached 1 hour (`SEMI_DYNAMIC.ttlLong`) because the schedule itself is stable.
+
+### `teamStats.ts`
+
+```typescript
+getTeamStatsSeason(userId, teamKey): Promise<TeamStats>
+getTeamStatsWeek(userId, teamKey, week): Promise<TeamStats>
+```
+
+- `getTeamStatsSeason` — season-to-date team totals. Cached 5 minutes (`SEMI_DYNAMIC`).
+- `getTeamStatsWeek` — weekly totals for a specific week. Cached 1 minute (`DYNAMIC`) because weekly stats accrue during games.
+
+### `roster.ts`
+
+```typescript
+getTeamRoster(userId, teamKey): Promise<RosterEntry[]>
+getTeamRosterByDate(userId, teamKey, date): Promise<RosterEntry[]>
+```
+
+`getTeamRoster` returns today's roster; `getTeamRosterByDate` scopes to a specific `YYYY-MM-DD`. Both use `DYNAMIC` (1-minute) caching because rosters shift as lineups are set. The date-scoped variant is what the Pitching page uses to peek at tomorrow's roster shape for streaming planning.
+
+### `transactions.ts`
+
+```typescript
+getLeagueTransactions(userId, leagueKey, type?): Promise<TransactionEntry[]>
+```
+
+League transactions with an optional filter (`'add' | 'drop' | 'trade'`). Cached 1 minute (`DYNAMIC`) — transactions happen frequently and should appear in the UI promptly.
 
 ### `auth.ts`
 

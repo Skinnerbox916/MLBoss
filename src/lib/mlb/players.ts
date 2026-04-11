@@ -22,6 +22,11 @@ interface RawStat {
   era?: string;
   whip?: string;
   inningsPitched?: string;
+  strikeoutsPer9Inn?: string;
+  gamesStarted?: number;
+  pitchesPerInning?: string;
+  wins?: number;
+  losses?: number;
 }
 
 interface RawSplit {
@@ -333,17 +338,39 @@ export async function getBatterSplits(
 const MIN_IP_CURRENT = 25;   // ≈ 4–5 starts before current-season sample is usable
 const MIN_IP_PRIOR = 60;     // rough cut for a meaningful prior season
 
-/** Parse a pitching season line into (era, whip, ip). */
-function parsePitchingLine(raw: RawStat): { era: number | null; whip: number | null; ip: number } {
+export interface PitcherSeasonLine {
+  era: number | null;
+  whip: number | null;
+  ip: number;
+  strikeoutsPer9: number | null;
+  strikeOuts: number | null;
+  gamesStarted: number | null;
+  pitchesPerInning: number | null;
+  inningsPerStart: number | null;
+  wins: number;
+  losses: number;
+}
+
+/** Parse a pitching season line from the MLB Stats API. */
+function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
   const n = (v: string | undefined) => {
     if (!v) return null;
     const f = parseFloat(v);
     return isNaN(f) ? null : f;
   };
+  const ip = n(raw.inningsPitched) ?? 0;
+  const gs = raw.gamesStarted ?? null;
   return {
     era: n(raw.era),
     whip: n(raw.whip),
-    ip: n(raw.inningsPitched) ?? 0,
+    ip,
+    strikeoutsPer9: n(raw.strikeoutsPer9Inn),
+    strikeOuts: raw.strikeOuts ?? null,
+    gamesStarted: gs,
+    pitchesPerInning: n(raw.pitchesPerInning),
+    inningsPerStart: gs && gs > 0 ? Math.round((ip / gs) * 100) / 100 : null,
+    wins: raw.wins ?? 0,
+    losses: raw.losses ?? 0,
   };
 }
 
@@ -376,7 +403,7 @@ function classifyPitcherTier(era: number | null, whip: number | null): PitcherTi
 async function fetchPitcherSeasonLine(
   mlbId: number,
   season: number,
-): Promise<{ era: number | null; whip: number | null; ip: number } | null> {
+): Promise<PitcherSeasonLine | null> {
   const params = new URLSearchParams({
     stats: 'season',
     group: 'pitching',
@@ -441,6 +468,22 @@ export async function getPitcherQuality(
     inningsPitched: current?.ip ?? prior?.ip ?? 0,
     season: (current?.ip ?? 0) > 0 ? season : season - 1,
   };
+}
+
+/**
+ * Fetch a full pitcher season line for enrichment purposes.
+ * Tries current season first, then falls back to prior season.
+ * Used to back-fill ProbablePitcher objects when the schedule hydration
+ * returns no stats (common in the first weeks of the season).
+ */
+export async function fetchPitcherFullLine(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<PitcherSeasonLine | null> {
+  const current = await fetchPitcherSeasonLine(mlbId, season);
+  if (current && current.ip > 0) return current;
+  const prior = await fetchPitcherSeasonLine(mlbId, season - 1);
+  return prior && prior.ip > 0 ? prior : null;
 }
 
 /**

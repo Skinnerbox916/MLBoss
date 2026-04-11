@@ -3,12 +3,14 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useRoster } from '@/lib/hooks/useRoster';
+import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
 import { resolveMatchup, type MatchupContext } from '@/lib/mlb/analysis';
 import DatePicker from './DatePicker';
 import PositionFilter from './PositionFilter';
 import RosterList from './RosterList';
 import LineupGrid from './LineupGrid';
+import type { LineupMode } from './types';
 
 function todayStr(): string {
   const d = new Date();
@@ -18,13 +20,20 @@ function todayStr(): string {
   return `${y}-${m}-${day}`;
 }
 
-export default function LineupManager() {
-  const { teamKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
+interface LineupManagerProps {
+  mode?: LineupMode;
+}
+
+export default function LineupManager({ mode = 'batting' }: LineupManagerProps) {
+  const { teamKey, leagueKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
 
   // Yahoo roster for the selected date
-  const { roster, isLoading: rosterLoading, isError: rosterError } = useRoster(teamKey, selectedDate);
+  const { roster, isLoading: rosterLoading, isError: rosterError, mutate: mutateRoster } = useRoster(teamKey, selectedDate);
+
+  // League roster slot template (positions + counts) — drives the LineupGrid.
+  const { positions: rosterPositions } = useRosterPositions(leagueKey);
 
   // MLB schedule for the selected date — one call for the whole page
   const { games, isLoading: gamesLoading, isError: gamesError } = useGameDay(selectedDate);
@@ -51,22 +60,28 @@ export default function LineupManager() {
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
 
+  const title = mode === 'pitching' ? 'Set Your Pitching Staff' : 'Set Your Lineup';
+  const subtitle =
+    mode === 'pitching'
+      ? "Click any pitcher for full splits vs. today's matchup"
+      : "Click any player for full splits vs. today's matchup";
+  const listHeading = mode === 'pitching' ? 'Pitchers' : 'Batters';
+  const gridHeading = mode === 'pitching' ? 'Current Staff' : 'Current Lineup';
+
   return (
     <div className="p-6 space-y-4">
       {/* Header row: title + date picker */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">Set Your Lineup</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Click any player for full splits vs. today&apos;s matchup
-          </p>
+          <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
         </div>
         <DatePicker selected={selectedDate} onSelect={setSelectedDate} />
       </div>
 
       {/* Position filter */}
       <div className="bg-surface rounded-lg shadow p-4">
-        <PositionFilter selected={selectedPosition} onSelect={setSelectedPosition} />
+        <PositionFilter mode={mode} selected={selectedPosition} onSelect={setSelectedPosition} />
       </div>
 
       {ctxError ? (
@@ -80,7 +95,7 @@ export default function LineupManager() {
           <div className="lg:col-span-2 bg-surface rounded-lg shadow p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-foreground">
-                {selectedPosition ?? 'All'} Players
+                {selectedPosition ?? 'All'} {listHeading}
               </h2>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 {gamesLoading && <span>Loading games...</span>}
@@ -89,6 +104,7 @@ export default function LineupManager() {
               </div>
             </div>
             <RosterList
+              mode={mode}
               roster={roster}
               selectedPosition={selectedPosition}
               isLoading={isLoading}
@@ -99,8 +115,16 @@ export default function LineupManager() {
 
           {/* Lineup grid — takes 1/3 */}
           <div className="bg-surface rounded-lg shadow p-4">
-            <h2 className="text-sm font-semibold text-foreground mb-3">Current Lineup</h2>
-            <LineupGrid roster={roster} isLoading={isLoading} />
+            <h2 className="text-sm font-semibold text-foreground mb-3">{gridHeading}</h2>
+            <LineupGrid
+              mode={mode}
+              roster={roster}
+              isLoading={isLoading}
+              teamKey={teamKey}
+              date={selectedDate}
+              rosterPositions={rosterPositions}
+              onSaved={() => mutateRoster()}
+            />
           </div>
         </div>
       )}

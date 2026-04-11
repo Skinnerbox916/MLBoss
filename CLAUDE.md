@@ -30,7 +30,7 @@ No test framework is configured.
 ### Authentication & Sessions
 - Custom Yahoo OAuth 2.0 flow: login (`/api/auth/login`) -> callback (`/api/auth/callback/yahoo`) -> logout (`/api/auth/logout`)
 - Sessions use `iron-session` with encrypted cookies (`src/lib/session.ts`)
-- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/matchup`, `/lineup`, `/roster`, `/league`, `/api/fantasy`, `/api/test-stats`
+- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/matchup`, `/lineup`, `/pitching`, `/roster`, `/league`, `/api/fantasy`, `/api/test-stats`
 - Token auto-refresh handled by `YahooFantasyAPI` (`src/lib/yahoo-fantasy-api.ts`)
 
 ### Data Layer
@@ -49,8 +49,17 @@ No test framework is configured.
 - `matchups.ts` — Scoreboard (weekly matchup scores) and team schedule
 - `teamStats.ts` — Team stats (season-to-date and weekly)
 - `roster.ts` — Team roster (players, positions, injury status)
+- `players.ts` — Available players (free agents + waivers) by position
 - `transactions.ts` — League transactions (adds, drops, trades)
 - `index.ts` — Barrel re-exports; consumer code imports from `@/lib/fantasy`
+
+### Lineup & Pitching Pages
+- `/lineup` — batters only. Uses `LineupManager` with `mode="batting"` to filter roster, position filters, and lineup grid to batting positions
+- `/pitching` — dedicated pitcher streaming tool. Uses `PitchingManager` (`src/components/pitching/PitchingManager.tsx`) with two tabs:
+  - **Today**: sit/start decisions — shows rostered pitchers with today's game context
+  - **Tomorrow** (default): streaming board — cross-references Yahoo free agent pitchers (`getLeaguePlayers` API) with MLB probable starters to surface pickup candidates sorted by quality tier
+- Both share the lineup component library (`src/components/lineup/`) via a `LineupMode` type (`'batting' | 'pitching'`)
+- Matchup Pulse (pitching category scores vs opponent) is always visible on the pitching page
 
 ### Dashboard
 - Card-based architecture: `src/components/dashboard/`

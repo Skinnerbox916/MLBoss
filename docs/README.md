@@ -7,7 +7,9 @@ This index is the single authoritative table of contents for all Markdown docs i
 - **setup.md** — Environment variables and Yahoo OAuth configuration.
 - **for-ai-developers.md** — Guidelines and navigation tips for LLM contributors.
 - **yahoo-api-reference.md** — Comprehensive Yahoo Fantasy Sports API guide.
+- **mlb-api-reference.md** — MLB Stats API guide: hydrate params, splits, early-season gap, disambiguation.
 - **dashboard-components.md** — Component-based dashboard architecture and integration guide.
+- **pitching-page.md** — Streaming board architecture: data pipeline, pills, composite score, matching.
 
 Fantasy data layer:
 

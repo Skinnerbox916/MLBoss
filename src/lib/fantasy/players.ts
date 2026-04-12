@@ -1,4 +1,4 @@
-import { YahooFantasyAPI, FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
+import { YahooFantasyAPI, type FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 import { withCache, CACHE_CATEGORIES } from './cache';
 
 /**
@@ -30,6 +30,23 @@ export async function getAvailablePitchers(userId: string, leagueKey: string): P
         merged.push(p);
       }
       return merged;
+    },
+  );
+}
+
+/**
+ * Get top available batters (free agents + waivers) for the waiver dashboard card.
+ * Fetches one page (25 players) with no position filter so Yahoo returns the most
+ * relevant available batters sorted by its own relevance ranking.
+ */
+export async function getTopAvailableBatters(userId: string, leagueKey: string): Promise<FreeAgentPlayer[]> {
+  return withCache(
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:fa-batters:${leagueKey}`,
+    CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
+    async () => {
+      const api = new YahooFantasyAPI(userId);
+      // Query batters by type — Yahoo's 'B' position_type returns hitters only
+      return api.getLeaguePlayers(leagueKey, { position: 'B', status: 'A', maxPages: 1, count: 10 });
     },
   );
 }

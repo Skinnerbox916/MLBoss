@@ -4,3 +4,4 @@ export * from './schedule';
 export * from './players';
 export * from './analysis';
 export * from './teams';
+export * from './savant';

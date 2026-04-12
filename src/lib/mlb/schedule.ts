@@ -1,6 +1,7 @@
-import { mlbFetchSchedule } from './client';
+import { mlbFetchSchedule, mlbFetchTeamStats } from './client';
 import { getParkByVenueId } from './parks';
 import { getPitcherQuality, fetchPitcherFullLine } from './players';
+import { fetchStatcastPitchers } from './savant';
 import type { MLBGame, ProbablePitcher, GameWeather } from './types';
 
 // ---------------------------------------------------------------------------
@@ -135,8 +136,9 @@ function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
     name: raw.fullName,
     throws,
     ...stats,
-    eraLast30: null, // requires a separate splits call; populated lazily if needed
-    quality: null, // enriched after parseGame in getGameDay
+    eraLast30: null,  // requires a separate splits call; populated lazily if needed
+    quality: null,    // enriched after parseGame in getGameDay
+    xera: null,       // enriched with Savant data in getGameDay
   };
 }
 
@@ -181,6 +183,48 @@ function parseGame(raw: RawGame): MLBGame {
 }
 
 // ---------------------------------------------------------------------------
+// Team aggregate pitching stats (for opposing staff quality)
+// ---------------------------------------------------------------------------
+
+interface RawTeamStatsResponse {
+  stats?: Array<{
+    type?: { displayName: string };
+    splits: Array<{
+      team: { id: number; name: string };
+      stat: { era?: string };
+    }>;
+  }>;
+}
+
+/**
+ * Fetch all MLB teams' season pitching ERA in a single call. Cached 24h —
+ * team aggregates barely move game-to-game. Returns teamId → ERA map.
+ */
+async function fetchTeamStaffEra(
+  season: number = new Date().getFullYear(),
+): Promise<Map<number, number>> {
+  const map = new Map<number, number>();
+  try {
+    const raw = await mlbFetchTeamStats<RawTeamStatsResponse>(
+      `/teams/stats?stats=season&group=pitching&sportId=1&season=${season}&gameType=R`,
+      `team-pitching:${season}`,
+    );
+    const group = raw.stats?.find(g => g.type?.displayName === 'season');
+    if (group) {
+      for (const split of group.splits) {
+        const era = split.stat.era ? parseFloat(split.stat.era) : null;
+        if (era !== null && !isNaN(era)) {
+          map.set(split.team.id, era);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('fetchTeamStaffEra failed:', err);
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -206,7 +250,14 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
 
   const games = dateEntry.games.map(parseGame);
 
-  // Enrich probable pitchers with tiered quality and extended stats
+  // Fetch Savant + team ERA once up front so enrichPitcher can reference
+  // the same cached maps without triggering repeated fetches
+  const [savantMap, teamEraMap] = await Promise.all([
+    fetchStatcastPitchers(),
+    fetchTeamStaffEra(),
+  ]);
+
+  // Enrich probable pitchers with tiered quality, extended stats, and xERA.
   // (parallel, cached at the underlying fetch layer). Falls back to prior
   // season when current IP is too thin — important in early April.
   const enrichPitcher = async (p: ProbablePitcher) => {
@@ -228,8 +279,12 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
       p.pitchesPerInning = p.pitchesPerInning ?? line.pitchesPerInning;
       p.inningsPerStart = p.inningsPerStart ?? line.inningsPerStart;
     }
+    // Attach xERA from Savant (null when pitcher has too few BIP in Savant)
+    const savant = savantMap.get(p.mlbId);
+    p.xera = (savant && savant.bip >= 10) ? savant.xera : null;
   };
 
+  // Enrich all pitchers in parallel now that shared maps are ready
   await Promise.all(
     games.flatMap(game => {
       const jobs: Promise<void>[] = [];
@@ -238,6 +293,12 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
       return jobs;
     }),
   );
+
+  // Attach team staff ERA to each game's team objects
+  for (const game of games) {
+    game.homeTeam.staffEra = teamEraMap.get(game.homeTeam.mlbId);
+    game.awayTeam.staffEra = teamEraMap.get(game.awayTeam.mlbId);
+  }
 
   return games;
 }

@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/session';
-import { getAvailablePitchers } from '@/lib/fantasy';
+import { getAvailablePitchers, getTopAvailableBatters } from '@/lib/fantasy';
 
 /**
- * GET /api/fantasy/players?leagueKey=458.l.123456&position=P
+ * GET /api/fantasy/players?leagueKey=458.l.123456&position=P|B
  * Returns available players (free agents + waivers).
- * Currently only supports position=P for pitcher streaming.
+ *   position=P  — pitchers for the streaming board
+ *   position=B  — top available batters for the waiver dashboard card
  */
 export async function GET(request: Request) {
   try {
@@ -19,13 +20,17 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'leagueKey is required' }, { status: 400 });
     }
 
-    if (position !== 'P') {
-      return NextResponse.json({ error: 'Only position=P is currently supported' }, { status: 400 });
+    if (position === 'P') {
+      const players = await getAvailablePitchers(user.id, leagueKey);
+      return NextResponse.json({ league_key: leagueKey, position, players });
     }
 
-    const players = await getAvailablePitchers(user.id, leagueKey);
+    if (position === 'B') {
+      const players = await getTopAvailableBatters(user.id, leagueKey);
+      return NextResponse.json({ league_key: leagueKey, position, players });
+    }
 
-    return NextResponse.json({ league_key: leagueKey, position, players });
+    return NextResponse.json({ error: 'position must be P or B' }, { status: 400 });
   } catch (error) {
     console.error('Players API error:', error);
     return NextResponse.json(

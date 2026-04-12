@@ -207,13 +207,6 @@ export default function PlayerSplitsPanel({
         rightSplit={splits.vsRight}
       />
       <ComparisonPair
-        label="Home / Away"
-        leftLabel="Home"
-        leftSplit={splits.home}
-        rightLabel="Away"
-        rightSplit={splits.away}
-      />
-      <ComparisonPair
         label="Day / Night"
         leftLabel="Day"
         leftSplit={splits.day}

@@ -16,7 +16,7 @@ import { DashboardCardMeta } from '@/components/dashboard/types';
 
 // Dashboard card configuration
 const dashboardCards: DashboardCardMeta[] = [
-  { id: 'matchup', component: MatchupCard, size: 'lg' },
+  { id: 'matchup', component: MatchupCard, size: 'md' },
   { id: 'batting', component: BattingCard, size: 'md' },
   { id: 'pitching', component: PitchingCard, size: 'md' },
   { id: 'lineup-issues', component: LineupIssuesCard, size: 'md' },

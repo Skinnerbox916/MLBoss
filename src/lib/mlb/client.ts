@@ -50,3 +50,12 @@ export async function mlbFetchIdentity<T>(path: string, cacheKey: string): Promi
     () => mlbFetch<T>(path),
   );
 }
+
+/** Team aggregate stats. Stable day-to-day. Cache 24 hours. */
+export async function mlbFetchTeamStats<T>(path: string, cacheKey: string): Promise<T> {
+  return withCache(
+    `mlb:teamstats:${cacheKey}`,
+    CACHE_CATEGORIES.STATIC.ttl,          // 24 hours
+    () => mlbFetch<T>(path),
+  );
+}

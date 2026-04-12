@@ -2,27 +2,28 @@
 
 import { useState } from 'react';
 import { FiChevronDown, FiTrendingUp, FiTrendingDown } from 'react-icons/fi';
+import { GiRunningShoe } from 'react-icons/gi';
 import Icon from '@/components/Icon';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
+import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
-import { getHandednessVerdict, getVenueVerdict, getDayNightVerdict, getFormTrend, getWeatherFlag, getPitcherQualityPill, getParkVerdict } from '@/lib/mlb/analysis';
+import {
+  getHandednessVerdict,
+  getDayNightVerdict,
+  getFormTrend,
+  getWeatherFlag,
+  getPitcherQualityPill,
+  getParkVerdict,
+  getStealPill,
+  getCareerVsPitcherPill,
+  getOpposingStaffPill,
+  getBatterMatchupScore,
+  type BatterMatchupScore,
+} from '@/lib/mlb/analysis';
 import { usePlayerSplits } from '@/lib/hooks/usePlayerSplits';
 import PlayerSplitsPanel from './PlayerSplitsPanel';
 
-// ---------------------------------------------------------------------------
-// Row status helpers
-// ---------------------------------------------------------------------------
-
-type RowStatus = 'starter' | 'bench' | 'injured';
-
-function getRowStatus(player: RosterEntry): RowStatus {
-  if (player.on_disabled_list || player.status === 'IL' || player.status === 'IL10' || player.status === 'IL60' || player.status === 'DL' || player.status === 'NA') {
-    return 'injured';
-  }
-  if (player.selected_position === 'BN') return 'bench';
-  if (player.selected_position === 'IL' || player.selected_position === 'IL+' || player.selected_position === 'NA') return 'injured';
-  return 'starter';
-}
+import { getRowStatus } from './types';
 
 // ---------------------------------------------------------------------------
 // Status badge
@@ -88,6 +89,89 @@ function FormPill({
   return null;
 }
 
+function StealPill({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/15 text-accent">
+      <Icon icon={GiRunningShoe} size={10} />
+      {label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Baseline OPS / xwOBA display — the most important numbers on the row
+// ---------------------------------------------------------------------------
+
+/**
+ * Shows season OPS with colour coding for talent level.
+ * When xwOBA is available and diverges significantly from actual wOBA,
+ * shows a small luck indicator:
+ *   ↑ player is getting unlucky (xwOBA >> wOBA) — likely to improve
+ *   ↓ player is getting lucky  (xwOBA << wOBA) — likely to regress
+ */
+function OPSBadge({ stats }: { stats: BatterSeasonStats | null }) {
+  if (!stats || stats.ops === null) return null;
+
+  const ops = stats.ops;
+  const display = ops.toFixed(3).replace(/^0\./, '.');
+
+  let color = 'text-muted-foreground';
+  if (ops >= 0.900) color = 'text-success font-bold';
+  else if (ops >= 0.800) color = 'text-success';
+  else if (ops >= 0.720) color = 'text-foreground';
+  else if (ops < 0.650) color = 'text-error';
+
+  // Luck indicator: wOBA delta ≥ 0.030 is meaningful (roughly 10 OPS points)
+  let luckIndicator: React.ReactNode = null;
+  if (stats.xwoba !== null && stats.woba !== null) {
+    const delta = stats.xwoba - stats.woba;
+    if (delta >= 0.030) {
+      luckIndicator = (
+        <span className="text-success text-[10px]" title={`xwOBA ${stats.xwoba.toFixed(3)} vs wOBA ${stats.woba.toFixed(3)} — getting unlucky`}>
+          ↑
+        </span>
+      );
+    } else if (delta <= -0.030) {
+      luckIndicator = (
+        <span className="text-error text-[10px]" title={`xwOBA ${stats.xwoba.toFixed(3)} vs wOBA ${stats.woba.toFixed(3)} — getting lucky`}>
+          ↓
+        </span>
+      );
+    }
+  }
+
+  return (
+    <span className="inline-flex items-center gap-0.5" title="Season OPS">
+      <span className={`text-xs font-mono ${color}`}>{display}</span>
+      {luckIndicator}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Matchup score indicator — left-edge accent + tier label
+// ---------------------------------------------------------------------------
+
+function matchupTierStyle(tier: BatterMatchupScore['tier']): {
+  border: string;
+  bg: string;
+  label: string;
+  labelColor: string;
+} {
+  switch (tier) {
+    case 'great':
+      return { border: 'border-l-success', bg: 'bg-success/5', label: 'Great', labelColor: 'text-success' };
+    case 'good':
+      return { border: 'border-l-success/50', bg: 'bg-success/[0.02]', label: 'Good', labelColor: 'text-success' };
+    case 'neutral':
+      return { border: 'border-l-border', bg: '', label: '', labelColor: '' };
+    case 'poor':
+      return { border: 'border-l-error/50', bg: 'bg-error/[0.02]', label: 'Poor', labelColor: 'text-error' };
+    case 'bad':
+      return { border: 'border-l-error', bg: 'bg-error/5', label: 'Bad', labelColor: 'text-error' };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Matchup context line — appears below player info
 // ---------------------------------------------------------------------------
@@ -106,7 +190,6 @@ function MatchupLine({ context }: { context: MatchupContext | null }) {
 
   return (
     <div className="flex items-center gap-2 flex-wrap text-[11px]">
-      {/* Opponent + pitcher */}
       <span className="text-muted-foreground">
         {locationPrefix} <span className="font-semibold text-foreground">{opponentTeam}</span>
       </span>
@@ -135,7 +218,6 @@ function MatchupLine({ context }: { context: MatchupContext | null }) {
         </>
       )}
 
-      {/* Weather */}
       {weather.kind !== 'none' && weather.kind !== 'neutral' && (
         <>
           <span className="text-border">|</span>
@@ -159,14 +241,13 @@ function MatchupLine({ context }: { context: MatchupContext | null }) {
 interface PlayerRowProps {
   player: RosterEntry;
   context: MatchupContext | null;
+  seasonStats: BatterSeasonStats | null;
 }
 
-export default function PlayerRow({ player, context }: PlayerRowProps) {
+export default function PlayerRow({ player, context, seasonStats }: PlayerRowProps) {
   const [expanded, setExpanded] = useState(false);
   const status = getRowStatus(player);
 
-  // Fetch splits for any healthy player with a game today (starters and bench).
-  // Injured players are excluded — splits won't inform a realistic lineup move.
   const shouldFetchSplits = status !== 'injured' && !!context?.game;
 
   const { identity, splits, careerVsPitcher, isLoading: splitsLoading, isError: splitsError } = usePlayerSplits(
@@ -177,36 +258,41 @@ export default function PlayerRow({ player, context }: PlayerRowProps) {
     },
   );
 
-  // Compute inline verdicts + form trend (only meaningful when splits are available)
+  // Individual verdict pills
   const handednessVerdict = getHandednessVerdict(splits, context?.opposingPitcher?.throws);
-  const venueVerdict = context ? getVenueVerdict(splits, context.isHome) : { verdict: 'unknown' as const, label: '' };
   const dayNightVerdict = context?.game
     ? getDayNightVerdict(splits, context.game.gameDate)
     : { verdict: 'unknown' as const, label: '' };
   const formTrend = getFormTrend(splits);
-
-  // Pitcher quality pill — independent of splits data (lives on the probable pitcher)
   const pitcherPill = getPitcherQualityPill(context?.opposingPitcher);
-
-  // Park pill: handedness-aware, outliers only. See getParkVerdict in analysis.ts.
   const parkPill = getParkVerdict(context?.park, identity?.bats);
+  const stealPill = getStealPill(splits);
+  const cvpPill = getCareerVsPitcherPill(careerVsPitcher, context?.opposingPitcher?.name);
+  const staffPill = getOpposingStaffPill(context);
+
+  // Use xwOBA-scaled OPS as talent baseline when available (more predictive)
+  const talentOPS = seasonStats?.xwoba != null
+    ? seasonStats.xwoba * 2.4
+    : seasonStats?.ops ?? null;
+
+  // Composite score — blends talent baseline with matchup context
+  const matchupScore = getBatterMatchupScore(splits, careerVsPitcher, context, identity?.bats, talentOPS);
+  const tierStyle = matchupTierStyle(matchupScore.tier);
 
   const hasAnyPill =
     handednessVerdict.label ||
-    venueVerdict.label ||
     dayNightVerdict.label ||
     parkPill ||
     pitcherPill ||
+    staffPill ||
+    stealPill ||
+    cvpPill ||
     formTrend.label;
 
-  const bgClass =
-    status === 'starter' ? 'bg-success/5' :
-    status === 'injured' ? 'bg-error/5' :
-    '';
   const initial = player.name.charAt(0).toUpperCase();
 
   return (
-    <div className={`rounded-lg overflow-hidden ${bgClass} hover:bg-surface-muted/40 transition-colors`}>
+    <div className={`rounded-lg overflow-hidden border-l-[3px] ${tierStyle.border} ${tierStyle.bg} hover:bg-surface-muted/40 transition-colors`}>
       {/* Compact row */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -231,10 +317,16 @@ export default function PlayerRow({ player, context }: PlayerRowProps) {
 
         {/* Player info + matchup context */}
         <div className="flex-1 min-w-0 space-y-0.5">
-          {/* Line 1: Name + status + team + position eligibility */}
+          {/* Line 1: Name + OPS + status + team + position eligibility + matchup tier */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-foreground truncate">{player.name}</span>
+            <OPSBadge stats={seasonStats} />
             {player.status && <StatusBadge status={player.status} />}
+            {tierStyle.label && (
+              <span className={`text-[10px] font-bold ${tierStyle.labelColor}`}>
+                {tierStyle.label}
+              </span>
+            )}
             <span className="text-[11px] text-muted-foreground">
               {player.editorial_team_abbr} · {player.eligible_positions.join(', ')}
             </span>
@@ -243,17 +335,20 @@ export default function PlayerRow({ player, context }: PlayerRowProps) {
           {/* Line 2: Matchup context */}
           <MatchupLine context={context} />
 
-          {/* Line 3: Verdict pills (only when we have splits data and meaningful signals) */}
+          {/* Line 3: Verdict pills */}
           {shouldFetchSplits && hasAnyPill && (
             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+              {cvpPill && (
+                <VerdictPill verdict={cvpPill.verdict} label={cvpPill.label} />
+              )}
               {pitcherPill && (
                 <VerdictPill verdict={pitcherPill.verdict} label={pitcherPill.label} />
               )}
               {handednessVerdict.label && (
                 <VerdictPill verdict={handednessVerdict.verdict} label={handednessVerdict.label} />
               )}
-              {venueVerdict.label && (
-                <VerdictPill verdict={venueVerdict.verdict} label={venueVerdict.label} />
+              {staffPill && (
+                <VerdictPill verdict={staffPill.verdict} label={staffPill.label} />
               )}
               {dayNightVerdict.label && (
                 <VerdictPill verdict={dayNightVerdict.verdict} label={dayNightVerdict.label} />
@@ -261,6 +356,7 @@ export default function PlayerRow({ player, context }: PlayerRowProps) {
               {parkPill && (
                 <VerdictPill verdict={parkPill.verdict} label={parkPill.label} />
               )}
+              {stealPill && <StealPill label={stealPill.label} />}
               {formTrend.label && <FormPill trend={formTrend.trend} label={formTrend.label} />}
             </div>
           )}

@@ -1,5 +1,7 @@
 import { mlbFetchSplits, mlbFetchIdentity } from './client';
-import type { BatterSplits, MLBPlayerIdentity, PitcherQuality, PitcherTier, SplitLine } from './types';
+import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
+import { fetchStatcastPitchers, fetchStatcastBatters } from './savant';
+import type { BatterSeasonStats, BatterSplits, MLBPlayerIdentity, PitcherQuality, PitcherTier, SplitLine } from './types';
 
 // ---------------------------------------------------------------------------
 // MLB Stats API response shapes
@@ -11,6 +13,8 @@ interface RawStat {
   slg?: string;
   ops?: string;
   homeRuns?: number;
+  doubles?: number;
+  triples?: number;
   rbi?: number;
   stolenBases?: number;
   strikeOuts?: number;
@@ -228,26 +232,80 @@ async function fetchStatSplitsForSeason(
 }
 
 /** Fetch a single last-N-games aggregated stat line. */
-async function fetchLastXGames(mlbId: number, n: number, season: number): Promise<SplitLine | null> {
+/**
+ * Fetch the full game log for a player+season, cached for 1 hour.
+ * Returns individual game entries sorted chronologically by the API.
+ */
+async function fetchGameLog(mlbId: number, season: number): Promise<RawSplit[]> {
   const params = new URLSearchParams({
-    stats: 'lastXGames',
+    stats: 'gameLog',
     group: 'hitting',
-    numberOfGames: String(n),
     season: String(season),
     gameType: 'R',
   });
   const path = `/people/${mlbId}/stats?${params.toString()}`;
+  const raw = await mlbFetchSplits<RawStatsResponse>(path, `gamelog:${mlbId}:${season}`);
+  const group = findGroup(raw, 'gameLog');
+  return group;
+}
 
-  try {
-    const raw = await mlbFetchSplits<RawStatsResponse>(path, `lastx:${mlbId}:${season}:${n}`);
-    const group = findGroup(raw, 'lastXGames');
-    // Response contains duplicates across team contexts; use the first non-empty line
-    const first = group.find(s => s.stat && (s.stat.plateAppearances ?? 0) > 0) ?? group[0];
-    return first ? parseSplitLine(first.stat) : null;
-  } catch (err) {
-    console.error(`fetchLastXGames(${mlbId}, ${n}, ${season}) failed:`, err);
-    return null;
+/**
+ * Aggregate the last N games from a game log into a single SplitLine.
+ *
+ * The MLB Stats API's `lastXGames` endpoint ignores `numberOfGames` and always
+ * returns the full season, so we fetch the gameLog once and slice it ourselves.
+ */
+function aggregateLastN(gameLog: RawSplit[], n: number): SplitLine | null {
+  // Game log is chronological; take the last N entries
+  const recent = gameLog.slice(-n);
+  if (recent.length === 0) return null;
+
+  let atBats = 0, hits = 0, homeRuns = 0, rbi = 0, stolenBases = 0;
+  let strikeouts = 0, walks = 0, plateAppearances = 0;
+  let totalBases = 0;
+
+  for (const entry of recent) {
+    const s = entry.stat;
+    atBats += s.atBats ?? 0;
+    hits += s.hits ?? 0;
+    homeRuns += s.homeRuns ?? 0;
+    rbi += s.rbi ?? 0;
+    stolenBases += s.stolenBases ?? 0;
+    strikeouts += s.strikeOuts ?? 0;
+    walks += s.baseOnBalls ?? 0;
+    plateAppearances += s.plateAppearances ?? 0;
+    // Compute total bases from individual game components
+    const gameHits = s.hits ?? 0;
+    const gameDoubles = s.doubles ?? 0;
+    const gameTriples = s.triples ?? 0;
+    const gameHR = s.homeRuns ?? 0;
+    const gameSingles = gameHits - gameDoubles - gameTriples - gameHR;
+    totalBases += gameSingles + gameDoubles * 2 + gameTriples * 3 + gameHR * 4;
   }
+
+  // Recalculate the hit-by-pitch and sacrifice flies from PA - AB - BB
+  // (the API doesn't always provide these in game log entries)
+  const hbpAndSf = plateAppearances - atBats - walks;
+
+  const avg = atBats > 0 ? hits / atBats : null;
+  const obp = plateAppearances > 0 ? (hits + walks + Math.max(0, hbpAndSf)) / plateAppearances : null;
+  const slg = atBats > 0 ? totalBases / atBats : null;
+  const ops = obp !== null && slg !== null ? obp + slg : null;
+
+  return {
+    avg,
+    obp,
+    slg,
+    ops,
+    homeRuns,
+    rbi,
+    stolenBases,
+    strikeouts,
+    walks,
+    atBats,
+    hits,
+    plateAppearances,
+  };
 }
 
 /**
@@ -296,12 +354,19 @@ export async function getBatterSplits(
     }
   }
 
-  // Recent form always comes from the current season
-  const [last7, last14, last30] = await Promise.all([
-    fetchLastXGames(mlbId, 7, season),
-    fetchLastXGames(mlbId, 14, season),
-    fetchLastXGames(mlbId, 30, season),
-  ]);
+  // Recent form always comes from the current season.
+  // We fetch the game log once and slice it for each window.
+  let last7: SplitLine | null = null;
+  let last14: SplitLine | null = null;
+  let last30: SplitLine | null = null;
+  try {
+    const gameLog = await fetchGameLog(mlbId, season);
+    last7 = aggregateLastN(gameLog, 7);
+    last14 = aggregateLastN(gameLog, 14);
+    last30 = aggregateLastN(gameLog, 30);
+  } catch (err) {
+    console.error(`fetchGameLog(${mlbId}, ${season}) failed:`, err);
+  }
 
   // Resolve name from the shared person record (cheap, cached)
   let name = '';
@@ -375,24 +440,44 @@ function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
 }
 
 /**
- * Classify a pitcher into a tier using ERA + WHIP.
+ * Classify a pitcher into a tier using ERA (or xERA when available), WHIP,
+ * and K/9.
  *
+ * When `xera` is supplied it replaces actual ERA as the primary signal.
+ * xERA strips out luck and team defense and stabilises much faster (~50 BIP
+ * vs ~200 IP for ERA), so it's a better classifier at any sample size.
+ *
+ * Base tiers (ERA + WHIP):
  * - ace:     ERA ≤ 2.75 AND WHIP ≤ 1.05
  * - tough:   ERA ≤ 3.50 AND WHIP ≤ 1.20
  * - bad:     ERA ≥ 5.00 AND WHIP ≥ 1.45
  * - weak:    ERA ≥ 4.25 OR  WHIP ≥ 1.36
  * - average: everything in between
- * - unknown: null stats
  *
- * Caller is responsible for enforcing the IP sample gate.
+ * K/9 adjustments:
+ * - tough + K/9 ≥ 10.0 → ace (elite K rate = dominant)
+ * - average + K/9 ≤ 5.5 → weak (can't miss bats, vulnerable to hard contact)
+ *
+ * Caller is responsible for enforcing the IP/BIP sample gate.
  */
-function classifyPitcherTier(era: number | null, whip: number | null): PitcherTier {
-  if (era === null || whip === null) return 'unknown';
+function classifyPitcherTier(
+  era: number | null,
+  whip: number | null,
+  k9: number | null = null,
+  xera: number | null = null,
+): PitcherTier {
+  // Use xERA as primary when available — it's more predictive than actual ERA
+  const effectiveEra = xera ?? era;
+  if (effectiveEra === null || whip === null) return 'unknown';
 
-  if (era <= 2.75 && whip <= 1.05) return 'ace';
-  if (era >= 5.00 && whip >= 1.45) return 'bad';
-  if (era <= 3.50 && whip <= 1.20) return 'tough';
-  if (era >= 4.25 || whip >= 1.36) return 'weak';
+  if (effectiveEra <= 2.75 && whip <= 1.05) return 'ace';
+  if (effectiveEra >= 5.00 && whip >= 1.45) return 'bad';
+  if (effectiveEra <= 3.50 && whip <= 1.20) {
+    if (k9 !== null && k9 >= 10.0) return 'ace';
+    return 'tough';
+  }
+  if (effectiveEra >= 4.25 || whip >= 1.36) return 'weak';
+  if (k9 !== null && k9 <= 5.5) return 'weak';
   return 'average';
 }
 
@@ -426,9 +511,15 @@ async function fetchPitcherSeasonLine(
 /**
  * Get a pitcher's tiered quality snapshot.
  *
- * Uses current season when IP ≥ 25 (enough of a sample), otherwise falls back
- * to the prior season. If both are too thin, returns tier='unknown' so the UI
- * can omit the pill.
+ * When available, xERA from the Baseball Savant leaderboard is used as the
+ * primary ERA signal in the tier classifier — it strips out luck and team
+ * defense and stabilises much faster than actual ERA. If the pitcher is not
+ * in the Savant dataset (too few BIP, e.g. < 10 PA in their system), the
+ * classifier falls back to actual ERA as before.
+ *
+ * IP sample gates still apply to the Stats API data:
+ *   - current season: IP ≥ 25
+ *   - prior season fallback: IP ≥ 60
  *
  * Cached via mlbFetchSplits (1 hour) at the underlying fetch level.
  */
@@ -436,11 +527,19 @@ export async function getPitcherQuality(
   mlbId: number,
   season: number = new Date().getFullYear(),
 ): Promise<PitcherQuality> {
-  const current = await fetchPitcherSeasonLine(mlbId, season);
+  // Fetch traditional stats + Savant data in parallel
+  const [current, savantMap] = await Promise.all([
+    fetchPitcherSeasonLine(mlbId, season),
+    fetchStatcastPitchers(season),
+  ]);
+
+  const savant = savantMap.get(mlbId) ?? null;
+  // Only use xERA when Savant has a meaningful sample (≥ 10 BIP)
+  const xera = (savant && savant.bip >= 10) ? savant.xera : null;
 
   if (current && current.ip >= MIN_IP_CURRENT) {
     return {
-      tier: classifyPitcherTier(current.era, current.whip),
+      tier: classifyPitcherTier(current.era, current.whip, current.strikeoutsPer9, xera),
       era: current.era,
       whip: current.whip,
       inningsPitched: current.ip,
@@ -448,11 +547,12 @@ export async function getPitcherQuality(
     };
   }
 
-  // Fall back to prior season
+  // Fall back to prior season for IP gate, but keep current-season xERA
+  // (Savant always reflects the current season leaderboard)
   const prior = await fetchPitcherSeasonLine(mlbId, season - 1);
   if (prior && prior.ip >= MIN_IP_PRIOR) {
     return {
-      tier: classifyPitcherTier(prior.era, prior.whip),
+      tier: classifyPitcherTier(prior.era, prior.whip, prior.strikeoutsPer9, xera),
       era: prior.era,
       whip: prior.whip,
       inningsPitched: prior.ip,
@@ -518,5 +618,112 @@ export async function getCareerVsPitcher(
     console.error(`getCareerVsPitcher(${batterId}, ${pitcherId}) failed:`, err);
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Batch season stats for roster-level talent baseline
+// ---------------------------------------------------------------------------
+
+interface RosterPlayer {
+  name: string;
+  team: string;
+}
+
+/**
+ * Fetch lightweight season stats (OPS, AVG, HR, SB, PA) for a list of
+ * roster players.  Resolves Yahoo names → MLB IDs (all individually cached
+ * 24 h) then fetches each player's current-season hitting line (cached 1 h).
+ * Falls back to the prior season when current-year PA < 30.
+ *
+ * The result is keyed by `"name|team"` (lowercased) so the caller can look
+ * up stats without needing MLB IDs.
+ *
+ * The entire assembled map is itself cached for 10 minutes to avoid
+ * re-running the fan-out on every page navigation.
+ */
+export async function getRosterSeasonStats(
+  players: RosterPlayer[],
+  season: number = new Date().getFullYear(),
+): Promise<Record<string, BatterSeasonStats>> {
+  if (players.length === 0) return {};
+
+  const sortedKey = players
+    .map(p => `${p.name.toLowerCase()}|${p.team.toLowerCase()}`)
+    .sort()
+    .join(',');
+  const cacheKey = `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:roster-stats:${season}:${hashCode(sortedKey)}`;
+
+  return withCache(cacheKey, CACHE_CATEGORIES.SEMI_DYNAMIC.ttlMedium, async () => {
+    const results: Record<string, BatterSeasonStats> = {};
+
+    // Fetch Savant batter leaderboard once for all players (24h cached)
+    const savantMap = await fetchStatcastBatters(season);
+
+    await Promise.all(
+      players.map(async ({ name, team }) => {
+        const key = `${name.toLowerCase()}|${team.toLowerCase()}`;
+        try {
+          const identity = await resolveMLBId(name, team);
+          if (!identity) return;
+
+          const current = await fetchStatSplitsForSeason(identity.mlbId, season);
+          if (!current) return;
+
+          const seasonGroup = findGroup(current.raw, 'season');
+          const first = seasonGroup[0];
+          let line = first ? parseSplitLine(first.stat) : null;
+          let usedSeason = season;
+
+          // Fall back to prior year when current PA is too thin
+          if (!line || line.plateAppearances < 30) {
+            const fallback = await fetchStatSplitsForSeason(identity.mlbId, season - 1);
+            if (fallback) {
+              const fbGroup = findGroup(fallback.raw, 'season');
+              const fbFirst = fbGroup[0];
+              if (fbFirst) {
+                const fbLine = parseSplitLine(fbFirst.stat);
+                if (fbLine.plateAppearances >= 30) {
+                  line = fbLine;
+                  usedSeason = season - 1;
+                }
+              }
+            }
+          }
+
+          if (line) {
+            // xwOBA and wOBA from Savant — always current season, null when
+            // the player has too few BIP for Savant to compute expected stats
+            const savant = savantMap.get(identity.mlbId);
+            const xwoba = (savant && savant.bip >= 5) ? savant.xwoba : null;
+            const woba = (savant && savant.bip >= 5) ? savant.woba : null;
+
+            results[key] = {
+              mlbId: identity.mlbId,
+              ops: line.ops,
+              avg: line.avg,
+              hr: line.homeRuns,
+              sb: line.stolenBases,
+              pa: line.plateAppearances,
+              season: usedSeason,
+              xwoba,
+              woba,
+            };
+          }
+        } catch (err) {
+          console.error(`getRosterSeasonStats: failed for ${name} (${team}):`, err);
+        }
+      }),
+    );
+
+    return results;
+  });
+}
+
+function hashCode(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 

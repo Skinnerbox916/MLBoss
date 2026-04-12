@@ -21,7 +21,8 @@ export async function GET(request: Request) {
     const week = weekStr ? Number(weekStr) : undefined;
     const matchups = await getLeagueScoreboard(user.id, leagueKey, week);
 
-    return NextResponse.json({ league_key: leagueKey, week: week ?? 'current', matchups });
+    const resolvedWeek = week ?? matchups?.[0]?.week;
+    return NextResponse.json({ league_key: leagueKey, week: resolvedWeek, matchups });
   } catch (error) {
     console.error('Scoreboard API error:', error);
     return NextResponse.json(

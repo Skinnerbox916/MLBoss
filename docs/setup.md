@@ -70,6 +70,36 @@ npm run dev
 
 Confirm the output says `Local: http://localhost:3000` before testing.
 
+### Cloudflare Tunnel
+
+The Cloudflare tunnel (`cloudflared`) must be running alongside the dev server. It maps `mlboss-dev.skibri.us` → `localhost:3000` and provides the HTTPS that Yahoo OAuth requires.
+
+**Check if running:**
+```bash
+pgrep -f cloudflared || echo "Not running"
+```
+
+**Start manually:**
+```bash
+cloudflared tunnel run mlboss
+```
+
+**Auto-start on WSL boot (one-time setup):**
+
+A user systemd service is already installed at `~/.config/systemd/user/cloudflared.service`. To make it start automatically whenever WSL boots (without a login shell), enable user lingering once with:
+
+```bash
+sudo loginctl enable-linger truehoax
+```
+
+After that, `systemctl --user start cloudflared` will also survive WSL restarts. Without linger, you must start it manually each session or rely on the AI agent to start it.
+
+**Diagnose a Cloudflare 1033 error:**
+
+Error 1033 means the tunnel is configured but `cloudflared` is not running or cannot reach `localhost:3000`. Check both:
+1. `pgrep -f cloudflared` — tunnel process running?
+2. `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` — dev server responding?
+
 ### Quick Start
 
 ```bash
@@ -84,6 +114,9 @@ pkill -f "next-server" 2>/dev/null
 
 # 4. Run the dev server (must be on port 3000)
 npm run dev
+
+# 5. Start the Cloudflare tunnel (if not already running)
+pgrep -f cloudflared || cloudflared tunnel run mlboss
 ```
 
-Once the server is running, open `https://mlboss-dev.skibri.us` (or `http://localhost:3000` for non-OAuth pages) and click "Login with Yahoo" to begin the OAuth flow. 
+Once the server and tunnel are running, open `https://mlboss-dev.skibri.us` and click "Login with Yahoo" to begin the OAuth flow. 

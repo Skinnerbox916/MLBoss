@@ -272,14 +272,18 @@ export default function LineupGrid({
 
       // If the target slot holds another player, swap positions; otherwise
       // just move the selected player into the slot. The displaced player
-      // inherits the selected player's previous position.
+      // inherits the selected player's previous position — unless they aren't
+      // eligible for it, in which case they go to BN.
       const movingPrev = overrides.get(moving.player_key) ?? moving.selected_position;
 
       setOverrides(prev => {
         const next = new Map(prev);
         next.set(moving.player_key, slot.position);
         if (player && player.player_key !== moving.player_key) {
-          next.set(player.player_key, movingPrev);
+          const displacedEligible =
+            RESERVE_POSITIONS.has(movingPrev) ||
+            player.eligible_positions.includes(movingPrev);
+          next.set(player.player_key, displacedEligible ? movingPrev : 'BN');
         }
         // Clean up no-op overrides so `dirty` stays accurate.
         for (const [k, v] of next.entries()) {

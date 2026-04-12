@@ -8,10 +8,40 @@ import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 
 interface CategoryRow {
   label: string;
+  myVal: string;
+  oppVal: string;
   delta: number;
   relDelta: number;
   winning: boolean | null;
   deltaStr: string;
+}
+
+// IP is stored by Yahoo in baseball "thirds" notation: 58.1 = 58⅓ innings.
+// Doing float math on these gives nonsense (58.1 - 34.2 = 23.9... but .toFixed gives 23.9).
+// In practice Yahoo sometimes returns decimal fractions like "34.1125" for partial IP,
+// so we normalize via outs to get correct display (e.g. "+23.2" = 23⅔ innings).
+function parseIPToOuts(ip: string): number {
+  const val = parseFloat(ip);
+  if (isNaN(val)) return 0;
+  const innings = Math.floor(val);
+  const rem = Math.round((val - innings) * 10); // e.g. .1 → 1, .2 → 2
+  return innings * 3 + Math.min(rem, 2);
+}
+
+function formatIPDelta(myRaw: string, oppRaw: string): { deltaStr: string; delta: number; relDelta: number; winning: boolean | null } {
+  const myOuts = parseIPToOuts(myRaw);
+  const oppOuts = parseIPToOuts(oppRaw);
+  const outsDelta = myOuts - oppOuts;
+  const maxOuts = Math.max(Math.abs(myOuts), Math.abs(oppOuts), 1);
+  const relDelta = Math.abs(outsDelta) / maxOuts;
+  let winning: boolean | null = null;
+  if (outsDelta !== 0) winning = outsDelta > 0; // higher IP is better
+  const sign = outsDelta > 0 ? '+' : outsDelta < 0 ? '-' : '';
+  const absOuts = Math.abs(outsDelta);
+  const innings = Math.floor(absOuts / 3);
+  const rem = absOuts % 3;
+  const deltaStr = outsDelta === 0 ? '0' : `${sign}${innings}.${rem}`;
+  return { deltaStr, delta: outsDelta, relDelta, winning };
 }
 
 function formatDelta(delta: number, name: string): string {
@@ -20,23 +50,23 @@ function formatDelta(delta: number, name: string): string {
   if (name === 'ERA' || name === 'WHIP') {
     return sign + delta.toFixed(2);
   }
-  if (name === 'IP') {
-    return sign + delta.toFixed(1);
-  }
   return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(3));
 }
 
 function DivergingRow({ row, maxRel }: { row: CategoryRow; maxRel: number }) {
-  const barPct = maxRel > 0 ? (row.relDelta / maxRel) * 45 : 0;
+  const barPct = maxRel > 0 ? (row.relDelta / maxRel) * 40 : 0;
   const isWin = row.winning === true;
   const isLoss = row.winning === false;
   const barColor = isWin ? 'bg-success' : isLoss ? 'bg-error' : 'bg-muted-foreground';
-  const textColor = isWin ? 'text-success' : isLoss ? 'text-error' : 'text-muted-foreground';
+  const deltaColor = isWin ? 'text-success' : isLoss ? 'text-error' : 'text-muted-foreground';
 
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-10 text-xs font-medium text-foreground shrink-0 truncate">{row.label}</span>
-      <div className="flex-1 flex items-center h-5 relative">
+    <div className="flex items-center gap-1">
+      <span className="w-10 text-[11px] font-medium text-foreground shrink-0 truncate">{row.label}</span>
+      <span className={`w-10 text-[11px] text-right tabular-nums font-mono shrink-0 ${isWin ? 'text-success font-semibold' : isLoss ? 'text-muted-foreground' : 'text-foreground'}`}>
+        {row.myVal}
+      </span>
+      <div className="flex-1 flex items-center h-4 relative min-w-0">
         <div className="absolute left-1/2 top-0 bottom-0 w-px bg-border" />
         {barPct > 0 && isWin && (
           <div
@@ -51,7 +81,10 @@ function DivergingRow({ row, maxRel }: { row: CategoryRow; maxRel: number }) {
           />
         )}
       </div>
-      <span className={`w-12 text-xs text-right font-bold shrink-0 ${textColor}`}>
+      <span className={`w-10 text-[11px] text-left tabular-nums font-mono shrink-0 ${isLoss ? 'text-error font-semibold' : isWin ? 'text-muted-foreground' : 'text-foreground'}`}>
+        {row.oppVal}
+      </span>
+      <span className={`w-12 text-[11px] text-right font-bold shrink-0 tabular-nums font-mono ${deltaColor}`}>
         {row.deltaStr}
       </span>
     </div>
@@ -72,6 +105,8 @@ export default function PitchingCard() {
   const pitchingCats = categories.filter(c => c.is_pitcher_stat);
 
   const rows: CategoryRow[] = [];
+  let wins = 0, losses = 0, ties = 0;
+
   if (userTeam?.stats && opponent?.stats) {
     const myMap = new Map(userTeam.stats.map(s => [s.stat_id, s.value]));
     const oppMap = new Map(opponent.stats.map(s => [s.stat_id, s.value]));
@@ -81,26 +116,26 @@ export default function PitchingCard() {
       const oppRaw = oppMap.get(cat.stat_id);
       if (myRaw === undefined || oppRaw === undefined) continue;
 
-      const myNum = parseFloat(myRaw);
-      const oppNum = parseFloat(oppRaw);
-      if (isNaN(myNum) || isNaN(oppNum)) continue;
+      let delta: number, relDelta: number, winning: boolean | null, deltaStr: string;
 
-      const delta = myNum - oppNum;
-      const maxVal = Math.max(Math.abs(myNum), Math.abs(oppNum), 0.001);
-      const relDelta = Math.abs(delta) / maxVal;
-
-      let winning: boolean | null = null;
-      if (delta !== 0) {
-        winning = cat.betterIs === 'higher' ? delta > 0 : delta < 0;
+      if (cat.stat_id === 50) { // stat_id 50 = Innings Pitched — use outs math
+        ({ delta, relDelta, winning, deltaStr } = formatIPDelta(myRaw, oppRaw));
+      } else {
+        const myNum = parseFloat(myRaw);
+        const oppNum = parseFloat(oppRaw);
+        if (isNaN(myNum) || isNaN(oppNum)) continue;
+        delta = myNum - oppNum;
+        const maxVal = Math.max(Math.abs(myNum), Math.abs(oppNum), 0.001);
+        relDelta = Math.abs(delta) / maxVal;
+        winning = delta !== 0 ? (cat.betterIs === 'higher' ? delta > 0 : delta < 0) : null;
+        deltaStr = formatDelta(delta, cat.name);
       }
 
-      rows.push({
-        label: cat.display_name,
-        delta,
-        relDelta,
-        winning,
-        deltaStr: formatDelta(delta, cat.name),
-      });
+      if (winning === true) wins++;
+      else if (winning === false) losses++;
+      else ties++;
+
+      rows.push({ label: cat.display_name, myVal: myRaw, oppVal: oppRaw, delta, relDelta, winning, deltaStr });
     }
   }
 
@@ -121,10 +156,23 @@ export default function PitchingCard() {
         <p className="text-sm text-muted-foreground">No pitching categories available</p>
       ) : (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            vs. <span className="font-medium text-foreground">{opponent?.name ?? 'Opponent'}</span> — this week
-          </p>
-          <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              vs. <span className="font-medium text-foreground">{opponent?.name ?? 'Opponent'}</span>
+            </p>
+            <span className="text-xs font-bold font-mono tabular-nums">
+              <span className="text-success">{wins}</span>
+              <span className="text-muted-foreground">–</span>
+              <span className="text-error">{losses}</span>
+              {ties > 0 && (
+                <>
+                  <span className="text-muted-foreground">–</span>
+                  <span className="text-muted-foreground">{ties}</span>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="space-y-0.5">
             {rows.map(row => <DivergingRow key={row.label} row={row} maxRel={maxRel} />)}
           </div>
         </div>

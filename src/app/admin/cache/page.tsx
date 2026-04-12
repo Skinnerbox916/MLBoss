@@ -1,278 +1,211 @@
-// Authentication handled by middleware
-import { redisUtils } from '@/lib/redis';
+import { revalidatePath } from 'next/cache';
+import { redis, redisUtils } from '@/lib/redis';
 import AppLayout from '@/components/layout/AppLayout';
 
-// Server actions for cache operations
+// ---------------------------------------------------------------------------
+// Server actions
+// ---------------------------------------------------------------------------
 
-// Clear all fantasy data cache without touching auth (user:* / token:* keys).
-async function clearAllCache() {
+async function clearTier(pattern: string) {
   'use server';
-  try {
-    const keys = await redisUtils.keys('cache:*');
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => redisUtils.del(key)));
-    }
-    console.log(`✅ Cleared ${keys.length} cache keys (auth preserved)`);
-  } catch (error) {
-    console.error('❌ Failed to clear cache:', error);
-    throw error;
+  const keys = await redisUtils.keys(pattern);
+  if (keys.length > 0) {
+    await redis.del(...keys);
   }
+  revalidatePath('/admin/cache');
 }
 
-async function clearStaticCache() {
+async function clearAll() {
   'use server';
-  try {
-    const keys = await redisUtils.keys('cache:static:*');
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => redisUtils.del(key)));
-      console.log(`✅ Cleared ${keys.length} static cache keys`);
-    }
-  } catch (error) {
-    console.error('❌ Failed to clear static cache:', error);
-    throw error;
-  }
+  await clearTier('cache:*');
+}
+async function clearStatic() {
+  'use server';
+  await clearTier('cache:static:*');
+}
+async function clearSemiDynamic() {
+  'use server';
+  await clearTier('cache:semi-dynamic:*');
+}
+async function clearDynamic() {
+  'use server';
+  await clearTier('cache:dynamic:*');
 }
 
-async function clearSemiDynamicCache() {
-  'use server';
-  try {
-    const keys = await redisUtils.keys('cache:semi-dynamic:*');
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => redisUtils.del(key)));
-      console.log(`✅ Cleared ${keys.length} semi-dynamic cache keys`);
-    }
-  } catch (error) {
-    console.error('❌ Failed to clear semi-dynamic cache:', error);
-    throw error;
-  }
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
+
+interface CacheEntry {
+  key: string;
+  shortKey: string;
+  ttl: number;
+  tier: string;
+  sizeBytes: number;
 }
 
-async function clearDynamicCache() {
-  'use server';
-  try {
-    const keys = await redisUtils.keys('cache:dynamic:*');
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => redisUtils.del(key)));
-      console.log(`✅ Cleared ${keys.length} dynamic cache keys`);
-    }
-  } catch (error) {
-    console.error('❌ Failed to clear dynamic cache:', error);
-    throw error;
+async function getCacheEntries(): Promise<CacheEntry[]> {
+  const keys = await redisUtils.keys('cache:*');
+  if (keys.length === 0) return [];
+
+  const pipeline = redis.pipeline();
+  for (const key of keys) {
+    pipeline.ttl(key);
+    pipeline.strlen(key);
   }
+  const results = await pipeline.exec();
+  if (!results) return [];
+
+  return keys.map((key, i) => {
+    const ttl = (results[i * 2]?.[1] as number) ?? -1;
+    const sizeBytes = (results[i * 2 + 1]?.[1] as number) ?? 0;
+    const shortKey = key.replace(/^cache:/, '');
+    const tier = shortKey.startsWith('static:') ? 'static'
+      : shortKey.startsWith('semi-dynamic:') ? 'semi-dynamic'
+      : shortKey.startsWith('dynamic:') ? 'dynamic'
+      : 'other';
+    return { key, shortKey, ttl, tier, sizeBytes };
+  }).sort((a, b) => a.shortKey.localeCompare(b.shortKey));
 }
 
-async function clearUserCache() {
-  'use server';
-  try {
-    const keys = await redisUtils.keys('user:*');
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => redisUtils.del(key)));
-      console.log(`✅ Cleared ${keys.length} user cache keys`);
-    }
-  } catch (error) {
-    console.error('❌ Failed to clear user cache:', error);
-    throw error;
-  }
+function formatTTL(seconds: number): string {
+  if (seconds < 0) return 'no expiry';
+  if (seconds === 0) return 'expiring';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-async function clearAgentCache() {
-  'use server';
-  try {
-    const keys = await redisUtils.keys('cache:*');
-    if (keys.length > 0) {
-      await Promise.all(keys.map(key => redisUtils.del(key)));
-      console.log(`✅ Cleared ${keys.length} agent cache keys`);
-    }
-  } catch (error) {
-    console.error('❌ Failed to clear agent cache:', error);
-    throw error;
-  }
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+const TIER_STYLE: Record<string, { dot: string; label: string; desc: string }> = {
+  static:        { dot: 'bg-blue-500',   label: 'Static',       desc: '24h — player IDs, park data, Savant leaderboards' },
+  'semi-dynamic': { dot: 'bg-amber-500', label: 'Semi-dynamic', desc: '5–60 min — rosters, standings, roster stats' },
+  dynamic:       { dot: 'bg-green-500',  label: 'Dynamic',      desc: '30s–1 min — scoreboards, live matchups' },
+  other:         { dot: 'bg-gray-400',   label: 'Other',        desc: '' },
+};
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default async function CachePage() {
-  // Authentication handled by middleware
+  const entries = await getCacheEntries();
 
-  // Get basic cache stats
-  let cacheStats = {
-    totalKeys: 0,
-    staticKeys: 0,
-    semiDynamicKeys: 0,
-    dynamicKeys: 0,
-    userKeys: 0,
-    memoryInfo: 'Not available'
-  };
-
-  try {
-    const [totalKeys, staticKeys, semiDynamicKeys, dynamicKeys, userKeys, memoryInfo] = await Promise.all([
-      redisUtils.dbsize(),
-      redisUtils.keys('cache:static:*').then(keys => keys.length),
-      redisUtils.keys('cache:semi-dynamic:*').then(keys => keys.length),
-      redisUtils.keys('cache:dynamic:*').then(keys => keys.length),
-      redisUtils.keys('user:*').then(keys => keys.length),
-      redisUtils.memoryInfo().catch(() => 'Not available')
-    ]);
-
-    cacheStats = {
-      totalKeys,
-      staticKeys,
-      semiDynamicKeys,
-      dynamicKeys,
-      userKeys,
-      memoryInfo
-    };
-  } catch (error) {
-    console.error('Failed to get cache stats:', error);
+  const counts = { static: 0, 'semi-dynamic': 0, dynamic: 0, other: 0 };
+  let totalSize = 0;
+  for (const e of entries) {
+    counts[e.tier as keyof typeof counts] = (counts[e.tier as keyof typeof counts] ?? 0) + 1;
+    totalSize += e.sizeBytes;
   }
 
   return (
     <AppLayout>
       <main className="flex-1 overflow-y-auto bg-background">
-        <div className="p-6">
-          <div className="mb-6">
-            <h2 className="text-lg font-medium text-foreground">
-              Redis Cache Management
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              View cache statistics and clear cached data
-            </p>
-          </div>
+        <div className="max-w-7xl mx-auto py-4 px-4 space-y-4">
 
-          {/* Cache Statistics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div className="bg-surface rounded-lg shadow p-4">
-              <div className="text-2xl font-bold text-foreground">
-                {cacheStats.totalKeys}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Total Keys
-              </div>
-            </div>
-
-            <div className="bg-surface rounded-lg shadow p-4">
-              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                {cacheStats.staticKeys}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Static Cache
-              </div>
-            </div>
-
-            <div className="bg-surface rounded-lg shadow p-4">
-              <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-                {cacheStats.semiDynamicKeys}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Semi-Dynamic Cache
-              </div>
-            </div>
-
-            <div className="bg-surface rounded-lg shadow p-4">
-              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                {cacheStats.dynamicKeys}
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Dynamic Cache
-              </div>
-            </div>
-          </div>
-
-          {/* Cache Operations */}
-          <div className="bg-surface rounded-lg shadow p-6">
-            <h3 className="text-lg font-medium text-foreground mb-4">
-              Cache Operations
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Clear All Cache */}
-              <form action={clearAllCache}>
-                <button
-                  type="submit"
-                  className="w-full bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
-                  Clear All Cache
-                </button>
-              </form>
-
-              {/* Clear Static Cache */}
-              <form action={clearStaticCache}>
-                <button
-                  type="submit"
-                  className="w-full bg-primary hover:bg-primary-600 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
-                  Clear Static Cache
-                </button>
-              </form>
-
-              {/* Clear Semi-Dynamic Cache */}
-              <form action={clearSemiDynamicCache}>
-                <button
-                  type="submit"
-                  className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
-                  Clear Semi-Dynamic Cache
-                </button>
-              </form>
-
-              {/* Clear Dynamic Cache */}
-              <form action={clearDynamicCache}>
-                <button
-                  type="submit"
-                  className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
-                  Clear Dynamic Cache
-                </button>
-              </form>
-
-              {/* Clear User Cache */}
-              <form action={clearUserCache}>
-                <button
-                  type="submit"
-                  className="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
-                  Clear User Cache
-                </button>
-              </form>
-
-              {/* Clear Agent Cache */}
-              <form action={clearAgentCache}>
-                <button
-                  type="submit"
-                  className="w-full bg-muted-foreground hover:bg-muted-foreground/80 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                >
-                  Clear Agent Cache
-                </button>
-              </form>
-            </div>
-          </div>
-
-          {/* Additional Stats */}
-          <div className="mt-6 bg-surface rounded-lg shadow p-6">
-            <h3 className="text-lg font-medium text-foreground mb-4">
-              Additional Information
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* ── Summary + Actions ──────────────────────────────── */}
+          <div className="bg-surface rounded-lg border border-border p-4">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <div className="text-sm font-medium text-foreground">
-                  User Keys: {cacheStats.userKeys}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Session and authentication data
-                </div>
+                <h2 className="text-lg font-semibold text-foreground">Cache</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {entries.length} keys &middot; {formatSize(totalSize)} total
+                </p>
               </div>
-              
-              <div>
-                <div className="text-sm font-medium text-foreground">
-                  Memory Info: {typeof cacheStats.memoryInfo === 'string' ? 'Available' : 'Not available'}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Redis memory usage statistics
-                </div>
-              </div>
+              <form action={clearAll}>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 bg-error text-white text-sm rounded hover:bg-error/90"
+                >
+                  Clear all data cache
+                </button>
+              </form>
+            </div>
+
+            {/* Tier cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {(['static', 'semi-dynamic', 'dynamic'] as const).map(tier => {
+                const style = TIER_STYLE[tier];
+                const count = counts[tier];
+                const action = tier === 'static' ? clearStatic
+                  : tier === 'semi-dynamic' ? clearSemiDynamic
+                  : clearDynamic;
+                return (
+                  <div key={tier} className="border border-border rounded-lg p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`inline-block w-2.5 h-2.5 rounded-full ${style.dot}`} />
+                        <span className="text-sm font-semibold text-foreground">{style.label}</span>
+                      </span>
+                      <span className="text-lg font-bold text-foreground">{count}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">{style.desc}</p>
+                    <form action={action} className="mt-auto">
+                      <button
+                        type="submit"
+                        disabled={count === 0}
+                        className="w-full mt-1 px-2 py-1 text-xs rounded border border-border text-foreground hover:bg-surface-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        Clear {style.label.toLowerCase()}
+                      </button>
+                    </form>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {/* ── Key listing ─────────────────────────────────────── */}
+          <div className="bg-surface rounded-lg border border-border p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-2">Cached keys</h3>
+
+            {entries.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">Cache is empty.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-border text-left">
+                      <th className="py-1.5 pr-4 font-medium text-muted-foreground">Key</th>
+                      <th className="py-1.5 pr-4 font-medium text-muted-foreground w-16">TTL</th>
+                      <th className="py-1.5 font-medium text-muted-foreground w-16">Size</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border-muted">
+                    {entries.map(e => {
+                      const style = TIER_STYLE[e.tier] ?? TIER_STYLE.other;
+                      return (
+                        <tr key={e.key}>
+                          <td className="py-1.5 pr-4">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${style.dot}`} />
+                              <span className="text-foreground break-all">{e.shortKey}</span>
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-4 text-muted-foreground whitespace-nowrap">
+                            {formatTTL(e.ttl)}
+                          </td>
+                          <td className="py-1.5 text-muted-foreground whitespace-nowrap">
+                            {formatSize(e.sizeBytes)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
         </div>
       </main>
     </AppLayout>
   );
-} 
+}

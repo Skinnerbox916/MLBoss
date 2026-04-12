@@ -23,6 +23,8 @@ No test framework is configured.
 
 **Dev server ownership:** Any `next dev` process running in this repo was started by Claude. At the start of each session, assume responsibility for it. If the user reports a 500 or the server is in a bad state, kill all Next.js processes by PID and restart — do not ask the user to do it. Use `pgrep -a -f next` to find PIDs, kill them explicitly, then `npm run dev` in the background. Verify it comes up on port 3000 before moving on.
 
+**Cloudflare tunnel ownership:** The tunnel (`cloudflared`) must also be running for the app to be reachable via HTTPS. At the start of each session, check with `pgrep -f cloudflared`. If it's not running, start it with `cloudflared tunnel run mlboss` in the background and wait for "Registered" in the output before moving on. This runs in WSL — it does not survive WSL restarts unless user linger is enabled (see `docs/setup.md`).
+
 **After every `npm run build`:** Kill the server and restart it with `npm run dev`. The build command leaves stale Next.js processes that cause 500s when the tunnel routes to the wrong one.
 
 ## Architecture

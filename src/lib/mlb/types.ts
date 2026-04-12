@@ -41,6 +41,8 @@ export interface ProbablePitcher {
   inningsPitched: number;
   // Tiered quality (null until enriched by getGameDay)
   quality: PitcherQuality | null;
+  /** xERA from Baseball Savant (null when pitcher has too few BIP for Savant to compute) */
+  xera: number | null;
 }
 
 export interface GameWeather {
@@ -64,11 +66,13 @@ export interface MLBGame {
     mlbId: number;
     name: string;
     abbreviation: string;
+    staffEra?: number;
   };
   awayTeam: {
     mlbId: number;
     name: string;
     abbreviation: string;
+    staffEra?: number;
   };
   venue: GameVenue;
   weather: GameWeather;
@@ -135,6 +139,74 @@ export interface MLBPlayerIdentity {
   throws: 'L' | 'R' | 'S';
   primaryPosition: string;
   active: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Lightweight season stats (for roster-level talent baseline)
+// ---------------------------------------------------------------------------
+
+export interface BatterSeasonStats {
+  mlbId: number;
+  ops: number | null;
+  avg: number | null;
+  hr: number;
+  sb: number;
+  pa: number;
+  season: number;
+  /** xwOBA from Baseball Savant (expected wOBA based on batted ball quality) */
+  xwoba: number | null;
+  /** Actual wOBA for luck-delta computation */
+  woba: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Statcast data from Baseball Savant leaderboards
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregated season Statcast metrics for a pitcher, sourced from the Baseball
+ * Savant expected_statistics leaderboard (unofficial endpoint, cached 24 h).
+ *
+ * xERA is the single most valuable field: it strips out luck and team defense
+ * from ERA, stabilising much faster (~50 BIP vs ~200 IP for ERA stabilisation).
+ */
+export interface StatcastPitcher {
+  mlbId: number;
+  /** Expected ERA based on batted-ball quality against */
+  xera: number | null;
+  /** Expected wOBA against */
+  xwoba: number | null;
+  /** Actual ERA (kept for delta / reference) */
+  era: number | null;
+  /** Actual wOBA against */
+  woba: number | null;
+  /** Plate appearances faced — sample size gate */
+  pa: number;
+  /** Balls in play — Savant's own sample gate */
+  bip: number;
+}
+
+/**
+ * Aggregated season Statcast metrics for a batter, sourced from the Baseball
+ * Savant expected_statistics leaderboard (unofficial endpoint, cached 24 h).
+ *
+ * xwOBA is the best single talent-baseline metric: it measures quality of
+ * contact independent of luck on balls in play.
+ */
+export interface StatcastBatter {
+  mlbId: number;
+  /** Expected batting average */
+  xba: number | null;
+  /** Expected slugging */
+  xslg: number | null;
+  /** Expected wOBA — preferred talent baseline over raw OPS */
+  xwoba: number | null;
+  /** Actual wOBA (used to compute luck delta) */
+  woba: number | null;
+  /** Plate appearances */
+  pa: number;
+  /** Balls in play */
+  bip: number;
 }
 
 // ---------------------------------------------------------------------------

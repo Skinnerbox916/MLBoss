@@ -1,43 +1,11 @@
 'use client';
 
+import { useMemo } from 'react';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
-import type { MatchupContext } from '@/lib/mlb/analysis';
+import type { BatterSeasonStats } from '@/lib/mlb/types';
+import { type MatchupContext, getBatterContextScore } from '@/lib/mlb/analysis';
 import PlayerRow from './PlayerRow';
-import type { LineupMode } from './types';
-
-// ---------------------------------------------------------------------------
-// Filter + sort helpers
-// ---------------------------------------------------------------------------
-
-type RowStatus = 'starter' | 'bench' | 'injured';
-
-function getRowStatus(player: RosterEntry): RowStatus {
-  if (player.on_disabled_list || player.status === 'IL' || player.status === 'IL10' || player.status === 'IL60' || player.status === 'DL' || player.status === 'NA') {
-    return 'injured';
-  }
-  if (player.selected_position === 'BN') return 'bench';
-  if (player.selected_position === 'IL' || player.selected_position === 'IL+' || player.selected_position === 'NA') return 'injured';
-  return 'starter';
-}
-
-const STATUS_ORDER: Record<RowStatus, number> = { starter: 0, bench: 1, injured: 2 };
-
-function sortRoster(players: RosterEntry[]): RosterEntry[] {
-  return players.slice().sort((a, b) => STATUS_ORDER[getRowStatus(a)] - STATUS_ORDER[getRowStatus(b)]);
-}
-
-function isPitcher(p: RosterEntry): boolean {
-  // Check eligible positions — covers two-way players and keeps roles stable
-  // across injury designations that temporarily hide display_position.
-  return (
-    p.eligible_positions.includes('P') ||
-    p.eligible_positions.includes('SP') ||
-    p.eligible_positions.includes('RP') ||
-    p.display_position === 'SP' ||
-    p.display_position === 'RP' ||
-    p.display_position === 'P'
-  );
-}
+import { type LineupMode, getRowStatus, isPitcher } from './types';
 
 function filterByMode(players: RosterEntry[], mode: LineupMode): RosterEntry[] {
   return mode === 'pitching' ? players.filter(isPitcher) : players.filter(p => !isPitcher(p));
@@ -47,7 +15,7 @@ function filterByPosition(players: RosterEntry[], position: string | null): Rost
   if (!position) return players;
   if (position === 'BN') return players.filter(p => p.selected_position === 'BN');
   if (position === 'IL') return players.filter(p => p.selected_position === 'IL' || p.selected_position === 'IL+' || p.selected_position === 'NA');
-  if (position === 'UTIL') return players.filter(p => !isPitcher(p));
+  if (position === 'UTIL') return players.filter(p => p.selected_position === 'BN');
   return players.filter(p => p.eligible_positions.includes(position));
 }
 
@@ -62,6 +30,27 @@ interface RosterListProps {
   isLoading: boolean;
   isError: boolean;
   getMatchupContext: (teamAbbr: string) => MatchupContext | null;
+  /** xwOBA-backed OPS equivalent when Savant data is available; raw OPS otherwise */
+  getPlayerTalentOPS: (name: string, team: string) => number | null;
+  /** Full stats record (OPS + xwOBA + wOBA) for display in PlayerRow */
+  getPlayerStats: (name: string, team: string) => BatterSeasonStats | null;
+}
+
+/**
+ * Combine talent baseline with matchup context into a single sortable score.
+ * Talent gets 65% weight — studs stay near the top but a great matchup can
+ * meaningfully reorder bench decisions.
+ *
+ * talentOPS is xwOBA-scaled when Savant data is available, raw OPS otherwise.
+ * Normalised: .600 → 0.0, .900 → 1.0 (clamped).
+ */
+function compositeSort(talentOPS: number | null, contextScore: number): number {
+  const TALENT_W = 0.65;
+  const CONTEXT_W = 0.35;
+  const talentVal = talentOPS !== null
+    ? Math.max(0, Math.min(1, (talentOPS - 0.600) / 0.300))
+    : 0.4;
+  return TALENT_W * talentVal + CONTEXT_W * contextScore;
 }
 
 export default function RosterList({
@@ -71,7 +60,48 @@ export default function RosterList({
   isLoading,
   isError,
   getMatchupContext,
+  getPlayerTalentOPS,
+  getPlayerStats,
 }: RosterListProps) {
+  const { sorted, noGameCount } = useMemo(() => {
+    const scoped = filterByMode(roster, mode);
+    const filtered = filterByPosition(scoped, selectedPosition);
+
+    // Hide non-actionable players: injured (always) and no-game (when not
+    // explicitly filtering to IL/BN). The IL filter intentionally shows
+    // injured players so you can review who's stashed.
+    const showingIL = selectedPosition === 'IL';
+    const withGame: RosterEntry[] = [];
+    let _noGameCount = 0;
+    for (const p of filtered) {
+      const status = getRowStatus(p);
+      if (status === 'injured' && !showingIL) {
+        _noGameCount++;
+        continue;
+      }
+      if (!getMatchupContext(p.editorial_team_abbr) && !showingIL) {
+        _noGameCount++;
+        continue;
+      }
+      withGame.push(p);
+    }
+
+    // Sort by talent-weighted composite — best expected value first.
+    const _sorted = withGame.slice().sort((a, b) => {
+      const scoreA = compositeSort(
+        getPlayerTalentOPS(a.name, a.editorial_team_abbr),
+        getBatterContextScore(getMatchupContext(a.editorial_team_abbr)),
+      );
+      const scoreB = compositeSort(
+        getPlayerTalentOPS(b.name, b.editorial_team_abbr),
+        getBatterContextScore(getMatchupContext(b.editorial_team_abbr)),
+      );
+      return scoreB - scoreA;
+    });
+
+    return { sorted: _sorted, noGameCount: _noGameCount };
+  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerTalentOPS]);
+
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -93,18 +123,17 @@ export default function RosterList({
     return <p className="text-sm text-error py-4 text-center">Failed to load roster</p>;
   }
 
-  const scoped = filterByMode(roster, mode);
-  const filtered = filterByPosition(scoped, selectedPosition);
-  const sorted = sortRoster(filtered);
-
   if (sorted.length === 0) {
+    const scoped = filterByMode(roster, mode);
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">
         {scoped.length === 0
           ? mode === 'pitching'
             ? 'No pitchers on roster'
             : 'No batters on roster'
-          : 'No players for this position'}
+          : noGameCount > 0
+            ? 'No players with games today for this position'
+            : 'No players for this position'}
       </p>
     );
   }
@@ -116,8 +145,14 @@ export default function RosterList({
           key={player.player_key}
           player={player}
           context={getMatchupContext(player.editorial_team_abbr)}
+          seasonStats={getPlayerStats(player.name, player.editorial_team_abbr)}
         />
       ))}
+      {noGameCount > 0 && (
+        <p className="text-xs text-muted-foreground text-center pt-2">
+          {noGameCount} player{noGameCount !== 1 ? 's' : ''} not shown (no game today)
+        </p>
+      )}
     </div>
   );
 }

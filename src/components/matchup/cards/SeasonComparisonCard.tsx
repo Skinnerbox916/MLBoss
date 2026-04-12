@@ -33,6 +33,14 @@ function formatDelta(delta: number, name: string): string {
   return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(3));
 }
 
+function parseIPToOuts(ip: string): number {
+  const val = parseFloat(ip);
+  if (isNaN(val)) return 0;
+  const innings = Math.floor(val);
+  const rem = Math.round((val - innings) * 10);
+  return innings * 3 + Math.min(rem, 2);
+}
+
 function buildRows(
   cats: EnrichedLeagueStatCategory[],
   myMap: Map<number, string>,
@@ -42,6 +50,23 @@ function buildRows(
     const myRaw = myMap.get(cat.stat_id);
     const oppRaw = oppMap.get(cat.stat_id);
     if (myRaw === undefined || oppRaw === undefined) return [];
+
+    if (cat.stat_id === 50) { // Innings Pitched — outs math
+      const myOuts = parseIPToOuts(myRaw);
+      const oppOuts = parseIPToOuts(oppRaw);
+      const outsDelta = myOuts - oppOuts;
+      const maxOuts = Math.max(Math.abs(myOuts), Math.abs(oppOuts), 1);
+      const sign = outsDelta > 0 ? '+' : outsDelta < 0 ? '-' : '';
+      const absOuts = Math.abs(outsDelta);
+      const deltaStr = outsDelta === 0 ? '0' : `${sign}${Math.floor(absOuts / 3)}.${absOuts % 3}`;
+      return [{
+        label: cat.display_name,
+        delta: outsDelta,
+        relDelta: Math.abs(outsDelta) / maxOuts,
+        winning: outsDelta !== 0 ? outsDelta > 0 : null,
+        deltaStr,
+      }];
+    }
 
     const myNum = parseFloat(myRaw);
     const oppNum = parseFloat(oppRaw);

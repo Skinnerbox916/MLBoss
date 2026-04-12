@@ -5,12 +5,13 @@ import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
+import { useRosterStats } from '@/lib/hooks/useRosterStats';
 import { resolveMatchup, type MatchupContext } from '@/lib/mlb/analysis';
 import DatePicker from './DatePicker';
 import PositionFilter from './PositionFilter';
 import RosterList from './RosterList';
 import LineupGrid from './LineupGrid';
-import type { LineupMode } from './types';
+import { type LineupMode, isPitcher } from './types';
 
 function todayStr(): string {
   const d = new Date();
@@ -37,6 +38,9 @@ export default function LineupManager({ mode = 'batting' }: LineupManagerProps) 
 
   // MLB schedule for the selected date — one call for the whole page
   const { games, isLoading: gamesLoading, isError: gamesError } = useGameDay(selectedDate);
+
+  // Batch-fetch season stats for all roster players — drives talent-aware sorting
+  const { getPlayerStats, getPlayerTalentOPS } = useRosterStats(roster);
 
   // Build a lookup: team abbr → MatchupContext. Memoized so row renders don't rebuild it.
   const matchupIndex = useMemo(() => {
@@ -100,7 +104,14 @@ export default function LineupManager({ mode = 'batting' }: LineupManagerProps) 
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 {gamesLoading && <span>Loading games...</span>}
                 {gamesError && <span className="text-error">Game data unavailable</span>}
-                {!isLoading && <span>{roster.length} on roster</span>}
+                {!isLoading && (
+                  <span>
+                    {mode === 'batting'
+                      ? roster.filter(p => !isPitcher(p)).length
+                      : roster.filter(isPitcher).length}{' '}
+                    on roster
+                  </span>
+                )}
               </div>
             </div>
             <RosterList
@@ -110,6 +121,8 @@ export default function LineupManager({ mode = 'batting' }: LineupManagerProps) 
               isLoading={isLoading}
               isError={isError}
               getMatchupContext={getMatchupContext}
+              getPlayerTalentOPS={getPlayerTalentOPS}
+              getPlayerStats={getPlayerStats}
             />
           </div>
 

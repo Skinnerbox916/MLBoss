@@ -53,4 +53,4 @@ export {
 
 export { getLeagueTransactions } from './transactions';
 
-export { getAvailablePitchers, getTopAvailableBatters } from './players';
+export { getAvailablePitchers, getTopAvailableBatters, getAvailableBatters } from './players';

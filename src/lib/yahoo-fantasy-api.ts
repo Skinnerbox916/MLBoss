@@ -169,6 +169,10 @@ export interface RosterEntry {
    * Defaults to true when Yahoo omits the flag.
    */
   is_editable: boolean;
+  /** Yahoo-reported starting status: 'S' (starting), 'NS' (not starting), or undefined when unknown/no game. */
+  starting_status?: string;
+  /** Batting order position (1-9) from Yahoo, or null when not in lineup / not yet posted. */
+  batting_order: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1283,6 +1287,8 @@ export class YahooFantasyAPI {
       // started and their slot is locked for the day.
       let selectedPosition: string | undefined;
       let isEditable: boolean | undefined;
+      let startingStatus: string | undefined;
+      let battingOrder: number | null = null;
       const toBool = (v: unknown): boolean | undefined => {
         if (v === 0 || v === '0') return false;
         if (v === 1 || v === '1') return true;
@@ -1301,6 +1307,22 @@ export class YahooFantasyAPI {
 
         if ('is_editable' in el) {
           isEditable = toBool((el as any).is_editable);
+        }
+
+        if ('starting_status' in el) {
+          const ss = (el as any).starting_status;
+          if (Array.isArray(ss)) {
+            const entry = ss.find((x: any) => x && 'is_starting' in x);
+            if (entry) startingStatus = entry.is_starting === 1 || entry.is_starting === '1' ? 'S' : 'NS';
+          }
+        }
+
+        if ('batting_order' in el) {
+          const bo = (el as any).batting_order;
+          if (Array.isArray(bo)) {
+            const entry = bo.find((x: any) => x && 'order_num' in x);
+            if (entry) battingOrder = parseInt(entry.order_num, 10) || null;
+          }
         }
       }
 
@@ -1330,10 +1352,82 @@ export class YahooFantasyAPI {
         on_disabled_list: playerProps.on_disabled_list === 1,
         uniform_number: playerProps.uniform_number ?? undefined,
         is_editable: isEditable ?? true,
+        starting_status: startingStatus,
+        batting_order: battingOrder,
       });
     }
 
     return roster;
+  }
+
+  /**
+   * Debug: return the raw Yahoo player array structure for the first N players.
+   * Used to inspect what fields Yahoo actually sends.
+   */
+  async getTeamRosterRaw(teamKey: string, options?: { date?: string; limit?: number }): Promise<any[]> {
+    let param = '';
+    if (options?.date) param = `;date=${options.date}`;
+
+    const endpoint = `/team/${teamKey}/roster${param}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+    const teamArray = response.fantasy_content?.team;
+    if (!Array.isArray(teamArray)) return [];
+
+    let playersData: any = null;
+    for (const el of teamArray) {
+      if (typeof el === 'object' && el && 'roster' in el) {
+        playersData = el.roster?.['0']?.players ?? el.roster?.players;
+        break;
+      }
+    }
+    if (!playersData) return [];
+
+    const limit = options?.limit ?? 3;
+    const result: any[] = [];
+    for (const [key, pContainer] of Object.entries(playersData)) {
+      if (key === 'count') continue;
+      if (result.length >= limit) break;
+      if (typeof pContainer !== 'object' || !pContainer || !('player' in pContainer)) continue;
+      const playerArray = (pContainer as any).player;
+      if (!Array.isArray(playerArray)) continue;
+
+      // For each element in the player array, summarize its structure
+      const elements: any[] = [];
+      for (let i = 0; i < playerArray.length; i++) {
+        const el = playerArray[i];
+        if (Array.isArray(el)) {
+          // Props block — show keys of each sub-object
+          elements.push({
+            index: i,
+            type: 'props_array',
+            keys: el.map((sub: any) =>
+              typeof sub === 'object' && sub ? Object.keys(sub) : typeof sub
+            ),
+          });
+        } else if (typeof el === 'object' && el) {
+          elements.push({ index: i, type: 'object', content: el });
+        } else {
+          elements.push({ index: i, type: typeof el, value: el });
+        }
+      }
+
+      // Get the name from props
+      const props: any = {};
+      if (Array.isArray(playerArray[0])) {
+        for (const p of playerArray[0]) {
+          if (typeof p === 'object' && p) Object.assign(props, p);
+        }
+      }
+
+      result.push({
+        player_key: key,
+        name: props.name?.full ?? `${props.name?.first ?? ''} ${props.name?.last ?? ''}`.trim(),
+        element_count: playerArray.length,
+        elements,
+      });
+    }
+    return result;
   }
 
   /**

@@ -2,9 +2,10 @@ import useSWR from 'swr';
 import { fetcher } from './fetcher';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 
-export function useAvailableBatters(leagueKey: string | undefined) {
+export function useAvailableBatters(leagueKey: string | undefined, extended?: boolean) {
+  const countParam = extended ? '&count=extended' : '';
   const { data, error, isLoading } = useSWR(
-    leagueKey ? `/api/fantasy/players?leagueKey=${leagueKey}&position=B` : null,
+    leagueKey ? `/api/fantasy/players?leagueKey=${leagueKey}&position=B${countParam}` : null,
     fetcher,
     { revalidateOnFocus: false },
   );

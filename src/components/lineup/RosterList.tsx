@@ -15,7 +15,7 @@ function filterByPosition(players: RosterEntry[], position: string | null): Rost
   if (!position) return players;
   if (position === 'BN') return players.filter(p => p.selected_position === 'BN');
   if (position === 'IL') return players.filter(p => p.selected_position === 'IL' || p.selected_position === 'IL+' || p.selected_position === 'NA');
-  if (position === 'UTIL') return players.filter(p => p.selected_position === 'BN');
+  if (position === 'UTIL') return players.filter(p => p.selected_position === 'BN' || p.selected_position.toUpperCase() === 'UTIL');
   return players.filter(p => p.eligible_positions.includes(position));
 }
 

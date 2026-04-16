@@ -50,3 +50,18 @@ export async function getTopAvailableBatters(userId: string, leagueKey: string):
     },
   );
 }
+
+/**
+ * Get a larger pool of available batters for the roster optimizer.
+ * Fetches up to 50 batters sorted by Yahoo's relevance ranking.
+ */
+export async function getAvailableBatters(userId: string, leagueKey: string): Promise<FreeAgentPlayer[]> {
+  return withCache(
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:fa-batters-full:${leagueKey}`,
+    CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
+    async () => {
+      const api = new YahooFantasyAPI(userId);
+      return api.getLeaguePlayers(leagueKey, { position: 'B', status: 'A', maxPages: 2, count: 25 });
+    },
+  );
+}

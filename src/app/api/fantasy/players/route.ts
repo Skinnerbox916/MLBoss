@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/session';
-import { getAvailablePitchers, getTopAvailableBatters } from '@/lib/fantasy';
+import { getAvailablePitchers, getTopAvailableBatters, getAvailableBatters } from '@/lib/fantasy';
 
 /**
  * GET /api/fantasy/players?leagueKey=458.l.123456&position=P|B
@@ -26,7 +26,10 @@ export async function GET(request: Request) {
     }
 
     if (position === 'B') {
-      const players = await getTopAvailableBatters(user.id, leagueKey);
+      const extended = searchParams.get('count') === 'extended';
+      const players = extended
+        ? await getAvailableBatters(user.id, leagueKey)
+        : await getTopAvailableBatters(user.id, leagueKey);
       return NextResponse.json({ league_key: leagueKey, position, players });
     }
 

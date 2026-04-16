@@ -7,6 +7,7 @@ import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useTeamStats } from '@/lib/hooks/useTeamStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
+import { parseIPToOuts } from '@/lib/utils';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 
 // ---------------------------------------------------------------------------
@@ -31,14 +32,6 @@ function formatDelta(delta: number, name: string): string {
   if (name === 'ERA' || name === 'WHIP') return sign + delta.toFixed(2);
   if (name === 'IP') return sign + delta.toFixed(1);
   return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(3));
-}
-
-function parseIPToOuts(ip: string): number {
-  const val = parseFloat(ip);
-  if (isNaN(val)) return 0;
-  const innings = Math.floor(val);
-  const rem = Math.round((val - innings) * 10);
-  return innings * 3 + Math.min(rem, 2);
 }
 
 function buildRows(

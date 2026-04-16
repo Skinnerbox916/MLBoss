@@ -1,6 +1,7 @@
 'use client';
 
-import type { BatterSplits, SplitLine } from '@/lib/mlb/types';
+import type { SplitLine } from '@/lib/mlb/types';
+import type { BatterMatchupScore, BatterMatchupFactor } from '@/lib/mlb/analysis';
 
 function fmt(value: number | null, digits: number = 3): string {
   if (value === null) return '—';
@@ -12,118 +13,129 @@ function fmtInt(value: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Split comparison row — shows two split lines side by side with the winner highlighted
+// Overall score header
 // ---------------------------------------------------------------------------
 
-function ComparisonCell({
-  split,
-  label,
-  isBetter,
-  isWorse,
-}: {
-  split: SplitLine | null;
-  label: string;
-  isBetter: boolean;
-  isWorse: boolean;
-}) {
-  const bgClass = isBetter ? 'bg-success/10 border-success/30' : isWorse ? 'bg-error/10 border-error/30' : 'bg-surface-muted border-border-muted';
-  return (
-    <div className={`flex-1 border rounded p-2 ${bgClass}`}>
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{label}</p>
-      {split ? (
-        <div className="mt-1 space-y-0.5">
-          <div className="flex items-baseline gap-2">
-            <span className="text-sm font-bold text-foreground">{fmt(split.avg)}</span>
-            <span className="text-xs text-muted-foreground">AVG</span>
-          </div>
-          <div className="text-[11px] text-muted-foreground font-mono">
-            {fmt(split.obp)}/{fmt(split.slg)} ({fmt(split.ops)} OPS)
-          </div>
-          <div className="text-[11px] text-muted-foreground">
-            {fmtInt(split.homeRuns)} HR, {fmtInt(split.rbi)} RBI in {fmtInt(split.plateAppearances)} PA
-          </div>
-        </div>
-      ) : (
-        <p className="mt-1 text-[11px] text-muted-foreground">No data</p>
-      )}
-    </div>
-  );
+function tierStyle(tier: BatterMatchupScore['tier']): { label: string; text: string; bg: string } {
+  switch (tier) {
+    case 'great':   return { label: 'Great',   text: 'text-success',           bg: 'bg-success/15' };
+    case 'good':    return { label: 'Good',    text: 'text-success',           bg: 'bg-success/10' };
+    case 'neutral': return { label: 'Neutral', text: 'text-muted-foreground',  bg: 'bg-surface-muted' };
+    case 'poor':    return { label: 'Poor',    text: 'text-error',             bg: 'bg-error/10' };
+    case 'bad':     return { label: 'Bad',     text: 'text-error',             bg: 'bg-error/15' };
+  }
 }
 
-function pickBetter(a: SplitLine | null, b: SplitLine | null): 'a' | 'b' | null {
-  if (!a || !b || a.ops === null || b.ops === null) return null;
-  if (Math.abs(a.ops - b.ops) < 0.03) return null;
-  return a.ops > b.ops ? 'a' : 'b';
+function driverSentence(factors: BatterMatchupFactor[]): string {
+  // Pick the factor with the largest |normalized − 0.5| × weight on each side.
+  let topUp: { f: BatterMatchupFactor; contrib: number } | null = null;
+  let topDown: { f: BatterMatchupFactor; contrib: number } | null = null;
+  for (const f of factors) {
+    if (!f.available) continue;
+    const contrib = (f.normalized - 0.5) * f.weight;
+    if (contrib > 0 && (!topUp || contrib > topUp.contrib)) topUp = { f, contrib };
+    if (contrib < 0 && (!topDown || contrib < topDown.contrib)) topDown = { f, contrib };
+  }
+  const parts: string[] = [];
+  if (topUp) parts.push(`${topUp.f.summary.toLowerCase()} drives this up`);
+  if (topDown) parts.push(`${topDown.f.summary.toLowerCase()} pulls it down`);
+  if (parts.length === 0) return 'All factors close to neutral.';
+  return parts.join('; ') + '.';
 }
 
-function ComparisonPair({
-  label,
-  leftLabel,
-  leftSplit,
-  rightLabel,
-  rightSplit,
-}: {
-  label: string;
-  leftLabel: string;
-  leftSplit: SplitLine | null;
-  rightLabel: string;
-  rightSplit: SplitLine | null;
-}) {
-  const better = pickBetter(leftSplit, rightSplit);
-
+function RatingHeader({ score }: { score: BatterMatchupScore }) {
+  const style = tierStyle(score.tier);
   return (
-    <div>
-      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">{label}</p>
-      <div className="flex gap-2">
-        <ComparisonCell
-          split={leftSplit}
-          label={leftLabel}
-          isBetter={better === 'a'}
-          isWorse={better === 'b'}
-        />
-        <ComparisonCell
-          split={rightSplit}
-          label={rightLabel}
-          isBetter={better === 'b'}
-          isWorse={better === 'a'}
-        />
+    <div className="flex items-start gap-3 pb-2 border-b border-border-muted">
+      <div className={`flex flex-col items-center justify-center rounded-lg px-3 py-1.5 ${style.bg}`}>
+        <span className={`text-lg font-bold font-mono ${style.text}`}>
+          {(score.score * 100).toFixed(0)}
+        </span>
+        <span className={`text-[10px] uppercase tracking-wide font-semibold ${style.text}`}>
+          {style.label}
+        </span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
+          Matchup rating
+        </p>
+        <p className="text-xs text-foreground/80 mt-0.5 leading-snug">
+          {driverSentence(score.factors)}
+        </p>
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Recent form trend (L7 / L14 / L30)
+// Factor row — one per contributor to the composite score
 // ---------------------------------------------------------------------------
 
-function TrendRow({ label, split }: { label: string; split: SplitLine | null }) {
+function favorabilityColor(normalized: number, available: boolean): { fill: string; track: string; text: string } {
+  if (!available) {
+    return { fill: 'bg-border', track: 'bg-border-muted/30', text: 'text-muted-foreground' };
+  }
+  if (normalized >= 0.70) return { fill: 'bg-success',     track: 'bg-success/10',      text: 'text-success' };
+  if (normalized >= 0.55) return { fill: 'bg-success/70',  track: 'bg-success/10',      text: 'text-success' };
+  if (normalized <= 0.30) return { fill: 'bg-error',       track: 'bg-error/10',        text: 'text-error' };
+  if (normalized <= 0.45) return { fill: 'bg-error/70',    track: 'bg-error/10',        text: 'text-error' };
+  return { fill: 'bg-muted-foreground/60', track: 'bg-surface-muted', text: 'text-muted-foreground' };
+}
+
+function FactorRow({ factor }: { factor: BatterMatchupFactor }) {
+  const c = favorabilityColor(factor.normalized, factor.available);
+  const pct = Math.max(2, factor.normalized * 100);
+  const weightPct = Math.round(factor.weight * 100);
   return (
-    <div className="flex items-center justify-between text-xs py-1 border-b border-border-muted last:border-b-0">
-      <span className="text-muted-foreground font-medium w-8">{label}</span>
-      {split ? (
-        <div className="flex items-center gap-3 font-mono text-foreground">
-          <span className="font-bold">{fmt(split.avg)}</span>
-          <span className="text-muted-foreground">
-            {fmtInt(split.homeRuns)} HR / {fmtInt(split.rbi)} RBI
+    <div className="grid grid-cols-[7rem_1fr_2.5rem] gap-2 items-center py-1">
+      {/* Label */}
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold text-foreground truncate">{factor.label}</p>
+        <p className={`text-[10px] ${c.text} truncate`} title={factor.summary}>
+          {factor.summary}
+        </p>
+      </div>
+
+      {/* Bar + value */}
+      <div className="min-w-0">
+        <div className="flex items-baseline justify-between gap-2 mb-1">
+          <span className="text-[11px] font-mono text-foreground truncate">
+            {factor.display}
           </span>
-          <span className="text-muted-foreground">{fmtInt(split.plateAppearances)} PA</span>
+          {/* Neutral baseline tick */}
+          <span className="text-[9px] text-muted-foreground/60 font-mono">
+            {Math.round(factor.normalized * 100)}
+          </span>
         </div>
-      ) : (
-        <span className="text-muted-foreground text-[11px]">No data</span>
-      )}
+        <div className={`h-1.5 rounded-full relative overflow-hidden ${c.track}`}>
+          <div
+            className={`h-full ${c.fill} rounded-full transition-all`}
+            style={{ width: `${pct}%` }}
+          />
+          {/* 50% baseline indicator */}
+          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-border" />
+        </div>
+      </div>
+
+      {/* Weight badge */}
+      <div className="text-right">
+        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-surface-muted text-muted-foreground">
+          {weightPct}%
+        </span>
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Career vs opposing pitcher
+// Career vs opposing pitcher — kept from old panel since it IS predictive
 // ---------------------------------------------------------------------------
 
-function CareerVsPitcherRow({ split, pitcherName }: { split: SplitLine | null; pitcherName: string }) {
-  if (!split) {
+function CareerVsPitcherBlock({ split, pitcherName }: { split: SplitLine | null; pitcherName: string }) {
+  if (!split || split.plateAppearances === 0) {
     return (
       <div className="text-[11px] text-muted-foreground italic">
-        No meaningful history vs {pitcherName} (&lt; 5 PA)
+        No history vs {pitcherName}
       </div>
     );
   }
@@ -132,8 +144,11 @@ function CareerVsPitcherRow({ split, pitcherName }: { split: SplitLine | null; p
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-1">
         Career vs {pitcherName}
       </p>
-      <div className="flex items-baseline gap-3 text-sm">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
         <span className="font-bold text-foreground">{fmt(split.avg)}</span>
+        <span className="text-muted-foreground font-mono text-xs">
+          {fmt(split.obp)}/{fmt(split.slg)}
+        </span>
         <span className="text-muted-foreground font-mono text-xs">
           {fmtInt(split.hits)}-for-{fmtInt(split.atBats)}
         </span>
@@ -153,7 +168,7 @@ function CareerVsPitcherRow({ split, pitcherName }: { split: SplitLine | null; p
 // ---------------------------------------------------------------------------
 
 interface PlayerSplitsPanelProps {
-  splits: BatterSplits | null;
+  matchupScore: BatterMatchupScore | null;
   careerVsPitcher: SplitLine | null;
   opposingPitcherName?: string;
   isLoading: boolean;
@@ -161,7 +176,7 @@ interface PlayerSplitsPanelProps {
 }
 
 export default function PlayerSplitsPanel({
-  splits,
+  matchupScore,
   careerVsPitcher,
   opposingPitcherName,
   isLoading,
@@ -170,13 +185,12 @@ export default function PlayerSplitsPanel({
   if (isLoading) {
     return (
       <div className="animate-pulse space-y-3 p-3">
-        <div className="h-4 bg-border-muted rounded w-24" />
-        <div className="flex gap-2">
-          <div className="flex-1 h-16 bg-border-muted rounded" />
-          <div className="flex-1 h-16 bg-border-muted rounded" />
+        <div className="h-10 bg-border-muted rounded" />
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-6 bg-border-muted rounded" />
+          ))}
         </div>
-        <div className="h-4 bg-border-muted rounded w-24" />
-        <div className="h-20 bg-border-muted rounded" />
       </div>
     );
   }
@@ -189,47 +203,32 @@ export default function PlayerSplitsPanel({
     );
   }
 
-  if (!splits) {
+  if (!matchupScore || matchupScore.factors.length === 0) {
     return (
       <div className="p-3">
-        <p className="text-xs text-muted-foreground">No splits data available</p>
+        <p className="text-xs text-muted-foreground">No matchup data available</p>
       </div>
     );
   }
 
   return (
     <div className="p-3 space-y-3 bg-surface-muted/30 border-t border-border-muted">
-      <ComparisonPair
-        label="Pitcher Handedness"
-        leftLabel="vs LHP"
-        leftSplit={splits.vsLeft}
-        rightLabel="vs RHP"
-        rightSplit={splits.vsRight}
-      />
-      <ComparisonPair
-        label="Day / Night"
-        leftLabel="Day"
-        leftSplit={splits.day}
-        rightLabel="Night"
-        rightSplit={splits.night}
-      />
+      <RatingHeader score={matchupScore} />
 
-      {/* Recent form */}
       <div>
-        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-          Recent Form
+        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+          Rating breakdown
         </p>
-        <div className="bg-surface-muted border border-border-muted rounded px-3">
-          <TrendRow label="L7" split={splits.last7} />
-          <TrendRow label="L14" split={splits.last14} />
-          <TrendRow label="L30" split={splits.last30} />
+        <div className="divide-y divide-border-muted/60">
+          {matchupScore.factors.map(f => (
+            <FactorRow key={f.key} factor={f} />
+          ))}
         </div>
       </div>
 
-      {/* Career vs today's pitcher */}
       {opposingPitcherName && (
         <div>
-          <CareerVsPitcherRow split={careerVsPitcher} pitcherName={opposingPitcherName} />
+          <CareerVsPitcherBlock split={careerVsPitcher} pitcherName={opposingPitcherName} />
         </div>
       )}
     </div>

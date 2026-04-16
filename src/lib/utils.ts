@@ -17,4 +17,16 @@ import clsx, { type ClassValue } from 'clsx';
  */
 export function cn(...classes: ClassValue[]) {
   return clsx(classes);
-} 
+}
+
+// Baseball IP is stored in "thirds" notation: "58.1" = 58⅓ innings, "58.2" = 58⅔.
+// parseFloat gives nonsense for arithmetic (58.1 - 34.2 = 23.9... but .toFixed gives 23.9).
+// Yahoo sometimes returns decimal fractions like "34.1125" for partial IP, so we normalize
+// via outs to get correct math. Both MLB Stats API and Yahoo use the same thirds convention.
+export function parseIPToOuts(ip: string): number {
+  const val = parseFloat(ip);
+  if (isNaN(val)) return 0;
+  const innings = Math.floor(val);
+  const rem = Math.round((val - innings) * 10);
+  return innings * 3 + Math.min(rem, 2);
+}

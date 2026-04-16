@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { RosterPositionSlot } from '@/lib/hooks/useRosterPositions';
+import { optimizeLineup } from '@/lib/lineup/optimize';
 import type { LineupMode } from './types';
 
 function isPitcher(p: RosterEntry): boolean {
@@ -197,6 +198,7 @@ interface LineupGridProps {
   date: string;
   rosterPositions?: RosterPositionSlot[];
   onSaved?: () => void;
+  getPlayerScore?: (player: RosterEntry) => number;
 }
 
 export default function LineupGrid({
@@ -207,6 +209,7 @@ export default function LineupGrid({
   date,
   rosterPositions,
   onSaved,
+  getPlayerScore,
 }: LineupGridProps) {
   const slots = useMemo(
     () => buildSlots(mode, rosterPositions && rosterPositions.length > 0 ? rosterPositions : FALLBACK_POSITIONS),
@@ -302,6 +305,17 @@ export default function LineupGrid({
     setSelectedKey(null);
     setError(null);
   }, []);
+
+  const handleOptimize = useCallback(() => {
+    if (!getPlayerScore || mode !== 'batting') return;
+    const slotDefs = slots.map(s => ({ position: s.position, group: s.group }));
+    const newOverrides = optimizeLineup(slotDefs, roster, getPlayerScore);
+    if (newOverrides.size > 0) {
+      setOverrides(newOverrides);
+      setSelectedKey(null);
+      setError(null);
+    }
+  }, [getPlayerScore, mode, slots, roster]);
 
   const handleSave = useCallback(async () => {
     if (!teamKey || !dirty) return;
@@ -404,6 +418,16 @@ export default function LineupGrid({
       {editable && (
         <div className="pt-2 border-t border-border-muted space-y-2">
           {error && <p className="text-xs text-error">{error}</p>}
+          {mode === 'batting' && getPlayerScore && (
+            <button
+              type="button"
+              onClick={handleOptimize}
+              disabled={saving}
+              className="w-full px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
+            >
+              Optimize Lineup
+            </button>
+          )}
           <div className="flex items-center gap-2">
             <button
               type="button"

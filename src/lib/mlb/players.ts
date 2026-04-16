@@ -1,6 +1,7 @@
 import { mlbFetchSplits, mlbFetchIdentity } from './client';
 import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import { fetchStatcastPitchers, fetchStatcastBatters } from './savant';
+import { parseIPToOuts } from '@/lib/utils';
 import type { BatterSeasonStats, BatterSplits, MLBPlayerIdentity, PitcherQuality, PitcherTier, SplitLine } from './types';
 
 // ---------------------------------------------------------------------------
@@ -15,6 +16,7 @@ interface RawStat {
   homeRuns?: number;
   doubles?: number;
   triples?: number;
+  runs?: number;
   rbi?: number;
   stolenBases?: number;
   strikeOuts?: number;
@@ -31,6 +33,9 @@ interface RawStat {
   pitchesPerInning?: string;
   wins?: number;
   losses?: number;
+  groundOuts?: number;
+  airOuts?: number;
+  earnedRuns?: number;
 }
 
 interface RawSplit {
@@ -91,6 +96,7 @@ function parseSplitLine(raw: RawStat): SplitLine {
     slg: n(raw.slg),
     ops: n(raw.ops),
     homeRuns: raw.homeRuns ?? 0,
+    runs: raw.runs ?? 0,
     rbi: raw.rbi ?? 0,
     stolenBases: raw.stolenBases ?? 0,
     strikeouts: raw.strikeOuts ?? 0,
@@ -260,7 +266,7 @@ function aggregateLastN(gameLog: RawSplit[], n: number): SplitLine | null {
   const recent = gameLog.slice(-n);
   if (recent.length === 0) return null;
 
-  let atBats = 0, hits = 0, homeRuns = 0, rbi = 0, stolenBases = 0;
+  let atBats = 0, hits = 0, homeRuns = 0, runs = 0, rbi = 0, stolenBases = 0;
   let strikeouts = 0, walks = 0, plateAppearances = 0;
   let totalBases = 0;
 
@@ -269,6 +275,7 @@ function aggregateLastN(gameLog: RawSplit[], n: number): SplitLine | null {
     atBats += s.atBats ?? 0;
     hits += s.hits ?? 0;
     homeRuns += s.homeRuns ?? 0;
+    runs += s.runs ?? 0;
     rbi += s.rbi ?? 0;
     stolenBases += s.stolenBases ?? 0;
     strikeouts += s.strikeOuts ?? 0;
@@ -298,6 +305,7 @@ function aggregateLastN(gameLog: RawSplit[], n: number): SplitLine | null {
     slg,
     ops,
     homeRuns,
+    runs,
     rbi,
     stolenBases,
     strikeouts,
@@ -414,6 +422,8 @@ export interface PitcherSeasonLine {
   inningsPerStart: number | null;
   wins: number;
   losses: number;
+  bb9: number | null;
+  gbRate: number | null;
 }
 
 /** Parse a pitching season line from the MLB Stats API. */
@@ -424,7 +434,11 @@ function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
     return isNaN(f) ? null : f;
   };
   const ip = n(raw.inningsPitched) ?? 0;
+  const outs = parseIPToOuts(raw.inningsPitched ?? '0');
   const gs = raw.gamesStarted ?? null;
+  const bb = raw.baseOnBalls ?? 0;
+  const go = raw.groundOuts ?? 0;
+  const ao = raw.airOuts ?? 0;
   return {
     era: n(raw.era),
     whip: n(raw.whip),
@@ -433,9 +447,11 @@ function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
     strikeOuts: raw.strikeOuts ?? null,
     gamesStarted: gs,
     pitchesPerInning: n(raw.pitchesPerInning),
-    inningsPerStart: gs && gs > 0 ? Math.round((ip / gs) * 100) / 100 : null,
+    inningsPerStart: gs && gs > 0 ? Math.round((outs / gs / 3) * 100) / 100 : null,
     wins: raw.wins ?? 0,
     losses: raw.losses ?? 0,
+    bb9: ip > 0 ? Math.round((bb / ip * 9) * 100) / 100 : null,
+    gbRate: (go + ao) > 0 ? Math.round((go / (go + ao)) * 1000) / 1000 : null,
   };
 }
 
@@ -482,26 +498,34 @@ function classifyPitcherTier(
 }
 
 /**
- * Fetch a single season of pitching stats for a pitcher.
- * Returns null on API failure.
+ * Fetch a single season of pitching stats for a pitcher, filtered to the
+ * "as starter" split so IP/ERA/WHIP reflect starter-only performance.
+ *
+ * Using `stats=season` would aggregate starts + relief appearances, which
+ * inflates IP/GS for swingmen/bulk guys (e.g. Burke 2026: 2 GS + 1 bulk
+ * relief = 15 IP total, giving a nonsense 7.5 IP/GS). The `sp` sitCode
+ * returns the same shape filtered to starts only.
+ *
+ * Returns null on API failure or when the pitcher has no starts in the season.
  */
 async function fetchPitcherSeasonLine(
   mlbId: number,
   season: number,
 ): Promise<PitcherSeasonLine | null> {
   const params = new URLSearchParams({
-    stats: 'season',
+    stats: 'statSplits',
     group: 'pitching',
+    sitCodes: 'sp',
     season: String(season),
     gameType: 'R',
   });
   const path = `/people/${mlbId}/stats?${params.toString()}`;
 
   try {
-    const raw = await mlbFetchSplits<RawStatsResponse>(path, `pitching:${mlbId}:${season}`);
-    const group = findGroup(raw, 'season');
-    const first = group[0];
-    return first ? parsePitchingLine(first.stat) : null;
+    const raw = await mlbFetchSplits<RawStatsResponse>(path, `pitching-sp:${mlbId}:${season}`);
+    const group = findGroup(raw, 'statSplits');
+    const sp = group.find(s => s.split?.code === 'sp');
+    return sp ? parsePitchingLine(sp.stat) : null;
   } catch (err) {
     console.error(`fetchPitcherSeasonLine(${mlbId}, ${season}) failed:`, err);
     return null;
@@ -584,6 +608,85 @@ export async function fetchPitcherFullLine(
   if (current && current.ip > 0) return current;
   const prior = await fetchPitcherSeasonLine(mlbId, season - 1);
   return prior && prior.ip > 0 ? prior : null;
+}
+
+// ---------------------------------------------------------------------------
+// Pitcher platoon splits + recent form
+// ---------------------------------------------------------------------------
+
+export interface PitcherPlatoonSplits {
+  vsLeft: { ops: number | null } | null;
+  vsRight: { ops: number | null } | null;
+}
+
+export async function fetchPitcherPlatoonSplits(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<PitcherPlatoonSplits | null> {
+  const params = new URLSearchParams({
+    stats: 'statSplits',
+    group: 'pitching',
+    season: String(season),
+    sitCodes: 'vl,vr',
+    gameType: 'R',
+  });
+  const path = `/people/${mlbId}/stats?${params.toString()}`;
+
+  try {
+    const raw = await mlbFetchSplits<RawStatsResponse>(path, `pitcher-platoon:${mlbId}:${season}`);
+    const splits = findGroup(raw, 'statSplits');
+
+    let vsLeft: { ops: number | null } | null = null;
+    let vsRight: { ops: number | null } | null = null;
+
+    for (const s of splits) {
+      const code = s.split?.code;
+      const ops = s.stat.ops ? parseFloat(s.stat.ops) : null;
+      if (code === 'vl') vsLeft = { ops };
+      else if (code === 'vr') vsRight = { ops };
+    }
+
+    return { vsLeft, vsRight };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchPitcherRecentForm(
+  mlbId: number,
+  lastN: number = 3,
+  season: number = new Date().getFullYear(),
+): Promise<{ era: number | null; ip: number } | null> {
+  const params = new URLSearchParams({
+    stats: 'gameLog',
+    group: 'pitching',
+    season: String(season),
+    gameType: 'R',
+  });
+  const path = `/people/${mlbId}/stats?${params.toString()}`;
+
+  try {
+    const raw = await mlbFetchSplits<RawStatsResponse>(path, `pitcher-gamelog:${mlbId}:${season}`);
+    const log = findGroup(raw, 'gameLog');
+    // Only include actual starts (GS = 1 or IP >= 3) to filter out relief appearances
+    const starts = log.filter(e => (e.stat.gamesStarted ?? 0) >= 1 || parseFloat(e.stat.inningsPitched ?? '0') >= 3);
+    const recent = starts.slice(-lastN);
+    if (recent.length === 0) return null;
+
+    let totalIP = 0;
+    let totalER = 0;
+    for (const entry of recent) {
+      totalIP += parseFloat(entry.stat.inningsPitched ?? '0') || 0;
+      totalER += entry.stat.earnedRuns ?? 0;
+    }
+
+    return {
+      era: totalIP > 0 ? Math.round((totalER / totalIP * 9) * 100) / 100 : null,
+      ip: totalIP,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -672,9 +775,12 @@ export async function getRosterSeasonStats(
           const seasonGroup = findGroup(current.raw, 'season');
           const first = seasonGroup[0];
           let line = first ? parseSplitLine(first.stat) : null;
+          let splitSource = current.splits;
           let usedSeason = season;
 
-          // Fall back to prior year when current PA is too thin
+          // Fall back to prior year when current PA is too thin. Platoon
+          // splits follow the same source so our regressed platoon talent
+          // has a real sample to work with in early April.
           if (!line || line.plateAppearances < 30) {
             const fallback = await fetchStatSplitsForSeason(identity.mlbId, season - 1);
             if (fallback) {
@@ -684,6 +790,7 @@ export async function getRosterSeasonStats(
                 const fbLine = parseSplitLine(fbFirst.stat);
                 if (fbLine.plateAppearances >= 30) {
                   line = fbLine;
+                  splitSource = fallback.splits;
                   usedSeason = season - 1;
                 }
               }
@@ -697,6 +804,9 @@ export async function getRosterSeasonStats(
             const xwoba = (savant && savant.bip >= 5) ? savant.xwoba : null;
             const woba = (savant && savant.bip >= 5) ? savant.woba : null;
 
+            const vsL = findByCode(splitSource, 'vl');
+            const vsR = findByCode(splitSource, 'vr');
+
             results[key] = {
               mlbId: identity.mlbId,
               ops: line.ops,
@@ -704,9 +814,19 @@ export async function getRosterSeasonStats(
               hr: line.homeRuns,
               sb: line.stolenBases,
               pa: line.plateAppearances,
+              runs: line.runs,
+              hits: line.hits,
+              rbi: line.rbi,
+              walks: line.walks,
+              strikeouts: line.strikeouts,
               season: usedSeason,
               xwoba,
               woba,
+              bats: identity.bats ?? null,
+              opsVsL: vsL?.ops ?? null,
+              paVsL: vsL?.plateAppearances ?? 0,
+              opsVsR: vsR?.ops ?? null,
+              paVsR: vsR?.plateAppearances ?? 0,
             };
           }
         } catch (err) {

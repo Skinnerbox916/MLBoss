@@ -1,4 +1,4 @@
-import type { BatterSplits, SplitLine, MLBGame, ParkData, ProbablePitcher } from './types';
+import type { BatterSplits, BatterSeasonStats, SplitLine, MLBGame, ParkData, ProbablePitcher } from './types';
 
 // ---------------------------------------------------------------------------
 // Park verdict thresholds
@@ -170,8 +170,13 @@ export function getParkVerdict(
     bats === 'R' ? park.parkFactorR :
     park.parkFactor;
 
-  if (pf >= PARK_EXTREME_HITTER) return { verdict: 'strong', label: 'Hitter park' };
-  if (pf <= PARK_EXTREME_PITCHER) return { verdict: 'weak', label: 'Pitcher park' };
+  if (pf >= PARK_EXTREME_HITTER) {
+    // Show the factor to convey magnitude — Coors (115) vs Chase (108) is a big difference
+    return { verdict: 'strong', label: pf >= 113 ? `Hitter park (${pf})` : 'Hitter park' };
+  }
+  if (pf <= PARK_EXTREME_PITCHER) {
+    return { verdict: 'weak', label: pf <= 88 ? `Pitcher park (${pf})` : 'Pitcher park' };
+  }
   return null;
 }
 
@@ -244,6 +249,32 @@ export function getPitcherQualityPill(
     if (era <= 3.00) return { verdict: 'weak', label: `${era.toFixed(2)} ERA` };
   }
 
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Pitcher K-rate pill
+// ---------------------------------------------------------------------------
+
+/**
+ * Surface a pill when the opposing pitcher has an extreme strikeout rate.
+ * High-K pitchers (≥ 10 K/9) suppress fantasy counting stats even when
+ * their ERA is mediocre — more Ks mean fewer balls in play, fewer hits,
+ * fewer runs batted in. Low-K pitchers (≤ 6 K/9) put more balls in play,
+ * creating more opportunities for offense.
+ *
+ * Only fires at IP ≥ 15 to avoid noise from one-inning relief appearances.
+ */
+export function getPitcherKRatePill(
+  pitcher: ProbablePitcher | null | undefined,
+): { verdict: Verdict; label: string } | null {
+  if (!pitcher) return null;
+  const k9 = pitcher.strikeoutsPer9;
+  if (k9 === null || pitcher.inningsPitched < 15) return null;
+
+  if (k9 >= 11.0) return { verdict: 'weak', label: `${k9.toFixed(1)} K/9` };
+  if (k9 >= 10.0) return { verdict: 'weak', label: 'High K rate' };
+  if (k9 <= 6.5) return { verdict: 'strong', label: 'Low K rate' };
   return null;
 }
 
@@ -432,38 +463,201 @@ function norm(value: number | null, low: number, high: number): number {
   return clamp01((value - low) / (high - low));
 }
 
-function verdictScore(v: Verdict): number {
-  switch (v) {
-    case 'strong': return 1;
-    case 'neutral': return 0.5;
-    case 'weak': return 0;
-    case 'unknown': return 0.5;
-  }
+export type BatterMatchupFactorKey =
+  | 'platoonTalent'
+  | 'pitcher'
+  | 'career'
+  | 'kRate'
+  | 'park'
+  | 'luck'
+  | 'staff'
+  | 'weather'
+  | 'form'
+  | 'battingOrder';
+
+export interface BatterMatchupFactor {
+  /** Stable identifier for the factor. */
+  key: BatterMatchupFactorKey;
+  /** Display label (e.g. "Talent", "Platoon vs RHP"). */
+  label: string;
+  /** Weight in the composite (0–1; factor weights sum to 1). */
+  weight: number;
+  /** Factor score normalised to 0–1 (0.5 = neutral). */
+  normalized: number;
+  /** Whether the underlying data was actually available — false means we defaulted to neutral. */
+  available: boolean;
+  /** Short raw-value display (e.g. ".372 xwOBA", "6.2 K/9", "—"). */
+  display: string;
+  /** Qualitative summary (e.g. "Elite bat", "Small sample", "Hittable arm"). */
+  summary: string;
 }
 
 export interface BatterMatchupScore {
   score: number;
   tier: 'great' | 'good' | 'neutral' | 'poor' | 'bad';
+  /** Per-factor breakdown in weight order — drives the expanded rating card. */
+  factors: BatterMatchupFactor[];
+}
+
+function fmt3(v: number | null | undefined): string {
+  if (v === null || v === undefined) return '—';
+  return v.toFixed(3).replace(/^0\./, '.').replace(/^-0\./, '-.');
+}
+
+function fmtSignedDelta(v: number): string {
+  const abs = Math.abs(v).toFixed(3).replace(/^0\./, '.');
+  if (v > 0) return `+${abs}`;
+  if (v < 0) return `−${abs}`;
+  return abs;
+}
+
+// ---------------------------------------------------------------------------
+// Platoon-adjusted talent
+// ---------------------------------------------------------------------------
+
+/**
+ * Population-level OPS ratio of a batter's split OPS to their overall OPS
+ * when facing a given hand. Sourced from The Book / FanGraphs platoon skill
+ * research:
+ *   - Opposite-hand batter (e.g. LHB vs RHP): ~1.04 — the standard platoon
+ *     advantage all batters enjoy against opposite-handed arms.
+ *   - Same-hand batter (e.g. RHB vs RHP):     ~0.96 — the corresponding
+ *     disadvantage vs same-handed arms.
+ *   - Switch hitters:                         ~1.00 — they turn around to
+ *     face opposite-hand, so there's no sustained platoon disadvantage.
+ */
+const POP_OPP_HAND_RATIO = 1.04;
+const POP_SAME_HAND_RATIO = 0.96;
+const POP_SWITCH_RATIO = 1.00;
+
+/**
+ * Bayesian regression priors for individual platoon-skill deviation. From
+ * FanGraphs' hitter platoon skill research (Mitchel Lichtman):
+ *   - LHB need ~1000 PA vs LHP for individual split to stabilise.
+ *   - RHB need ~2200 PA vs LHP — their true-talent platoon spread is narrow,
+ *     so observed splits are mostly noise and get heavy regression.
+ *   - SHB: less studied; use a moderate prior.
+ *
+ * The prior pulls the observed split ratio toward the population ratio. Large
+ * priors (RHB) mean we trust the population more; small priors (LHB) mean we
+ * trust the observed data sooner.
+ */
+const PRIOR_LHB = 1000;
+const PRIOR_RHB = 2200;
+const PRIOR_SHB = 500;
+
+export interface PlatoonTalent {
+  /** Regressed xwOBA (or OPS-equivalent) vs the pitcher's hand today. */
+  talentVsHand: number | null;
+  /** Unit the value is in — drives downstream normalisation. */
+  unit: 'xwoba' | 'ops' | null;
+  /** Observed OPS in the split, or null when unavailable. */
+  observedOPS: number | null;
+  /** Observed PA in the split (0 when unknown). */
+  observedPA: number;
+  /** Regression ratio applied to overall talent (split/overall). */
+  regressedRatio: number;
+  /** Hand the batter is facing today. */
+  facingHand: 'L' | 'R' | null;
 }
 
 /**
- * Compute a composite 0–1 "expected value" score for a batter that blends
- * talent baseline (OPS) with matchup context signals.
+ * Compute a regressed platoon-adjusted talent value for a batter. Uses
+ * observed split OPS relative to the player's overall OPS, regressed
+ * toward population platoon norms with handedness-appropriate priors,
+ * then scaled onto overall xwOBA when available.
+ */
+export function getPlatoonAdjustedTalent(
+  stats: BatterSeasonStats | null,
+  pitcherThrows: 'L' | 'R' | 'S' | undefined,
+): PlatoonTalent {
+  if (!stats || !pitcherThrows || pitcherThrows === 'S') {
+    const unit: PlatoonTalent['unit'] = stats?.xwoba != null ? 'xwoba' : stats?.ops != null ? 'ops' : null;
+    return {
+      talentVsHand: unit === 'xwoba' ? stats!.xwoba : unit === 'ops' ? stats!.ops : null,
+      unit,
+      observedOPS: null,
+      observedPA: 0,
+      regressedRatio: 1.0,
+      facingHand: null,
+    };
+  }
+
+  const facingHand: 'L' | 'R' = pitcherThrows === 'L' ? 'L' : 'R';
+  const observedOPS = facingHand === 'L' ? stats.opsVsL : stats.opsVsR;
+  const observedPA = facingHand === 'L' ? stats.paVsL : stats.paVsR;
+  const overallOPS = stats.ops;
+  const overallXwoba = stats.xwoba;
+
+  // Decide the population ratio for this matchup.
+  let popRatio: number;
+  if (stats.bats === 'S') {
+    popRatio = POP_SWITCH_RATIO;
+  } else if (stats.bats === facingHand) {
+    popRatio = POP_SAME_HAND_RATIO;
+  } else if (stats.bats === 'L' || stats.bats === 'R') {
+    popRatio = POP_OPP_HAND_RATIO;
+  } else {
+    popRatio = 1.0; // unknown handedness
+  }
+
+  // Prior weight (PA) for regression.
+  const prior =
+    stats.bats === 'L' ? PRIOR_LHB :
+    stats.bats === 'R' ? PRIOR_RHB :
+    stats.bats === 'S' ? PRIOR_SHB :
+    PRIOR_RHB;
+
+  // Observed ratio — only computable with a real sample and a baseline OPS.
+  let observedRatio: number | null = null;
+  if (observedOPS != null && overallOPS != null && overallOPS > 0 && observedPA > 0) {
+    observedRatio = observedOPS / overallOPS;
+  }
+
+  const regressedRatio = observedRatio != null
+    ? (observedPA * observedRatio + prior * popRatio) / (observedPA + prior)
+    : popRatio;
+
+  // Apply to best-available talent baseline.
+  let talentVsHand: number | null = null;
+  let unit: PlatoonTalent['unit'] = null;
+  if (overallXwoba != null) {
+    talentVsHand = overallXwoba * regressedRatio;
+    unit = 'xwoba';
+  } else if (overallOPS != null) {
+    talentVsHand = overallOPS * regressedRatio;
+    unit = 'ops';
+  }
+
+  return {
+    talentVsHand,
+    unit,
+    observedOPS,
+    observedPA,
+    regressedRatio,
+    facingHand,
+  };
+}
+
+/**
+ * Compute a composite 0–1 "expected value" score for a batter.
  *
- * Talent gets 40% weight — enough to ensure studs stay near the top
- * (Soto won't get "Poor" just because he's facing an ace) but not so
- * dominant that matchup context is irrelevant.
- *
- * Weight breakdown:
- *   **Talent baseline:     0.40** (season OPS, normalised .600–.900)
- *   Pitcher quality:       0.15  (biggest matchup factor)
- *   Handedness split:      0.12  (real platoon advantage, 30+ PA)
- *   Recent form:           0.08  (current production level, 30+ PA)
- *   Career vs pitcher:     0.06  (genuinely predictive small-sample stat)
- *   Park factor:           0.06  (stable environmental signal)
- *   Staff quality:         0.06  (bullpen + team defense beyond the SP)
- *   Day/night split:       0.04  (marginal, 40+ PA)
- *   Weather:               0.03  (wind + temperature extremes)
+ *   Platoon-adjusted talent 0.56 — regressed xwOBA vs this pitcher's hand.
+ *                                  Dominant signal: MLB teams actually sit
+ *                                  players on the wrong side of a big split.
+ *                                  Observed split OPS ratio is regressed
+ *                                  toward population platoon norms with
+ *                                  handedness-appropriate priors (LHB: 1000
+ *                                  PA, RHB: 2200 PA) per FanGraphs research.
+ *   Opposing SP              0.22 — tier + direct xwOBA-vs-xwOBA matchup.
+ *   Park factor              0.07 — handedness-aware park factor.
+ *   SP K-rate                0.05 — secondary pitcher signal, suppresses H/R/RBI.
+ *   Luck regression          0.04 — xwOBA − wOBA delta tailwind/headwind.
+ *   Career vs SP             0.02 — 20+ PA threshold; research is clear this
+ *                                   is mostly noise below ~50 PA.
+ *   Weather                  0.02 — wind and temperature extremes.
+ *   Bullpen / staff          0.01 — opposing team staff ERA.
+ *   Recent form              0.01 — token; short-term hot/cold not predictive.
  */
 export function getBatterMatchupScore(
   splits: BatterSplits | null,
@@ -471,74 +665,241 @@ export function getBatterMatchupScore(
   context: MatchupContext | null,
   bats: 'L' | 'R' | 'S' | undefined,
   baselineOPS: number | null = null,
+  batterStats: BatterSeasonStats | null = null,
+  battingOrder: number | null = null,
 ): BatterMatchupScore {
-  if (!context) return { score: 0.5, tier: 'neutral' };
+  if (!context) return { score: 0.5, tier: 'neutral', factors: [] };
 
   const { opposingPitcher, isHome, game, park } = context;
+  const xwoba = batterStats?.xwoba ?? null;
 
-  // Talent baseline (normalise OPS: .600 → 0, .900 → 1)
-  const talentVal = baselineOPS !== null
-    ? clamp01((baselineOPS - 0.600) / 0.300)
-    : 0.4; // unknown → slightly below average
+  // ── Platoon-adjusted talent ──
+  // A single factor that combines baseline talent with the handedness-
+  // specific platoon adjustment, regressed toward population platoon norms.
+  // This is the biggest single-game signal — who this batter is TODAY vs.
+  // who they are on average. Extreme platoon splits (Pederson, Schwarber
+  // type profiles) get meaningfully different ratings across hands.
+  const platoon = getPlatoonAdjustedTalent(batterStats, opposingPitcher?.throws);
+  let ptVal: number;
+  let ptAvailable: boolean;
+  let ptDisplay: string;
+  let ptSummary: string;
+  const handLabel = platoon.facingHand === 'L' ? ' vs LHP' : platoon.facingHand === 'R' ? ' vs RHP' : '';
 
-  // Pitcher quality (ace=0, bad=1)
-  const pitcherTier = opposingPitcher?.quality?.tier;
-  const pitcherVal = pitcherTier === 'ace' ? 0.0
-    : pitcherTier === 'tough' ? 0.25
-    : pitcherTier === 'weak' ? 0.75
-    : pitcherTier === 'bad' ? 1.0
+  if (platoon.talentVsHand !== null && platoon.unit === 'xwoba') {
+    ptVal = clamp01((platoon.talentVsHand - 0.250) / 0.150);
+    ptDisplay = `${fmt3(platoon.talentVsHand)} xwOBA${handLabel}`;
+    ptAvailable = true;
+  } else if (platoon.talentVsHand !== null && platoon.unit === 'ops') {
+    ptVal = clamp01((platoon.talentVsHand - 0.600) / 0.300);
+    ptDisplay = `${fmt3(platoon.talentVsHand)} OPS${handLabel}`;
+    ptAvailable = true;
+  } else if (baselineOPS !== null) {
+    // Last-resort: no season stats at all, use caller-provided OPS baseline
+    // with only the population platoon ratio applied.
+    const popRatio = opposingPitcher?.throws === 'S' || !opposingPitcher
+      ? 1.0
+      : batterStats?.bats === 'S' ? POP_SWITCH_RATIO
+      : batterStats?.bats === opposingPitcher.throws ? POP_SAME_HAND_RATIO
+      : POP_OPP_HAND_RATIO;
+    const adj = baselineOPS * popRatio;
+    ptVal = clamp01((adj - 0.600) / 0.300);
+    ptDisplay = `${fmt3(adj)} OPS${handLabel} (est)`;
+    ptAvailable = true;
+  } else {
+    ptVal = 0.4;
+    ptAvailable = false;
+    ptDisplay = '—';
+  }
+
+  // Annotate the summary with sample context — regression-heavy (big popRatio
+  // tilt, tiny observedPA) is noted so the user knows the number is leaning
+  // on the population prior rather than this specific player.
+  const isHeavyRegression = platoon.observedPA < 50 && ptAvailable;
+  if (!ptAvailable) ptSummary = 'No talent baseline';
+  else if (ptVal >= 0.80) ptSummary = isHeavyRegression ? 'Elite bat (regressed)' : 'Elite bat vs hand';
+  else if (ptVal >= 0.60) ptSummary = isHeavyRegression ? 'Strong bat (regressed)' : 'Strong bat vs hand';
+  else if (ptVal >= 0.40) ptSummary = 'Average bat vs hand';
+  else if (ptVal >= 0.20) ptSummary = 'Weak vs this hand';
+  else ptSummary = 'Avoid vs this hand';
+
+  // ── Pitcher matchup (tier + xwOBA head-to-head) ──
+  let pitcherVal: number;
+  let pitcherAvailable = true;
+  let pitcherDisplay: string;
+  let pitcherSummary: string;
+  const pitcherXwoba = opposingPitcher?.xwoba ?? null;
+  if (xwoba !== null && pitcherXwoba !== null) {
+    const xwobaDelta = xwoba - pitcherXwoba;
+    pitcherVal = clamp01(0.5 + xwobaDelta / 0.160);
+    pitcherDisplay = `${fmt3(pitcherXwoba)} xwOBA-a`;
+  } else {
+    const pitcherTier = opposingPitcher?.quality?.tier;
+    if (pitcherTier === 'ace') { pitcherVal = 0.0; pitcherDisplay = 'Ace SP'; }
+    else if (pitcherTier === 'tough') { pitcherVal = 0.25; pitcherDisplay = 'Tough SP'; }
+    else if (pitcherTier === 'weak') { pitcherVal = 0.75; pitcherDisplay = 'Weak SP'; }
+    else if (pitcherTier === 'bad') { pitcherVal = 1.0; pitcherDisplay = 'Bad SP'; }
+    else {
+      pitcherVal = 0.5;
+      pitcherAvailable = !!opposingPitcher;
+      pitcherDisplay = opposingPitcher ? 'Average SP' : 'TBD';
+    }
+  }
+  if (!pitcherAvailable) pitcherSummary = 'No probable SP';
+  else if (pitcherVal >= 0.70) pitcherSummary = 'Hittable arm';
+  else if (pitcherVal >= 0.55) pitcherSummary = 'Favorable SP';
+  else if (pitcherVal >= 0.45) pitcherSummary = 'Neutral SP';
+  else if (pitcherVal >= 0.30) pitcherSummary = 'Tough SP';
+  else pitcherSummary = 'Shutdown SP';
+
+  // ── Pitcher K rate ──
+  const kPer9 = opposingPitcher?.strikeoutsPer9 ?? null;
+  const kIp = opposingPitcher?.inningsPitched ?? 0;
+  const kAvailable = kPer9 !== null && kIp >= 15;
+  const kVal = kAvailable
+    ? clamp01(1 - (kPer9! - 5.0) / 8.0)
     : 0.5;
+  const kDisplay = kAvailable ? `${kPer9!.toFixed(1)} K/9` : (kPer9 !== null ? `${kPer9.toFixed(1)} K/9 (SSS)` : '—');
+  const kSummary = !kAvailable ? (kPer9 !== null ? 'Small sample' : 'No K data')
+    : kVal >= 0.70 ? 'Low whiff rate'
+    : kVal >= 0.55 ? 'Below-avg Ks'
+    : kVal >= 0.45 ? 'Avg Ks'
+    : kVal >= 0.30 ? 'High K risk'
+    : 'Elite K arm';
 
-  // Handedness (30+ PA required by getHandednessVerdict)
-  const handedness = getHandednessVerdict(splits, opposingPitcher?.throws);
+  // ── Career vs pitcher (20+ PA threshold) ──
+  // Research (Elias, FanGraphs) is consistent: BvP under ~50 PA has no
+  // predictive edge over the batter's overall line. We keep it as a small
+  // token factor above 20 PA — enough for specific-arm mechanical edges
+  // (pitch mix, arm angle) to surface without drowning in 6-for-12 noise.
+  const cvpAvailable = !!careerVsPitcher && careerVsPitcher.plateAppearances >= 20 && careerVsPitcher.ops !== null;
+  const cvpVal = cvpAvailable
+    ? norm(careerVsPitcher!.ops, 0.400, 1.000)
+    : 0.5;
+  const cvpDisplay = !careerVsPitcher || careerVsPitcher.plateAppearances === 0
+    ? '—'
+    : `${fmt3(careerVsPitcher.ops)} (${careerVsPitcher.plateAppearances} PA)`;
+  const cvpSummary = !careerVsPitcher || careerVsPitcher.plateAppearances === 0 ? 'No history'
+    : !cvpAvailable ? 'Small sample'
+    : cvpVal >= 0.75 ? 'Owns this arm'
+    : cvpVal >= 0.55 ? 'Favorable history'
+    : cvpVal >= 0.45 ? 'Neutral history'
+    : cvpVal >= 0.25 ? 'Struggles vs arm'
+    : 'Dominated historically';
 
-  const handednessVal = verdictScore(handedness.verdict);
+  // ── Park factor (handedness-aware) ──
+  const pf = bats === 'L' ? park?.parkFactorL
+    : bats === 'R' ? park?.parkFactorR
+    : park?.parkFactor;
+  const parkAvailable = pf != null;
+  const parkVal = parkAvailable ? clamp01((pf! - 85) / 30) : 0.5;
+  const parkSideLabel = bats === 'L' ? ' (LHB)' : bats === 'R' ? ' (RHB)' : '';
+  const parkDisplay = parkAvailable ? `${pf}${parkSideLabel}` : '—';
+  const parkSummary = !parkAvailable ? 'No park data'
+    : parkVal >= 0.70 ? 'Hitter-friendly park'
+    : parkVal >= 0.55 ? 'Slight hitter tilt'
+    : parkVal >= 0.45 ? 'Neutral park'
+    : parkVal >= 0.30 ? 'Slight pitcher tilt'
+    : 'Pitcher-friendly park';
 
-  // Recent form (30+ PA required by getFormTrend)
+  // ── Luck regression (xwOBA − wOBA delta) ──
+  let luckVal = 0.5;
+  let luckAvailable = false;
+  let luckDisplay = '—';
+  let luckSummary = 'No luck data';
+  if (batterStats?.xwoba !== null && batterStats?.xwoba !== undefined &&
+      batterStats?.woba !== null && batterStats?.woba !== undefined) {
+    const luckDelta = batterStats.xwoba - batterStats.woba;
+    luckVal = clamp01(0.5 + luckDelta / 0.120);
+    luckAvailable = true;
+    luckDisplay = `${fmtSignedDelta(luckDelta)} xwOBA−wOBA`;
+    if (luckDelta >= 0.030) luckSummary = 'Running unlucky';
+    else if (luckDelta >= 0.010) luckSummary = 'Slightly unlucky';
+    else if (luckDelta <= -0.030) luckSummary = 'Running lucky';
+    else if (luckDelta <= -0.010) luckSummary = 'Slightly lucky';
+    else luckSummary = 'Results match quality';
+  }
+
+  // ── Staff quality ──
+  const opposingTeam = isHome ? game.awayTeam : game.homeTeam;
+  const staffEra = opposingTeam.staffEra;
+  const staffAvailable = staffEra != null;
+  const staffVal = staffAvailable
+    ? clamp01(1 - (staffEra! - 3.0) / 2.5)
+    : 0.5;
+  const staffDisplay = staffAvailable ? `${staffEra!.toFixed(2)} ERA` : '—';
+  const staffSummary = !staffAvailable ? 'No staff data'
+    : staffVal >= 0.70 ? 'Weak staff'
+    : staffVal >= 0.55 ? 'Below-avg staff'
+    : staffVal >= 0.45 ? 'Avg staff'
+    : staffVal >= 0.30 ? 'Above-avg staff'
+    : 'Elite staff';
+
+  // ── Weather (continuous) ──
+  const wxVal = getWeatherScore(game, park);
+  const wxFlag = getWeatherFlag(game, park);
+  const wxDisplay = wxFlag.label || (park?.roof === 'dome' ? 'Dome' : 'Normal');
+  const wxAvailable = wxFlag.kind !== 'none' || park?.roof === 'dome' || park?.roof === 'retractable';
+  const wxSummary = wxFlag.kind === 'boost' ? 'Offense boost'
+    : wxFlag.kind === 'suppress' ? 'Offense suppressed'
+    : wxFlag.kind === 'neutral' ? 'Controlled env'
+    : 'Neutral conditions';
+
+  // ── Recent form (token weight) ──
   const form = getFormTrend(splits);
   const formVal = form.trend === 'hot' ? 1.0
     : form.trend === 'cold' ? 0.0
     : 0.5;
+  const formAvailable = form.trend !== 'unknown';
+  const formDisplay = form.detail ?? '—';
+  const formSummary = form.trend === 'hot' ? 'Hot'
+    : form.trend === 'cold' ? 'Cold'
+    : form.trend === 'neutral' ? 'Steady'
+    : 'No form data';
 
-  // Career vs pitcher
-  let cvpVal = 0.5;
-  if (careerVsPitcher && careerVsPitcher.plateAppearances >= 8 && careerVsPitcher.ops !== null) {
-    cvpVal = norm(careerVsPitcher.ops, 0.400, 1.000);
-  }
+  // ── Batting order ──
+  // Higher in the order = more PAs, more RBI/R opportunities, better lineup
+  // protection. Linear scale: #1 → 1.0, #9 → 0.0. Neutral when unknown.
+  const boAvailable = battingOrder !== null && battingOrder >= 1 && battingOrder <= 9;
+  const boVal = boAvailable ? 1.0 - (battingOrder! - 1) / 8.0 : 0.5;
+  const boDisplay = boAvailable ? `#${battingOrder}` : '—';
+  const boSummary = !boAvailable ? 'No lineup data'
+    : battingOrder! <= 2 ? 'Top of the order'
+    : battingOrder! <= 5 ? 'Middle of the order'
+    : 'Bottom of the order';
 
-  // Park factor
-  const pf = bats === 'L' ? park?.parkFactorL
-    : bats === 'R' ? park?.parkFactorR
-    : park?.parkFactor;
-  const parkVal = pf != null ? norm(pf, 90, 115) : 0.5;
+  // Weight rationale (total = 1.00):
+  //
+  // Platoon-adjusted talent (56%) — the player's regressed xwOBA vs this
+  // pitcher's hand. This is the dominant single-game signal and the one
+  // MLB front offices use to make actual start/sit decisions.
+  //
+  // Opposing SP (22%) — biggest game-day variable after the bat itself.
+  // The SP controls the majority of at-bats.
+  //
+  // Park (6%) — stable environmental signal, handedness-aware.
+  // SP K-rate (4%) — secondary pitcher signal; high-K arms suppress H/R/RBI.
+  // Batting order (3%) — higher slot = more PAs, better protection.
+  // Luck regression (3%) — xwOBA−wOBA delta; mild tailwind/headwind.
+  // Career vs SP (2%) — small token at 20+ PA threshold. Research is clear
+  // this is mostly noise below ~50 PA, so we keep it small.
+  // Weather (2%), staff (1%), form (1%) — tiebreakers.
+  //
+  // Removed: Day/night (research shows ~zero predictive power).
+  const factors: BatterMatchupFactor[] = [
+    { key: 'platoonTalent', label: `Talent${handLabel}`,      weight: 0.56, normalized: ptVal,      available: ptAvailable,      display: ptDisplay,      summary: ptSummary },
+    { key: 'pitcher',       label: 'Opposing SP',             weight: 0.22, normalized: pitcherVal, available: pitcherAvailable, display: pitcherDisplay, summary: pitcherSummary },
+    { key: 'park',          label: 'Park factor',             weight: 0.06, normalized: parkVal,    available: parkAvailable,    display: parkDisplay,    summary: parkSummary },
+    { key: 'kRate',         label: 'SP strikeout rate',       weight: 0.04, normalized: kVal,       available: kAvailable,       display: kDisplay,       summary: kSummary },
+    { key: 'battingOrder',  label: 'Batting order',           weight: 0.03, normalized: boVal,      available: boAvailable,      display: boDisplay,      summary: boSummary },
+    { key: 'luck',          label: 'Luck regression',         weight: 0.03, normalized: luckVal,    available: luckAvailable,    display: luckDisplay,    summary: luckSummary },
+    { key: 'career',        label: 'Career vs SP',            weight: 0.02, normalized: cvpVal,     available: cvpAvailable,     display: cvpDisplay,     summary: cvpSummary },
+    { key: 'weather',       label: 'Weather',                 weight: 0.02, normalized: wxVal,      available: wxAvailable,      display: wxDisplay,      summary: wxSummary },
+    { key: 'staff',         label: 'Bullpen / staff',         weight: 0.01, normalized: staffVal,   available: staffAvailable,   display: staffDisplay,   summary: staffSummary },
+    { key: 'form',          label: 'Recent form',             weight: 0.01, normalized: formVal,    available: formAvailable,    display: formDisplay,    summary: formSummary },
+  ];
 
-  // Opposing team staff quality (captures bullpen + defense)
-  const opposingTeam = isHome ? game.awayTeam : game.homeTeam;
-  const staffEra = opposingTeam.staffEra;
-  const staffVal = staffEra != null
-    ? clamp01(1 - (staffEra - 3.0) / 2.5)
-    : 0.5;
-
-  // Day/night (40+ PA required by getDayNightVerdict)
-  const dayNight = getDayNightVerdict(splits, game.gameDate);
-  const dayNightVal = verdictScore(dayNight.verdict);
-
-  // Weather
-  const weather = getWeatherFlag(game, park);
-  const wxVal = weather.kind === 'boost' ? 0.8
-    : weather.kind === 'suppress' ? 0.2
-    : 0.5;
-
-  const score =
-    talentVal * 0.40 +
-    pitcherVal * 0.15 +
-    handednessVal * 0.12 +
-    formVal * 0.08 +
-    cvpVal * 0.06 +
-    parkVal * 0.06 +
-    staffVal * 0.06 +
-    dayNightVal * 0.04 +
-    wxVal * 0.03;
+  const score = factors.reduce((acc, f) => acc + f.normalized * f.weight, 0);
 
   const tier: BatterMatchupScore['tier'] =
     score >= 0.70 ? 'great'
@@ -547,14 +908,14 @@ export function getBatterMatchupScore(
     : score >= 0.30 ? 'poor'
     : 'bad';
 
-  return { score: Math.round(score * 100) / 100, tier };
+  return { score: Math.round(score * 100) / 100, tier, factors };
 }
 
 /**
  * Lightweight context-only sort score for ordering the roster list without
- * splits data. Uses pitcher quality, park factor, team staff ERA, and
- * weather — the external matchup conditions available immediately from the
- * game-day API. Returns 0.5 when no context exists.
+ * splits data. Uses pitcher quality, park factor, team staff ERA, pitcher
+ * K rate, and weather — the external matchup conditions available immediately
+ * from the game-day API. Returns 0.5 when no context exists.
  */
 export function getBatterContextScore(
   context: MatchupContext | null,
@@ -583,7 +944,7 @@ export function getBatterContextScore(
   const pf = bats === 'L' ? park?.parkFactorL
     : bats === 'R' ? park?.parkFactorR
     : park?.parkFactor;
-  const parkVal = pf != null ? norm(pf, 90, 115) : 0.5;
+  const parkVal = pf != null ? clamp01((pf - 85) / 30) : 0.5;
 
   const opposingTeam = isHome ? game.awayTeam : game.homeTeam;
   const staffEra = opposingTeam.staffEra;
@@ -591,17 +952,70 @@ export function getBatterContextScore(
     ? clamp01(1 - (staffEra - 3.0) / 2.5)
     : 0.5;
 
-  const weather = getWeatherFlag(game, park);
-  const wxVal = weather.kind === 'boost' ? 0.8
-    : weather.kind === 'suppress' ? 0.2
+  // Pitcher K rate — high K/9 = bad for batters
+  const kPer9 = opposingPitcher?.strikeoutsPer9 ?? null;
+  const kVal = kPer9 !== null
+    ? clamp01(1 - (kPer9 - 5.0) / 8.0)
     : 0.5;
 
-  return pitcherVal * 0.35 + eraVal * 0.15 + parkVal * 0.15 + staffVal * 0.20 + wxVal * 0.15;
+  const wxVal = getWeatherScore(game, park);
+
+  return pitcherVal * 0.30 + eraVal * 0.15 + kVal * 0.15 + parkVal * 0.12 + staffVal * 0.15 + wxVal * 0.13;
 }
 
 // ---------------------------------------------------------------------------
-// Weather notability
+// Weather scoring + notability
 // ---------------------------------------------------------------------------
+
+/**
+ * Compute a continuous 0–1 weather score for the composite matchup model.
+ *
+ * Combines wind and temperature effects with magnitude scaling:
+ * - Wind out: scaled linearly from 10→25 mph (0.6→1.0)
+ * - Wind in:  scaled linearly from 10→25 mph (0.4→0.0)
+ * - Temp ≥ 80°F: slight boost, scaling up to 0.7 at 100°F
+ * - Temp ≤ 55°F: slight suppression, scaling down to 0.3 at 35°F
+ * - Dome with no weather data: 0.5 (neutral)
+ *
+ * Wind dominates when both wind and temperature are extreme because the
+ * wind effect is larger and more researched.
+ */
+export function getWeatherScore(game: MLBGame, park: ParkData | null): number {
+  if (park && (park.roof === 'dome' || park.roof === 'retractable')) {
+    if (!game.weather.wind && !game.weather.temperature) {
+      return 0.5; // controlled environment
+    }
+  }
+
+  const { temperature, windSpeed, windDirection } = game.weather;
+  let score = 0.5;
+
+  // Wind effect (overrides temperature when present — larger effect size)
+  if (windSpeed !== null && windSpeed >= 10 && windDirection) {
+    const dir = windDirection.toLowerCase();
+    if (dir.includes('out')) {
+      // 10 mph out → 0.6, 25 mph out → 1.0
+      score = clamp01(0.5 + (windSpeed - 5) / 40);
+    } else if (dir.includes('in')) {
+      // 10 mph in → 0.4, 25 mph in → 0.0
+      score = clamp01(0.5 - (windSpeed - 5) / 40);
+    }
+    // Crosswinds: stay at 0.5 (ambiguous effect)
+  }
+
+  // Temperature effect — additive nudge on top of wind
+  if (temperature !== null) {
+    if (temperature >= 80) {
+      // 80°F → +0.02, 100°F → +0.10
+      score += clamp01((temperature - 80) / 200) * 0.5;
+    } else if (temperature <= 55) {
+      // 55°F → −0.02, 35°F → −0.10
+      score -= clamp01((55 - temperature) / 200) * 0.5;
+    }
+  }
+
+  return clamp01(score);
+}
 
 export interface WeatherFlag {
   kind: 'boost' | 'suppress' | 'neutral' | 'none';

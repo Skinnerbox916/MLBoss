@@ -9,7 +9,6 @@ import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
 import {
   getHandednessVerdict,
-  getDayNightVerdict,
   getFormTrend,
   getWeatherFlag,
   getPitcherQualityPill,
@@ -17,6 +16,7 @@ import {
   getStealPill,
   getCareerVsPitcherPill,
   getOpposingStaffPill,
+  getPitcherKRatePill,
   getBatterMatchupScore,
   type BatterMatchupScore,
 } from '@/lib/mlb/analysis';
@@ -260,30 +260,28 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
 
   // Individual verdict pills
   const handednessVerdict = getHandednessVerdict(splits, context?.opposingPitcher?.throws);
-  const dayNightVerdict = context?.game
-    ? getDayNightVerdict(splits, context.game.gameDate)
-    : { verdict: 'unknown' as const, label: '' };
   const formTrend = getFormTrend(splits);
   const pitcherPill = getPitcherQualityPill(context?.opposingPitcher);
   const parkPill = getParkVerdict(context?.park, identity?.bats);
   const stealPill = getStealPill(splits);
   const cvpPill = getCareerVsPitcherPill(careerVsPitcher, context?.opposingPitcher?.name);
   const staffPill = getOpposingStaffPill(context);
+  const kRatePill = getPitcherKRatePill(context?.opposingPitcher);
 
-  // Use xwOBA-scaled OPS as talent baseline when available (more predictive)
-  const talentOPS = seasonStats?.xwoba != null
-    ? seasonStats.xwoba * 2.4
-    : seasonStats?.ops ?? null;
+  // OPS fallback for talent baseline (used when xwOBA is unavailable)
+  const talentOPS = seasonStats?.ops ?? null;
 
   // Composite score — blends talent baseline with matchup context
-  const matchupScore = getBatterMatchupScore(splits, careerVsPitcher, context, identity?.bats, talentOPS);
+  // Pass full seasonStats so the score function can use xwOBA directly
+  // and compute the luck regression (xwOBA − wOBA delta).
+  const matchupScore = getBatterMatchupScore(splits, careerVsPitcher, context, identity?.bats, talentOPS, seasonStats, player.batting_order);
   const tierStyle = matchupTierStyle(matchupScore.tier);
 
   const hasAnyPill =
     handednessVerdict.label ||
-    dayNightVerdict.label ||
     parkPill ||
     pitcherPill ||
+    kRatePill ||
     staffPill ||
     stealPill ||
     cvpPill ||
@@ -320,6 +318,16 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
           {/* Line 1: Name + OPS + status + team + position eligibility + matchup tier */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-foreground truncate">{player.name}</span>
+            {player.batting_order && (
+              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-primary/15 text-primary" title="Batting order">
+                #{player.batting_order}
+              </span>
+            )}
+            {player.starting_status === 'NS' && (
+              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-error/15 text-error">
+                SITTING
+              </span>
+            )}
             <OPSBadge stats={seasonStats} />
             {player.status && <StatusBadge status={player.status} />}
             {tierStyle.label && (
@@ -344,14 +352,14 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
               {pitcherPill && (
                 <VerdictPill verdict={pitcherPill.verdict} label={pitcherPill.label} />
               )}
+              {kRatePill && (
+                <VerdictPill verdict={kRatePill.verdict} label={kRatePill.label} />
+              )}
               {handednessVerdict.label && (
                 <VerdictPill verdict={handednessVerdict.verdict} label={handednessVerdict.label} />
               )}
               {staffPill && (
                 <VerdictPill verdict={staffPill.verdict} label={staffPill.label} />
-              )}
-              {dayNightVerdict.label && (
-                <VerdictPill verdict={dayNightVerdict.verdict} label={dayNightVerdict.label} />
               )}
               {parkPill && (
                 <VerdictPill verdict={parkPill.verdict} label={parkPill.label} />
@@ -385,7 +393,7 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
       {expanded && (
         shouldFetchSplits ? (
           <PlayerSplitsPanel
-            splits={splits}
+            matchupScore={matchupScore}
             careerVsPitcher={careerVsPitcher}
             opposingPitcherName={context?.opposingPitcher?.name}
             isLoading={splitsLoading}

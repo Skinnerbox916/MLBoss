@@ -36,13 +36,21 @@ export interface ProbablePitcher {
   gamesStarted: number | null;
   pitchesPerInning: number | null;
   inningsPerStart: number | null; // derived: IP / GS
+  bb9: number | null;             // BB/9 = baseOnBalls / IP * 9
+  gbRate: number | null;          // groundOuts / (groundOuts + airOuts)
   // Recent form
   eraLast30: number | null;
+  recentFormEra: number | null;   // ERA over last 3 starts
   inningsPitched: number;
+  // Platoon splits (OPS allowed to batters of each handedness)
+  platoonOpsVsLeft: number | null;
+  platoonOpsVsRight: number | null;
   // Tiered quality (null until enriched by getGameDay)
   quality: PitcherQuality | null;
   /** xERA from Baseball Savant (null when pitcher has too few BIP for Savant to compute) */
   xera: number | null;
+  /** xwOBA-against from Baseball Savant (expected wOBA allowed to batters) */
+  xwoba: number | null;
 }
 
 export interface GameWeather {
@@ -56,6 +64,13 @@ export interface GameWeather {
 export interface GameVenue {
   mlbId: number;
   name: string;
+}
+
+export interface LineupEntry {
+  mlbId: number;
+  fullName: string;
+  battingOrder: number;         // 1-indexed position in the batting order
+  position: string;             // e.g. 'SS', 'CF', 'DH'
 }
 
 export interface MLBGame {
@@ -78,6 +93,8 @@ export interface MLBGame {
   weather: GameWeather;
   homeProbablePitcher: ProbablePitcher | null;
   awayProbablePitcher: ProbablePitcher | null;
+  homeLineup: LineupEntry[];
+  awayLineup: LineupEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +107,7 @@ export interface SplitLine {
   slg: number | null;
   ops: number | null;
   homeRuns: number;
+  runs: number;
   rbi: number;
   stolenBases: number;
   strikeouts: number;
@@ -152,11 +170,26 @@ export interface BatterSeasonStats {
   hr: number;
   sb: number;
   pa: number;
+  runs: number;
+  hits: number;
+  rbi: number;
+  walks: number;
+  strikeouts: number;
   season: number;
   /** xwOBA from Baseball Savant (expected wOBA based on batted ball quality) */
   xwoba: number | null;
   /** Actual wOBA for luck-delta computation */
   woba: number | null;
+  /** Batter handedness — drives platoon regression priors. */
+  bats: 'L' | 'R' | 'S' | null;
+  /** Observed OPS vs LHP (null when no sample). */
+  opsVsL: number | null;
+  /** Plate appearances vs LHP (0 when unknown). */
+  paVsL: number;
+  /** Observed OPS vs RHP (null when no sample). */
+  opsVsR: number | null;
+  /** Plate appearances vs RHP (0 when unknown). */
+  paVsR: number;
 }
 
 // ---------------------------------------------------------------------------

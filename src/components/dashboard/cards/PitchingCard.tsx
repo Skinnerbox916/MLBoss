@@ -5,6 +5,7 @@ import DashboardCard from '../DashboardCard';
 import { useFantasy } from '../FantasyProvider';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
+import { parseIPToOuts } from '@/lib/utils';
 
 interface CategoryRow {
   label: string;
@@ -14,18 +15,6 @@ interface CategoryRow {
   relDelta: number;
   winning: boolean | null;
   deltaStr: string;
-}
-
-// IP is stored by Yahoo in baseball "thirds" notation: 58.1 = 58⅓ innings.
-// Doing float math on these gives nonsense (58.1 - 34.2 = 23.9... but .toFixed gives 23.9).
-// In practice Yahoo sometimes returns decimal fractions like "34.1125" for partial IP,
-// so we normalize via outs to get correct display (e.g. "+23.2" = 23⅔ innings).
-function parseIPToOuts(ip: string): number {
-  const val = parseFloat(ip);
-  if (isNaN(val)) return 0;
-  const innings = Math.floor(val);
-  const rem = Math.round((val - innings) * 10); // e.g. .1 → 1, .2 → 2
-  return innings * 3 + Math.min(rem, 2);
 }
 
 function formatIPDelta(myRaw: string, oppRaw: string): { deltaStr: string; delta: number; relDelta: number; winning: boolean | null } {

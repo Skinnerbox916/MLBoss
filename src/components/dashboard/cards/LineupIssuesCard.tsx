@@ -4,9 +4,11 @@ import { FiAlertTriangle } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
 import { useFantasy } from '../FantasyProvider';
 import { useRoster } from '@/lib/hooks/useRoster';
+import { useGameDay } from '@/lib/hooks/useGameDay';
+import { isPitcher } from '@/components/lineup/types';
 
 interface LineupIssue {
-  type: 'injured_active' | 'il_eligible_on_bench' | 'open_slot';
+  type: 'injured_active' | 'il_eligible_on_bench' | 'open_slot' | 'no_game_active';
   label: string;
   detail: string;
   severity: 'error' | 'warning';
@@ -16,11 +18,34 @@ const IL_STATUSES = new Set(['IL', 'IL10', 'IL15', 'IL60', 'DL', 'DL10', 'DL60',
 const IL_SLOTS = new Set(['IL', 'IL+', 'NA']);
 const BENCH_OR_INACTIVE = new Set(['BN', 'IL', 'IL+', 'NA']);
 
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function LineupIssuesCard() {
   const { teamKey } = useFantasy();
-  const { roster, isLoading } = useRoster(teamKey);
+  const { roster, isLoading: rosterLoading } = useRoster(teamKey);
+  const { games, isLoading: gamesLoading } = useGameDay(todayStr());
+
+  const isLoading = rosterLoading || gamesLoading;
+
+  // Build set of team abbreviations with a game today
+  const teamsPlaying = new Set<string>();
+  for (const game of games) {
+    teamsPlaying.add(game.homeTeam.abbreviation.toUpperCase());
+    teamsPlaying.add(game.awayTeam.abbreviation.toUpperCase());
+  }
 
   const issues: LineupIssue[] = [];
+
+  // Bench batters with a game today (potential upgrades)
+  const benchWithGame = roster.filter(p =>
+    p.selected_position === 'BN' &&
+    !isPitcher(p) &&
+    !p.status &&
+    teamsPlaying.has(p.editorial_team_abbr.toUpperCase()),
+  );
 
   for (const player of roster) {
     const pos = player.selected_position;
@@ -49,6 +74,31 @@ export default function LineupIssuesCard() {
         detail: `${player.name} (${player.status}) is on bench — free up a roster spot`,
         severity: 'warning',
       });
+      continue;
+    }
+
+    // Batter in an active slot with no game today while a bench player with a
+    // game is eligible for the same slot
+    if (
+      !isPitcher(player) &&
+      !BENCH_OR_INACTIVE.has(pos) &&
+      games.length > 0 &&
+      !teamsPlaying.has(player.editorial_team_abbr.toUpperCase())
+    ) {
+      const isUtil = pos.toUpperCase() === 'UTIL';
+      const upgrade = benchWithGame.find(bp =>
+        isUtil
+          ? bp.eligible_positions.includes('Util') || bp.eligible_positions.includes('UTIL')
+          : bp.eligible_positions.includes(pos),
+      );
+      if (upgrade) {
+        issues.push({
+          type: 'no_game_active',
+          label: 'Dead Slot',
+          detail: `${player.name} has no game in your ${pos} spot — ${upgrade.name} (${upgrade.editorial_team_abbr}) is on the bench with a game`,
+          severity: 'warning',
+        });
+      }
     }
   }
 

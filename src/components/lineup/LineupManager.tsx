@@ -6,7 +6,7 @@ import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
 import { useRosterStats } from '@/lib/hooks/useRosterStats';
-import { resolveMatchup, type MatchupContext } from '@/lib/mlb/analysis';
+import { resolveMatchup, getBatterContextScore, type MatchupContext } from '@/lib/mlb/analysis';
 import DatePicker from './DatePicker';
 import PositionFilter from './PositionFilter';
 import RosterList from './RosterList';
@@ -59,6 +59,25 @@ export default function LineupManager({ mode = 'batting' }: LineupManagerProps) 
       return matchupIndex.get(teamAbbr.toUpperCase()) ?? null;
     },
     [matchupIndex],
+  );
+
+  const getPlayerScore = useCallback(
+    (p: { name: string; editorial_team_abbr: string; batting_order: number | null }) => {
+      const TALENT_W = 0.60;
+      const CONTEXT_W = 0.30;
+      const ORDER_W = 0.10;
+      const talentOPS = getPlayerTalentOPS(p.name, p.editorial_team_abbr);
+      const contextScore = getBatterContextScore(getMatchupContext(p.editorial_team_abbr));
+      const talentVal = talentOPS !== null
+        ? Math.max(0, Math.min(1, (talentOPS - 0.600) / 0.300))
+        : 0.4;
+      // Batting order: #1 → 1.0, #9 → 0.0, unknown → 0.5.
+      const orderVal = p.batting_order && p.batting_order >= 1 && p.batting_order <= 9
+        ? 1.0 - (p.batting_order - 1) / 8.0
+        : 0.5;
+      return TALENT_W * talentVal + CONTEXT_W * contextScore + ORDER_W * orderVal;
+    },
+    [getPlayerTalentOPS, getMatchupContext],
   );
 
   const isLoading = ctxLoading || rosterLoading;
@@ -137,6 +156,7 @@ export default function LineupManager({ mode = 'batting' }: LineupManagerProps) 
               date={selectedDate}
               rosterPositions={rosterPositions}
               onSaved={() => mutateRoster()}
+              getPlayerScore={getPlayerScore}
             />
           </div>
         </div>

@@ -6,7 +6,9 @@ export {
   getCachedResult,
   invalidateCache,
   invalidateCachePattern,
+  listCacheKeys,
   withCache,
+  withCacheGated,
 } from './cache';
 
 export {
@@ -51,6 +53,15 @@ export {
   getLeagueRosterPositions,
 } from './roster';
 
+export { getLeagueLimits } from './limits';
+export type { LeagueLimits } from './limits';
+
 export { getLeagueTransactions } from './transactions';
 
-export { getAvailablePitchers, getTopAvailableBatters, getAvailableBatters } from './players';
+export {
+  getAvailablePitchers,
+  getTopAvailableBatters,
+  getAvailableBatters,
+  getPlayerMarketSignals,
+} from './players';
+export type { PlayerMarketSignals } from './players';

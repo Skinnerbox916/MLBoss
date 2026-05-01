@@ -65,7 +65,7 @@ function TxRow({ tx, myTeamKey, standings }: {
             </span>
           )}
           {tx.timestamp && (
-            <span className="text-[10px] text-muted-foreground">{timeAgo(tx.timestamp)}</span>
+            <span className="text-caption text-muted-foreground">{timeAgo(tx.timestamp)}</span>
           )}
         </div>
         {/* Players */}
@@ -74,14 +74,14 @@ function TxRow({ tx, myTeamKey, standings }: {
             <div key={p.player_key} className="flex items-baseline gap-1 text-xs">
               <span className="text-success font-bold shrink-0">+</span>
               <span className="font-medium">{p.name}</span>
-              <span className="text-muted-foreground text-[10px]">{p.display_position}</span>
+              <span className="text-muted-foreground text-caption">{p.display_position}</span>
             </div>
           ))}
           {dropped.map(p => (
             <div key={p.player_key} className="flex items-baseline gap-1 text-xs">
               <span className="text-error font-bold shrink-0">−</span>
               <span className="text-muted-foreground">{p.name}</span>
-              <span className="text-muted-foreground text-[10px]">{p.display_position}</span>
+              <span className="text-muted-foreground text-caption">{p.display_position}</span>
             </div>
           ))}
           {tx.type === 'trade' && (

@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { YahooOAuth, YahooUserInfo } from '@/lib/yahoo-oauth';
-import { redisUtils } from '@/lib/redis';
+import { redis, redisUtils } from '@/lib/redis';
 import { getSession } from '@/lib/session';
 
 export async function GET(request: NextRequest) {
@@ -96,7 +96,10 @@ export async function GET(request: NextRequest) {
     session.user = userData;
     await session.save();
 
-    // Store tokens in Redis as backup with 'user:' prefix
+    // Store tokens in Redis as a backup of the encrypted iron-session
+    // cookie (the cookie is the source of truth for auth). Single MULTI
+    // so the user hash, its 7-day TTL, and the token-to-userId lookup
+    // all land atomically — concurrent reads can't see partial state.
     const userRedisKey = `user:${userId}`;
     const userRedisData = {
       id: userId,
@@ -108,17 +111,13 @@ export async function GET(request: NextRequest) {
       profile: userInfo ? JSON.stringify(userInfo) : '{}',
       lastLogin: Date.now().toString()
     };
-
-    // Store user data in Redis with hash structure (expires in 7 days)
-    const pipeline = redisUtils;
-    for (const [field, value] of Object.entries(userRedisData)) {
-      await pipeline.hset(userRedisKey, field, value);
-    }
-    await redisUtils.expire(userRedisKey, 7 * 24 * 60 * 60); // 7 days
-
-    // Also store a mapping from access token to user ID for quick lookups
     const tokenKey = `token:${tokenResponse.access_token}`;
-    await redisUtils.set(tokenKey, userId, tokenResponse.expires_in);
+
+    await redis.multi()
+      .hset(userRedisKey, userRedisData)
+      .expire(userRedisKey, 7 * 24 * 60 * 60)
+      .set(tokenKey, userId, 'EX', tokenResponse.expires_in)
+      .exec();
 
     // Success log
     console.log('OAuth callback successful for user:', userId);

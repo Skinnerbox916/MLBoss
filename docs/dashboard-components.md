@@ -25,7 +25,7 @@ flowchart TD
 ```
 
 ## Key data layer functions
-(Defined in `src/lib/fantasy/`, documented in `docs/data-layer.md`)
+(Defined in `src/lib/fantasy/`, documented in `docs/data-architecture.md`)
 
 - `getCurrentMLBGameKey()` — current season info
 - `analyzeUserFantasyLeagues()` — league/team discovery
@@ -44,4 +44,4 @@ _Note: dashboard cards currently use dummy data; hooks will be connected as data
 **Icon Usage**: Cards use the `icon` prop which expects a react-icons component (not emoji). See the "Icon System" section in `docs/design-system.md` for guidelines on choosing appropriate icons from Game Icons (`react-icons/gi`) for baseball-specific graphics or Feather Icons (`react-icons/fi`) for general UI elements.
 
 ---
-For UI guidelines (colors, typography) see `docs/design-system.md`. For data layer details see `docs/data-layer.md`. 
+For UI guidelines (colors, typography) see `docs/design-system.md`. For data layer details see `docs/data-architecture.md`. 

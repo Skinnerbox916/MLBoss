@@ -71,6 +71,10 @@
 }
 
 @theme inline {
+  /* Data-dense typography scale */
+  --font-size-caption: 10px;
+  --font-size-micro: 9px;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-primary:   var(--primary);

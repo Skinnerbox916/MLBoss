@@ -1,5 +1,5 @@
 import { YahooOAuth } from '@/lib/yahoo-oauth';
-import { redisUtils } from '@/lib/redis';
+import { redis, redisUtils } from '@/lib/redis';
 import { getSession } from '@/lib/session';
 
 interface YahooFantasyAPIError {
@@ -173,6 +173,12 @@ export interface RosterEntry {
   starting_status?: string;
   /** Batting order position (1-9) from Yahoo, or null when not in lineup / not yet posted. */
   batting_order: number | null;
+  /** Current percent owned across Yahoo leagues (0-100). Market-wide confidence. */
+  percent_owned?: number;
+  /** Average draft pick across Yahoo leagues this preseason. Lower = drafted earlier. */
+  average_draft_pick?: number;
+  /** Fraction of leagues where player was drafted (0-1). */
+  percent_drafted?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +198,14 @@ export interface FreeAgentPlayer {
   on_disabled_list: boolean;
   uniform_number?: string;
   ownership_type: 'freeagent' | 'waivers';
+  /** When the player clears waivers (YYYY-MM-DD), populated only for `ownership_type === 'waivers'`. */
+  waiver_date?: string;
+  /** Current percent owned across Yahoo leagues (0-100). Market-wide confidence. */
+  percent_owned?: number;
+  /** Average draft pick across Yahoo leagues this preseason. Lower = drafted earlier. */
+  average_draft_pick?: number;
+  /** Fraction of leagues where player was drafted (0-1). */
+  percent_drafted?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +250,51 @@ function escapeXml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+/**
+ * Normalize Yahoo's variable team-logos shape to a flat `[{ size, url }]`
+ * array.
+ *
+ * Yahoo wraps each entry in a `team_logo` envelope and may use either an
+ * array or a numeric-keyed object as the outer container:
+ *
+ *   [{ team_logo: { size, url } }]
+ *   { "0": { team_logo: { size, url } }, "count": 1 }
+ *   [{ size, url }]                            ← already flattened
+ *   undefined / null
+ *
+ * Returns an empty array on any unknown shape so callers can rely on the
+ * declared `Array<{ size: string; url: string }>` interface.
+ */
+function normalizeTeamLogos(raw: unknown): Array<{ size: string; url: string }> {
+  if (!raw) return [];
+  let entries: unknown[] = [];
+  if (Array.isArray(raw)) {
+    entries = raw;
+  } else if (typeof raw === 'object') {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (k === 'count') continue;
+      entries.push(v);
+    }
+  } else {
+    return [];
+  }
+
+  const out: Array<{ size: string; url: string }> = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const inner = (entry as Record<string, unknown>).team_logo ?? entry;
+    if (!inner || typeof inner !== 'object') continue;
+    const obj = inner as Record<string, unknown>;
+    const url = typeof obj.url === 'string' ? obj.url : undefined;
+    if (!url) continue;
+    out.push({
+      size: typeof obj.size === 'string' ? obj.size : 'medium',
+      url,
+    });
+  }
+  return out;
 }
 
 /**
@@ -338,17 +397,24 @@ export class YahooFantasyAPI {
           }
         }
 
-        // Always update Redis backup
+        // Always update Redis backup. Single MULTI so the hash fields,
+        // its 7-day TTL re-up, the stale token-lookup deletion, and the
+        // new token-lookup write all land atomically — concurrent
+        // requests can't see partial state mid-refresh.
         const userRedisKey = `user:${user.id}`;
-        await redisUtils.hset(userRedisKey, 'accessToken', newTokens.access_token);
-        await redisUtils.hset(userRedisKey, 'refreshToken', newTokens.refresh_token);
-        await redisUtils.hset(userRedisKey, 'expiresAt', newExpiresAt.toString());
-
-        // Update token lookup mapping
         const oldTokenKey = `token:${user.accessToken}`;
         const newTokenKey = `token:${newTokens.access_token}`;
-        await redisUtils.del(oldTokenKey);
-        await redisUtils.set(newTokenKey, user.id, newTokens.expires_in);
+
+        await redis.multi()
+          .hset(userRedisKey, {
+            accessToken: newTokens.access_token,
+            refreshToken: newTokens.refresh_token,
+            expiresAt: newExpiresAt.toString(),
+          })
+          .expire(userRedisKey, 7 * 24 * 60 * 60)
+          .del(oldTokenKey)
+          .set(newTokenKey, user.id, 'EX', newTokens.expires_in)
+          .exec();
 
         console.log('Access token refreshed successfully');
         return newTokens.access_token;
@@ -648,7 +714,7 @@ export class YahooFantasyAPI {
                     name: teamInfo.name || 'Unknown Team',
                     is_owned_by_current_login: teamInfo.is_owned_by_current_login,
                     url: teamInfo.url || '',
-                    team_logos: teamInfo.team_logos || [],
+                    team_logos: normalizeTeamLogos(teamInfo.team_logos),
                     waiver_priority: teamInfo.waiver_priority,
                     number_of_moves: teamInfo.number_of_moves,
                     number_of_trades: teamInfo.number_of_trades,
@@ -949,6 +1015,76 @@ export class YahooFantasyAPI {
   }
 
   /**
+   * Read the league's weekly transaction / pitching caps from settings.
+   *
+   * Yahoo's settings JSON is loosely typed and the exact key names vary by
+   * league type — we defensively check several known candidates and return
+   * `null` when the league has no cap configured. Callers should hide the
+   * UI affordance when the corresponding limit is null (no setting → don't
+   * imply one exists).
+   */
+  async getLeagueLimits(leagueKey: string): Promise<{
+    /** Maximum weekly free-agent / waiver adds (null = unlimited). */
+    maxWeeklyAdds: number | null;
+    /** Maximum innings pitched cap (null = no cap). Yahoo sometimes scopes
+     *  this season-wide, sometimes weekly — we surface it raw and let the
+     *  UI label it appropriately. */
+    maxInningsPitched: number | null;
+    /** Maximum games started cap (null = no cap). */
+    maxGamesStarted: number | null;
+  }> {
+    const settings = await this.getLeagueSettings(leagueKey);
+
+    // Yahoo wraps settings inconsistently — flatten into a single object so
+    // candidate field lookups don't have to repeat the array-vs-object dance.
+    const flat: Record<string, unknown> = {};
+    const collect = (obj: unknown): void => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) {
+        for (const item of obj) collect(item);
+        return;
+      }
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === 'object') {
+          // Don't recurse into sub-resources we know aren't settings caps —
+          // stat_categories / roster_positions are large and noisy.
+          if (k === 'stat_categories' || k === 'roster_positions') continue;
+          collect(v);
+        } else if (flat[k] === undefined) {
+          flat[k] = v;
+        }
+      }
+    };
+    collect(settings);
+
+    const readNumber = (...keys: string[]): number | null => {
+      for (const key of keys) {
+        const raw = flat[key];
+        if (raw === undefined || raw === null || raw === '') continue;
+        const num = typeof raw === 'number' ? raw : parseFloat(String(raw));
+        if (Number.isFinite(num) && num > 0) return num;
+      }
+      return null;
+    };
+
+    return {
+      maxWeeklyAdds: readNumber('max_weekly_adds', 'max_adds_per_week', 'max_adds'),
+      maxInningsPitched: readNumber(
+        'max_weekly_innings_pitched',
+        'max_innings_pitched',
+        'pitcher_innings_max',
+        'innings_pitched_max',
+      ),
+      maxGamesStarted: readNumber(
+        'max_weekly_games_started',
+        'max_games_started',
+        'pitcher_games_started_max',
+      ),
+    };
+  }
+
+  /**
    * Get stat categories used by a specific league
    * @param leagueKey - The league key (e.g., "458.l.123456")
    * @returns Array of stat categories used by this league with enriched metadata
@@ -1066,7 +1202,7 @@ export class YahooFantasyAPI {
         name: props.name ?? 'Unknown',
         is_owned_by_current_login: props.is_owned_by_current_login,
         url: props.url ?? '',
-        team_logos: props.team_logos ?? [],
+        team_logos: normalizeTeamLogos(props.team_logos),
         rank: standings?.rank ? Number(standings.rank) : undefined,
         wins: standings?.outcome_totals?.wins ? Number(standings.outcome_totals.wins) : undefined,
         losses: standings?.outcome_totals?.losses ? Number(standings.outcome_totals.losses) : undefined,
@@ -1162,7 +1298,7 @@ export class YahooFantasyAPI {
             team_id: teamProps.team_id ?? '',
             name: teamProps.name ?? 'Unknown',
             is_owned_by_current_login: teamProps.is_owned_by_current_login,
-            team_logos: teamProps.team_logos ?? [],
+            team_logos: normalizeTeamLogos(teamProps.team_logos),
             points: teamPoints,
             stats,
           });
@@ -1233,6 +1369,77 @@ export class YahooFantasyAPI {
   // =========================================================================
   // Roster
   // =========================================================================
+
+  /**
+   * Parse the `percent_owned` and `draft_analysis` subresource blocks out of a
+   * Yahoo player array. These live alongside the main props block as sibling
+   * objects after `;out=percent_owned,draft_analysis` is requested.
+   *
+   * Both subresources return tiny fragment arrays that mix metadata + values
+   * across multiple sibling objects. We walk them defensively — Yahoo can
+   * return the fields as strings OR numbers, and may omit them entirely for
+   * rookies / undrafted players. Returns undefined for any signal we can't
+   * confidently extract.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private parsePlayerMarketSignals(playerArray: any[]): {
+    percent_owned?: number;
+    average_draft_pick?: number;
+    percent_drafted?: number;
+  } {
+    const out: {
+      percent_owned?: number;
+      average_draft_pick?: number;
+      percent_drafted?: number;
+    } = {};
+
+    const toNum = (v: unknown): number | undefined => {
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+      if (typeof v === 'string' && v.trim().length > 0) {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n;
+      }
+      return undefined;
+    };
+
+    for (const el of playerArray) {
+      if (!el || typeof el !== 'object') continue;
+
+      // percent_owned: { percent_owned: [ { coverage_type, ... }, { value, delta } ] }
+      if ('percent_owned' in el) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const po = (el as any).percent_owned;
+        if (Array.isArray(po)) {
+          for (const p of po) {
+            if (!p || typeof p !== 'object') continue;
+            const v = toNum(p.value);
+            if (v !== undefined) out.percent_owned = v;
+          }
+        }
+      }
+
+      // draft_analysis: { draft_analysis: [ { average_pick }, { average_round }, { average_cost }, { percent_drafted } ] }
+      if ('draft_analysis' in el) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const da = (el as any).draft_analysis;
+        if (Array.isArray(da)) {
+          for (const d of da) {
+            if (!d || typeof d !== 'object') continue;
+            const pick = toNum(d.average_pick);
+            if (pick !== undefined && out.average_draft_pick === undefined) {
+              out.average_draft_pick = pick;
+            }
+            const pct = toNum(d.percent_drafted);
+            if (pct !== undefined && out.percent_drafted === undefined) {
+              out.percent_drafted = pct;
+            }
+          }
+        }
+      }
+    }
+
+    return out;
+  }
 
   /**
    * Get team roster (players and their positions/status).
@@ -1604,7 +1811,7 @@ export class YahooFantasyAPI {
             team_id: tProps.team_id ?? '',
             name: tProps.name ?? 'Unknown',
             is_owned_by_current_login: tProps.is_owned_by_current_login,
-            team_logos: tProps.team_logos ?? [],
+            team_logos: normalizeTeamLogos(tProps.team_logos),
             stats: [],
           });
         }
@@ -1630,22 +1837,43 @@ export class YahooFantasyAPI {
   /**
    * Get free agent players from a league, optionally filtered by position.
    * Yahoo caps at 25 per page. This fetches up to `maxPages` pages.
-   * @param status - 'FA' for free agents only, 'A' for all available (FA + waivers)
+   * @param status - 'FA' for free agents only, 'W' for waivers only, 'A' for all available (FA + waivers)
    */
   async getLeaguePlayers(
     leagueKey: string,
-    options?: { position?: string; status?: 'FA' | 'A'; count?: number; maxPages?: number },
+    options?: {
+      position?: string;
+      status?: 'FA' | 'A' | 'W';
+      count?: number;
+      maxPages?: number;
+      /**
+       * Yahoo player-collection sort. Common values:
+       *   - `AR`  Actual Rank (current-season performance per Yahoo).
+       *   - `OR`  Overall Rank (preseason fantasy ranking — default in
+       *           Yahoo's API when omitted, which is what their UI calls
+       *           "Pre-Season"). Use this for draft tools.
+       *   - `PTS` Fantasy points.
+       *   - `A`   Add count.
+       * Omit to use Yahoo's default (OR — preseason). For the upgrade
+       * targets / streaming surfaces we want AR so breakouts who ranked
+       * low pre-season but are killing it now actually appear.
+       */
+      sort?: 'AR' | 'OR' | 'PTS' | 'A';
+    },
   ): Promise<FreeAgentPlayer[]> {
     const status = options?.status ?? 'A';
     const count = options?.count ?? 25;
     const maxPages = options?.maxPages ?? 4; // 100 players max
     const posParam = options?.position ? `;position=${options.position}` : '';
+    const sortParam = options?.sort ? `;sort=${options.sort}` : '';
 
     const players: FreeAgentPlayer[] = [];
 
     for (let page = 0; page < maxPages; page++) {
       const start = page * count;
-      const endpoint = `/league/${leagueKey}/players;status=${status}${posParam};start=${start};count=${count}`;
+      // ;out=percent_owned,draft_analysis hydrates each player with
+      // market-confidence signals in the same request.
+      const endpoint = `/league/${leagueKey}/players;status=${status}${posParam}${sortParam};start=${start};count=${count};out=percent_owned,draft_analysis`;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response = await this.request<YahooAPIResponse<any>>(endpoint);
@@ -1692,11 +1920,15 @@ export class YahooFantasyAPI {
           }
         }
 
-        // Determine ownership type
-        let ownershipType: 'freeagent' | 'waivers' = 'freeagent';
-        if (playerProps.ownership?.ownership_type === 'waivers') {
-          ownershipType = 'waivers';
-        }
+        // Ownership type. Yahoo's player-listing response does NOT include
+        // an `ownership` block here even with `;out=ownership` — the fact
+        // that a player came back from `status=W` is itself the signal that
+        // they're on waivers. We tag them at the caller (merge) layer rather
+        // than try to infer it from the row.
+        const ownershipType: 'freeagent' | 'waivers' = 'freeagent';
+        const waiverDate: string | undefined = undefined;
+
+        const market = this.parsePlayerMarketSignals(playerArray);
 
         players.push({
           player_key: playerProps.player_key ?? '',
@@ -1711,6 +1943,10 @@ export class YahooFantasyAPI {
           on_disabled_list: playerProps.on_disabled_list === 1,
           uniform_number: playerProps.uniform_number ?? undefined,
           ownership_type: ownershipType,
+          waiver_date: waiverDate,
+          percent_owned: market.percent_owned,
+          average_draft_pick: market.average_draft_pick,
+          percent_drafted: market.percent_drafted,
         });
         foundAny = true;
       }
@@ -1722,6 +1958,57 @@ export class YahooFantasyAPI {
     }
 
     return players;
+  }
+
+  /**
+   * Batch-fetch percent_owned + draft_analysis for an arbitrary set of
+   * player_keys (e.g. the current roster). Yahoo caps `player_keys` lists at
+   * 25 per request, so we page through in chunks.
+   *
+   * Returns a Map keyed by player_key — missing entries mean Yahoo didn't
+   * return data for that player (e.g. rookie with no preseason ADP).
+   */
+  async getPlayersMarketSignals(
+    playerKeys: string[],
+  ): Promise<Map<string, { percent_owned?: number; average_draft_pick?: number; percent_drafted?: number }>> {
+    const result = new Map<string, { percent_owned?: number; average_draft_pick?: number; percent_drafted?: number }>();
+    if (playerKeys.length === 0) return result;
+
+    const CHUNK = 25;
+    for (let i = 0; i < playerKeys.length; i += CHUNK) {
+      const chunk = playerKeys.slice(i, i + CHUNK);
+      const endpoint = `/players;player_keys=${chunk.join(',')};out=percent_owned,draft_analysis`;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const response = await this.request<YahooAPIResponse<any>>(endpoint);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const playersData: any = response.fantasy_content?.players;
+      if (!playersData) continue;
+
+      for (const [key, pContainer] of Object.entries(playersData)) {
+        if (key === 'count') continue;
+        if (typeof pContainer !== 'object' || !pContainer || !('player' in pContainer)) continue;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const playerArray = (pContainer as any).player;
+        if (!Array.isArray(playerArray)) continue;
+
+        // Extract player_key from the flat props block at index 0.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const props: any = {};
+        if (Array.isArray(playerArray[0])) {
+          for (const p of playerArray[0]) {
+            if (typeof p === 'object' && p) Object.assign(props, p);
+          }
+        }
+        const playerKey = props.player_key;
+        if (!playerKey) continue;
+
+        result.set(playerKey, this.parsePlayerMarketSignals(playerArray));
+      }
+    }
+
+    return result;
   }
 
   /**

@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache';
-import { redis, redisUtils } from '@/lib/redis';
+import { redis } from '@/lib/redis';
+import { listCacheKeys } from '@/lib/fantasy/cache';
 import AppLayout from '@/components/layout/AppLayout';
 
 // ---------------------------------------------------------------------------
@@ -8,9 +9,14 @@ import AppLayout from '@/components/layout/AppLayout';
 
 async function clearTier(pattern: string) {
   'use server';
-  const keys = await redisUtils.keys(pattern);
-  if (keys.length > 0) {
-    await redis.del(...keys);
+  const keys = await listCacheKeys(pattern);
+  if (keys.length === 0) {
+    revalidatePath('/admin/cache');
+    return;
+  }
+  const BATCH = 500;
+  for (let i = 0; i < keys.length; i += BATCH) {
+    await redis.del(...keys.slice(i, i + BATCH));
   }
   revalidatePath('/admin/cache');
 }
@@ -45,7 +51,7 @@ interface CacheEntry {
 }
 
 async function getCacheEntries(): Promise<CacheEntry[]> {
-  const keys = await redisUtils.keys('cache:*');
+  const keys = await listCacheKeys('cache:*');
   if (keys.length === 0) return [];
 
   const pipeline = redis.pipeline();

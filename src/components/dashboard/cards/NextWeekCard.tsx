@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import { FiCalendar } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
+import DivergingRow from '@/components/ui/DivergingRow';
 import { useFantasy } from '../FantasyProvider';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useStandings } from '@/lib/hooks/useStandings';
 import { useTeamStats } from '@/lib/hooks/useTeamStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { parseIPToOuts } from '@/lib/utils';
+import { formatStatDelta } from '@/lib/formatStat';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 
 function formatIPDelta(myRaw: string, oppRaw: string): { deltaStr: string; relDelta: number; winning: boolean | null } {
@@ -37,17 +39,6 @@ interface CategoryRow {
   deltaStr: string;
 }
 
-function formatDelta(delta: number, name: string): string {
-  if (delta === 0) return '0';
-  const sign = delta > 0 ? '+' : '';
-  if (['AVG', 'OBP', 'SLG', 'OPS'].includes(name)) {
-    const abs = Math.abs(delta);
-    return (delta < 0 ? '-' : '+') + abs.toFixed(3).replace(/^0\./, '.');
-  }
-  if (name === 'ERA' || name === 'WHIP') return sign + delta.toFixed(2);
-  return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(3));
-}
-
 function buildRows(
   cats: EnrichedLeagueStatCategory[],
   myMap: Map<number, string>,
@@ -72,39 +63,10 @@ function buildRows(
     const relDelta = Math.abs(delta) / maxVal;
     const winning = delta !== 0 ? (cat.betterIs === 'higher' ? delta > 0 : delta < 0) : null;
 
-    return [{ label: cat.display_name, relDelta, winning, deltaStr: formatDelta(delta, cat.name) }];
+    return [{ label: cat.display_name, relDelta, winning, deltaStr: formatStatDelta(delta, cat.name) }];
   });
 }
 
-// ---------------------------------------------------------------------------
-// Diverging bar row
-// ---------------------------------------------------------------------------
-
-function DivergingRow({ row, maxRel }: { row: CategoryRow; maxRel: number }) {
-  const barPct = maxRel > 0 ? (row.relDelta / maxRel) * 42 : 0;
-  const isWin = row.winning === true;
-  const isLoss = row.winning === false;
-  const barColor = isWin ? 'bg-success' : isLoss ? 'bg-error' : 'bg-muted-foreground';
-  const textColor = isWin ? 'text-success' : isLoss ? 'text-error' : 'text-muted-foreground';
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-9 text-[11px] font-medium text-foreground shrink-0 truncate">{row.label}</span>
-      <div className="flex-1 flex items-center h-4 relative">
-        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-border" />
-        {barPct > 0 && isWin && (
-          <div className={`absolute left-1/2 top-0.5 bottom-0.5 rounded-r ${barColor}`} style={{ width: `${barPct}%` }} />
-        )}
-        {barPct > 0 && isLoss && (
-          <div className={`absolute top-0.5 bottom-0.5 rounded-l ${barColor}`} style={{ width: `${barPct}%`, right: '50%' }} />
-        )}
-      </div>
-      <span className={`w-10 text-[11px] text-right font-bold shrink-0 font-mono tabular-nums ${textColor}`}>
-        {row.deltaStr}
-      </span>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Card
@@ -204,7 +166,17 @@ export default function NextWeekCard() {
 
               <div className="space-y-0.5">
                 {activeRows.length > 0 ? (
-                  activeRows.map(row => <DivergingRow key={row.label} row={row} maxRel={maxRel} />)
+                  activeRows.map(row => (
+                    <DivergingRow
+                      key={row.label}
+                      label={row.label}
+                      relDelta={row.relDelta}
+                      maxRel={maxRel}
+                      winning={row.winning}
+                      deltaStr={row.deltaStr}
+                      deltaWidth="w-10"
+                    />
+                  ))
                 ) : (
                   <p className="text-xs text-muted-foreground text-center py-2">No {activeTab} data</p>
                 )}

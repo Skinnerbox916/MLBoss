@@ -64,8 +64,8 @@ export default function PlayerUpdatesCard() {
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-sm truncate">{player.name}</span>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-[10px] text-muted-foreground">{player.editorial_team_abbr}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${cfg.bg} ${cfg.text}`}>
+                      <span className="text-caption text-muted-foreground">{player.editorial_team_abbr}</span>
+                      <span className={`text-caption px-1.5 py-0.5 rounded font-semibold ${cfg.bg} ${cfg.text}`}>
                         {player.status}
                       </span>
                     </div>

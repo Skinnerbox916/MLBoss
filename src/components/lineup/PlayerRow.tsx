@@ -1,25 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { FiChevronDown, FiTrendingUp, FiTrendingDown } from 'react-icons/fi';
-import { GiRunningShoe } from 'react-icons/gi';
+import { FiChevronDown } from 'react-icons/fi';
 import Icon from '@/components/Icon';
+import Badge from '@/components/ui/Badge';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
-import type { BatterSeasonStats } from '@/lib/mlb/types';
+import type { PlayerStatLine } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
-import {
-  getHandednessVerdict,
-  getFormTrend,
-  getWeatherFlag,
-  getPitcherQualityPill,
-  getParkVerdict,
-  getStealPill,
-  getCareerVsPitcherPill,
-  getOpposingStaffPill,
-  getPitcherKRatePill,
-  getBatterMatchupScore,
-  type BatterMatchupScore,
-} from '@/lib/mlb/analysis';
+import { getWeatherFlag } from '@/lib/mlb/analysis';
+import { getBatterRating, type BatterRating, type Focus } from '@/lib/mlb/batterRating';
+import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { usePlayerSplits } from '@/lib/hooks/usePlayerSplits';
 import PlayerSplitsPanel from './PlayerSplitsPanel';
 
@@ -31,71 +21,7 @@ import { getRowStatus } from './types';
 
 function StatusBadge({ status }: { status: string }) {
   const isIL = status.includes('IL') || status === 'DL' || status === 'NA';
-  const color = isIL ? 'bg-error/15 text-error' : 'bg-accent/15 text-accent';
-  return (
-    <span className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${color}`}>
-      {status}
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Verdict pills
-// ---------------------------------------------------------------------------
-
-function VerdictPill({
-  verdict,
-  label,
-}: {
-  verdict: 'strong' | 'neutral' | 'weak' | 'unknown';
-  label: string;
-}) {
-  if (!label) return null;
-  const bgClass =
-    verdict === 'strong' ? 'bg-success/15 text-success' :
-    verdict === 'weak' ? 'bg-error/15 text-error' :
-    'bg-surface-muted text-muted-foreground';
-  return (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${bgClass}`}>
-      {label}
-    </span>
-  );
-}
-
-function FormPill({
-  trend,
-  label,
-}: {
-  trend: 'hot' | 'cold' | 'neutral' | 'unknown';
-  label: string;
-}) {
-  if (!label) return null;
-  if (trend === 'hot') {
-    return (
-      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-success/15 text-success">
-        <Icon icon={FiTrendingUp} size={10} />
-        {label}
-      </span>
-    );
-  }
-  if (trend === 'cold') {
-    return (
-      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-error/15 text-error">
-        <Icon icon={FiTrendingDown} size={10} />
-        {label}
-      </span>
-    );
-  }
-  return null;
-}
-
-function StealPill({ label }: { label: string }) {
-  return (
-    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-accent/15 text-accent">
-      <Icon icon={GiRunningShoe} size={10} />
-      {label}
-    </span>
-  );
+  return <Badge color={isIL ? 'error' : 'accent'}>{status}</Badge>;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,15 +30,18 @@ function StealPill({ label }: { label: string }) {
 
 /**
  * Shows season OPS with colour coding for talent level.
- * When xwOBA is available and diverges significantly from actual wOBA,
- * shows a small luck indicator:
+ * When the talent xwOBA diverges significantly from actual wOBA, shows a
+ * small luck indicator:
  *   ↑ player is getting unlucky (xwOBA >> wOBA) — likely to improve
  *   ↓ player is getting lucky  (xwOBA << wOBA) — likely to regress
  */
-function OPSBadge({ stats }: { stats: BatterSeasonStats | null }) {
-  if (!stats || stats.ops === null) return null;
+function OPSBadge({ stats }: { stats: PlayerStatLine | null }) {
+  // Prefer current-season counting; fall back to prior so IL'd players
+  // and pre-debut promotions still get a rating instead of an empty slot.
+  const counting = stats?.current ?? stats?.prior ?? null;
+  if (!counting || counting.ops === null) return null;
 
-  const ops = stats.ops;
+  const ops = counting.ops;
   const display = ops.toFixed(3).replace(/^0\./, '.');
 
   let color = 'text-muted-foreground';
@@ -121,19 +50,22 @@ function OPSBadge({ stats }: { stats: BatterSeasonStats | null }) {
   else if (ops >= 0.720) color = 'text-foreground';
   else if (ops < 0.650) color = 'text-error';
 
-  // Luck indicator: wOBA delta ≥ 0.030 is meaningful (roughly 10 OPS points)
+  // Luck arrow uses regressed talent xwOBA vs blended actual wOBA — the
+  // "talent vs production" gap, not raw current-year only.
   let luckIndicator: React.ReactNode = null;
-  if (stats.xwoba !== null && stats.woba !== null) {
-    const delta = stats.xwoba - stats.woba;
+  const talentXwoba = stats?.talent?.xwoba ?? null;
+  const actualWoba = stats?.talent?.woba ?? null;
+  if (talentXwoba !== null && actualWoba !== null) {
+    const delta = talentXwoba - actualWoba;
     if (delta >= 0.030) {
       luckIndicator = (
-        <span className="text-success text-[10px]" title={`xwOBA ${stats.xwoba.toFixed(3)} vs wOBA ${stats.woba.toFixed(3)} — getting unlucky`}>
+        <span className="text-success text-caption" title={`xwOBA ${talentXwoba.toFixed(3)} vs wOBA ${actualWoba.toFixed(3)} — getting unlucky`}>
           ↑
         </span>
       );
     } else if (delta <= -0.030) {
       luckIndicator = (
-        <span className="text-error text-[10px]" title={`xwOBA ${stats.xwoba.toFixed(3)} vs wOBA ${stats.woba.toFixed(3)} — getting lucky`}>
+        <span className="text-error text-caption" title={`xwOBA ${talentXwoba.toFixed(3)} vs wOBA ${actualWoba.toFixed(3)} — getting lucky`}>
           ↓
         </span>
       );
@@ -141,34 +73,31 @@ function OPSBadge({ stats }: { stats: BatterSeasonStats | null }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-0.5" title="Season OPS">
+    <span className="inline-flex items-baseline gap-0.5" title="Season OPS">
       <span className={`text-xs font-mono ${color}`}>{display}</span>
+      <span className="text-[9px] text-muted-foreground uppercase tracking-wide font-semibold">OPS</span>
       {luckIndicator}
     </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Matchup score indicator — left-edge accent + tier label
+// Matchup score indicator — left-edge accent + row tint only. The tier
+// text label ("Great" / "Good" / etc.) is omitted here to avoid triple-
+// counting with the border color and the row background tint; the
+// precise number surfaces inside the expanded card.
 // ---------------------------------------------------------------------------
 
-function matchupTierStyle(tier: BatterMatchupScore['tier']): {
+function matchupTierStyle(tier: BatterRating['tier']): {
   border: string;
   bg: string;
-  label: string;
-  labelColor: string;
 } {
   switch (tier) {
-    case 'great':
-      return { border: 'border-l-success', bg: 'bg-success/5', label: 'Great', labelColor: 'text-success' };
-    case 'good':
-      return { border: 'border-l-success/50', bg: 'bg-success/[0.02]', label: 'Good', labelColor: 'text-success' };
-    case 'neutral':
-      return { border: 'border-l-border', bg: '', label: '', labelColor: '' };
-    case 'poor':
-      return { border: 'border-l-error/50', bg: 'bg-error/[0.02]', label: 'Poor', labelColor: 'text-error' };
-    case 'bad':
-      return { border: 'border-l-error', bg: 'bg-error/5', label: 'Bad', labelColor: 'text-error' };
+    case 'great':   return { border: 'border-l-success',      bg: 'bg-success/5' };
+    case 'good':    return { border: 'border-l-success/50',   bg: 'bg-success/5' };
+    case 'neutral': return { border: 'border-l-border',       bg: '' };
+    case 'poor':    return { border: 'border-l-error/50',     bg: 'bg-error/5' };
+    case 'bad':     return { border: 'border-l-error',        bg: 'bg-error/5' };
   }
 }
 
@@ -241,16 +170,26 @@ function MatchupLine({ context }: { context: MatchupContext | null }) {
 interface PlayerRowProps {
   player: RosterEntry;
   context: MatchupContext | null;
-  seasonStats: BatterSeasonStats | null;
+  seasonStats: PlayerStatLine | null;
+  /** Batter-side scored categories (drives which rows appear in the waterfall). */
+  scoredBatterCategories: EnrichedLeagueStatCategory[];
+  /** Per-category chase/punt focus for this page (independent from roster page). */
+  focusMap: Record<number, Focus>;
 }
 
-export default function PlayerRow({ player, context, seasonStats }: PlayerRowProps) {
+export default function PlayerRow({
+  player,
+  context,
+  seasonStats,
+  scoredBatterCategories,
+  focusMap,
+}: PlayerRowProps) {
   const [expanded, setExpanded] = useState(false);
   const status = getRowStatus(player);
 
   const shouldFetchSplits = status !== 'injured' && !!context?.game;
 
-  const { identity, splits, careerVsPitcher, isLoading: splitsLoading, isError: splitsError } = usePlayerSplits(
+  const { splits, careerVsPitcher, isLoading: splitsLoading, isError: splitsError } = usePlayerSplits(
     shouldFetchSplits ? player.name : undefined,
     shouldFetchSplits ? player.editorial_team_abbr : undefined,
     {
@@ -258,34 +197,17 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
     },
   );
 
-  // Individual verdict pills
-  const handednessVerdict = getHandednessVerdict(splits, context?.opposingPitcher?.throws);
-  const formTrend = getFormTrend(splits);
-  const pitcherPill = getPitcherQualityPill(context?.opposingPitcher);
-  const parkPill = getParkVerdict(context?.park, identity?.bats);
-  const stealPill = getStealPill(splits);
-  const cvpPill = getCareerVsPitcherPill(careerVsPitcher, context?.opposingPitcher?.name);
-  const staffPill = getOpposingStaffPill(context);
-  const kRatePill = getPitcherKRatePill(context?.opposingPitcher);
-
-  // OPS fallback for talent baseline (used when xwOBA is unavailable)
-  const talentOPS = seasonStats?.ops ?? null;
-
-  // Composite score — blends talent baseline with matchup context
-  // Pass full seasonStats so the score function can use xwOBA directly
-  // and compute the luck regression (xwOBA − wOBA delta).
-  const matchupScore = getBatterMatchupScore(splits, careerVsPitcher, context, identity?.bats, talentOPS, seasonStats, player.batting_order);
-  const tierStyle = matchupTierStyle(matchupScore.tier);
-
-  const hasAnyPill =
-    handednessVerdict.label ||
-    parkPill ||
-    pitcherPill ||
-    kRatePill ||
-    staffPill ||
-    stealPill ||
-    cvpPill ||
-    formTrend.label;
+  // Category-weighted rating — driven by the scored categories in the
+  // user's league and their chase/punt focus choices. Per-category
+  // contributions and matchup multipliers feed the expanded card.
+  const rating = getBatterRating({
+    context,
+    stats: seasonStats,
+    scoredCategories: scoredBatterCategories,
+    focusMap,
+    battingOrder: player.batting_order,
+  });
+  const tierStyle = matchupTierStyle(rating.tier);
 
   const initial = player.name.charAt(0).toUpperCase();
 
@@ -315,26 +237,19 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
 
         {/* Player info + matchup context */}
         <div className="flex-1 min-w-0 space-y-0.5">
-          {/* Line 1: Name + OPS + status + team + position eligibility + matchup tier */}
+          {/* Line 1: Name + OPS + status + team + position eligibility */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-foreground truncate">{player.name}</span>
             {player.batting_order && (
-              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-primary/15 text-primary" title="Batting order">
+              <Badge color="primary" className="font-bold" title="Batting order">
                 #{player.batting_order}
-              </span>
+              </Badge>
             )}
             {player.starting_status === 'NS' && (
-              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-error/15 text-error">
-                SITTING
-              </span>
+              <Badge color="error" className="font-bold">SITTING</Badge>
             )}
             <OPSBadge stats={seasonStats} />
             {player.status && <StatusBadge status={player.status} />}
-            {tierStyle.label && (
-              <span className={`text-[10px] font-bold ${tierStyle.labelColor}`}>
-                {tierStyle.label}
-              </span>
-            )}
             <span className="text-[11px] text-muted-foreground">
               {player.editorial_team_abbr} · {player.eligible_positions.join(', ')}
             </span>
@@ -342,45 +257,16 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
 
           {/* Line 2: Matchup context */}
           <MatchupLine context={context} />
-
-          {/* Line 3: Verdict pills */}
-          {shouldFetchSplits && hasAnyPill && (
-            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-              {cvpPill && (
-                <VerdictPill verdict={cvpPill.verdict} label={cvpPill.label} />
-              )}
-              {pitcherPill && (
-                <VerdictPill verdict={pitcherPill.verdict} label={pitcherPill.label} />
-              )}
-              {kRatePill && (
-                <VerdictPill verdict={kRatePill.verdict} label={kRatePill.label} />
-              )}
-              {handednessVerdict.label && (
-                <VerdictPill verdict={handednessVerdict.verdict} label={handednessVerdict.label} />
-              )}
-              {staffPill && (
-                <VerdictPill verdict={staffPill.verdict} label={staffPill.label} />
-              )}
-              {parkPill && (
-                <VerdictPill verdict={parkPill.verdict} label={parkPill.label} />
-              )}
-              {stealPill && <StealPill label={stealPill.label} />}
-              {formTrend.label && <FormPill trend={formTrend.trend} label={formTrend.label} />}
-            </div>
-          )}
         </div>
 
         {/* Right side: current slot + chevron */}
         <div className="shrink-0 flex items-center gap-2 mt-0.5">
-          <span
-            className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${
-              status === 'starter' ? 'bg-success/15 text-success' :
-              status === 'injured' ? 'bg-error/15 text-error' :
-              'bg-surface-muted text-muted-foreground'
-            }`}
+          <Badge
+            color={status === 'starter' ? 'success' : status === 'injured' ? 'error' : 'muted'}
+            className="px-2 text-xs"
           >
             {player.selected_position}
-          </span>
+          </Badge>
           <Icon
             icon={FiChevronDown}
             size={16}
@@ -393,7 +279,11 @@ export default function PlayerRow({ player, context, seasonStats }: PlayerRowPro
       {expanded && (
         shouldFetchSplits ? (
           <PlayerSplitsPanel
-            matchupScore={matchupScore}
+            playerName={player.name}
+            rating={rating}
+            seasonStats={seasonStats}
+            splits={splits}
+            context={context}
             careerVsPitcher={careerVsPitcher}
             opposingPitcherName={context?.opposingPitcher?.name}
             isLoading={splitsLoading}

@@ -24,10 +24,10 @@ export const ENV_SCHEMA: EnvVarMeta[] = [
     description: 'Yahoo Developer application client secret.',
     example: 'a83f5c3…'
   },
-  { 
-    key: 'REDIS_URL', 
-    required: true, 
-    description: 'Connection string for Redis.',
+  {
+    key: 'REDIS_URL',
+    required: false,
+    description: 'Preferred way to configure Redis. When set, takes precedence over REDIS_HOST/PORT/DB. Either REDIS_URL or REDIS_HOST must be provided.',
     example: 'redis://localhost:6379'
   },
   { 
@@ -36,22 +36,28 @@ export const ENV_SCHEMA: EnvVarMeta[] = [
     description: '64-character random string used to encrypt iron-session cookies.',
     example: 'change_me_to_a_long_random_string'
   },
-  { 
-    key: 'REDIS_HOST', 
-    required: false, 
-    description: 'Alternative Redis host if not using REDIS_URL.',
+  {
+    key: 'REDIS_HOST',
+    required: false,
+    description: 'Redis host. Used when REDIS_URL is not set.',
     example: 'localhost'
   },
-  { 
-    key: 'REDIS_PORT', 
-    required: false, 
-    description: 'Alternative Redis port if not using REDIS_URL.',
+  {
+    key: 'REDIS_PORT',
+    required: false,
+    description: 'Redis port. Used when REDIS_URL is not set.',
     example: '6379'
   },
-  { 
-    key: 'REDIS_DB', 
-    required: false, 
-    description: 'Alternative Redis database number if not using REDIS_URL.',
+  {
+    key: 'REDIS_PASSWORD',
+    required: false,
+    description: 'Redis password. Used when REDIS_URL is not set and the server requires AUTH.',
+    example: ''
+  },
+  {
+    key: 'REDIS_DB',
+    required: false,
+    description: 'Redis database number. Used when REDIS_URL is not set.',
     example: '0'
   }
 ];
@@ -67,9 +73,16 @@ export function validateEnvVars(): void {
   const missing = ENV_SCHEMA
     .filter(({ key, required }) => required && !process.env[key])
     .map(({ key }) => key);
-  
+
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  // Redis is required, but it can be configured either via REDIS_URL or via
+  // the discrete REDIS_HOST/PORT/DB triplet. Enforce that here so the schema
+  // can leave both groups optional individually.
+  if (!process.env.REDIS_URL && !process.env.REDIS_HOST) {
+    throw new Error('Missing Redis configuration: set REDIS_URL or REDIS_HOST');
   }
 }
 

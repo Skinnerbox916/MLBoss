@@ -1,6 +1,7 @@
 import { getSession } from '@/lib/session';
 import APIHealthPanel from './APIHealthPanel';
 import RosterDebugPanel from './RosterDebugPanel';
+import IdentityMetricsPanel from './IdentityMetricsPanel';
 import LogoutButton from './LogoutButton';
 import { getCurrentMLBGameKey, analyzeUserFantasyLeagues, isTokenValid, refreshUserTokens, type LeagueAnalysis, type LeagueAnalysisEntry, type LeagueAnalysisSummary } from '@/lib/fantasy';
 import AppLayout from '@/components/layout/AppLayout';
@@ -61,6 +62,9 @@ export default async function AdminDebugPage() {
 
           {/* ── Roster & Lineup Debug ────────────────────────── */}
           <RosterDebugPanel />
+
+          {/* ── Identity Resolution Metrics ─────────────────── */}
+          <IdentityMetricsPanel />
 
           {/* ── Session & Leagues ──────────────────────────────── */}
           <div className="bg-surface rounded-lg border border-border p-4">

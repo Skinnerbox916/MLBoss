@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { type IconType } from 'react-icons';
 import Icon from '@/components/Icon';
+import Skeleton from '@/components/ui/Skeleton';
 
 export type CardSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -51,10 +52,10 @@ export default function DashboardCard({
         {/* Content */}
         <div className="flex-1 overflow-hidden">
           {isLoading ? (
-            <div className="animate-pulse">
-              <div className="h-4 bg-border-muted rounded w-3/4 mb-2"></div>
-              <div className="h-4 bg-border-muted rounded w-1/2 mb-2"></div>
-              <div className="h-4 bg-border-muted rounded w-2/3"></div>
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-2/3" />
             </div>
           ) : (
             children

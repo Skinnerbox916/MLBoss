@@ -1,16 +1,29 @@
-import Redis from 'ioredis';
+import Redis, { type RedisOptions } from 'ioredis';
 
-// Configuration for local Redis server
-const redisConfig = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-  password: process.env.REDIS_PASSWORD || undefined,
-  db: parseInt(process.env.REDIS_DB || '0'),
-  retryDelayOnFailover: 100,
-  enableReadyCheck: false,
-  maxRetriesPerRequest: null,
-  lazyConnect: true,
-};
+// Build the ioredis client. Prefer REDIS_URL (the documented env var); fall
+// back to discrete REDIS_HOST/REDIS_PORT/REDIS_PASSWORD/REDIS_DB so existing
+// .env.local files keep working. We let ioredis defaults stand for retry,
+// ready-check, and lazy-connect — the previous explicit overrides were
+// copy-pasted from a BullMQ snippet and made the cache less reliable
+// (notably maxRetriesPerRequest: null causes commands to hang forever
+// during a Redis outage instead of failing fast).
+
+function buildRedisClient(): Redis {
+  const url = process.env.REDIS_URL;
+  if (url) {
+    return new Redis(url);
+  }
+
+  const options: RedisOptions = {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    db: parseInt(process.env.REDIS_DB || '0'),
+  };
+  if (process.env.REDIS_PASSWORD) {
+    options.password = process.env.REDIS_PASSWORD;
+  }
+  return new Redis(options);
+}
 
 // Singleton Redis client
 class RedisClient {
@@ -18,34 +31,29 @@ class RedisClient {
 
   public static getInstance(): Redis {
     if (!RedisClient.instance) {
-      RedisClient.instance = new Redis(redisConfig);
-      
-      // Add connection event listeners
+      RedisClient.instance = buildRedisClient();
+
       RedisClient.instance.on('connect', () => {
         console.log('✅ Redis connected');
       });
-      
-      RedisClient.instance.on('ready', () => {
-        // Redis is ready to receive commands
-      });
-      
+
       RedisClient.instance.on('end', () => {
         console.log('🔴 Redis connection closed');
       });
-      
+
       RedisClient.instance.on('reconnecting', () => {
-        console.log('�� Redis reconnecting');
+        console.log('🔄 Redis reconnecting');
       });
-      
+
       RedisClient.instance.on('error', (err) => {
         console.error('❌ Redis error:', err);
       });
-      
+
       RedisClient.instance.on('close', () => {
         console.log('🔌 Redis client disconnected');
       });
     }
-    
+
     return RedisClient.instance;
   }
 
@@ -113,13 +121,14 @@ export const redisUtils = {
     return await redis.rpop(key);
   },
 
-  // Cache management utilities
+  /**
+   * Match keys by pattern. DEV-ONLY — backs ad-hoc debugging from the
+   * admin shell. Production cache invalidation goes through
+   * `invalidateCachePattern` in `src/lib/fantasy/cache.ts`, which uses
+   * SCAN. KEYS is O(N) over the full keyspace and blocks the server.
+   */
   async keys(pattern: string = '*'): Promise<string[]> {
     return await redis.keys(pattern);
-  },
-
-  async flushdb(): Promise<'OK'> {
-    return await redis.flushdb();
   },
 
   async dbsize(): Promise<number> {
@@ -129,4 +138,4 @@ export const redisUtils = {
   async memoryInfo(): Promise<string> {
     return await redis.info('memory');
   },
-}; 
+};

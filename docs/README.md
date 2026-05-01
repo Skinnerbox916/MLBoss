@@ -9,12 +9,15 @@ This index is the single authoritative table of contents for all Markdown docs i
 - **yahoo-api-reference.md** — Comprehensive Yahoo Fantasy Sports API guide.
 - **mlb-api-reference.md** — MLB Stats API guide: hydrate params, splits, early-season gap, disambiguation.
 - **dashboard-components.md** — Component-based dashboard architecture and integration guide.
-- **pitching-page.md** — Streaming board architecture: data pipeline, pills, composite score, matching.
+- **streaming-page.md** — Streaming board architecture: multi-day probables, data pipeline, pills, composite score, matching.
+- **ui-patterns.md** — Shared UI components, display patterns, and anti-patterns for LLM contributors.
 
-Fantasy data layer:
+Data layer:
 
-- **data-layer.md** — Architecture, caching, types, error handling, and full API reference.
+- **data-architecture.md** — Three-layer model, fetch + cache contract, identity contract, full Yahoo API reference.
+- **scoring-conventions.md** — Stat levels (raw / rate / talent / matchup-adjusted), calibration knobs, one-source-of-truth rule.
 - **stats.md** — Canonical `stat_id` model, stat enrichment, and disambiguation patterns.
+- **recommendation-system.md** — Matchup-state layer: `analyzeMatchup` as single source of truth, focus suggestions, Boss Brief, leverage bar.
 
 ---
 

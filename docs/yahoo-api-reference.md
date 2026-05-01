@@ -270,7 +270,11 @@ for (const [teamIndex, teamContainer] of Object.entries(teamsData)) {
 GET /league/{league_key}/players;status=FA;position=1B;start=0;count=25
 ```
 
-Use `status=A` for all available (FA + waivers). `count` max is 25—loop with `start` for paging.
+Use `status=A` for all available (FA + waivers), `status=W` for waivers only. `count` max is 25—loop with `start` for paging.
+
+**Quirk: row-level `ownership` is empty on this endpoint.** Adding `;out=ownership` does NOT cause the per-player `ownership` block (with `ownership_type` / `waiver_date`) to be populated — the flag is silently ignored. The only way to tell whether a player is currently on waivers from this endpoint is by the `status` you queried with: rows returned from `status=W` are on waivers, rows returned from `status=FA` are not. Tag at the query/merge layer rather than parsing the row.
+
+**Quirk: `waiver_date` is not exposed here at all.** To recover when a player clears waivers, cross-reference `/league/{key}/transactions` (drop timestamp) with the league's waiver-period setting from `/league/{key}/settings`.
 
 ### Draft Results
 

@@ -106,8 +106,18 @@ Error 1033 means the tunnel is configured but `cloudflared` is not running or ca
 # 1. Install dependencies
 npm install
 
-# 2. Start Redis (Docker example)
-docker run -d -p 6379:6379 redis:alpine
+# 2. Start Redis
+# One-time setup — creates a persistent container with a data volume that
+# auto-starts with Docker Desktop on boot:
+docker run -d \
+  --name mlboss-redis \
+  --restart unless-stopped \
+  -p 6379:6379 \
+  -v mlboss-redis-data:/data \
+  redis:alpine redis-server --appendonly yes
+
+# After the initial setup, if the container is ever stopped:
+docker start mlboss-redis
 
 # 3. Kill any stale dev servers first
 pkill -f "next-server" 2>/dev/null

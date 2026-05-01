@@ -3,9 +3,12 @@
 import { useState, useMemo } from 'react';
 import { FiChevronUp, FiChevronDown } from 'react-icons/fi';
 import Icon from '@/components/Icon';
+import Panel from '@/components/ui/Panel';
+import Tabs from '@/components/ui/Tabs';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useStandings } from '@/lib/hooks/useStandings';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
+import { formatStatValue } from '@/lib/formatStat';
 import type { StandingsEntry, StatValue } from '@/lib/yahoo-fantasy-api';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 
@@ -21,12 +24,7 @@ function getStatVal(stats: StatValue[], statId: number): number | null {
 }
 
 function formatStat(value: number | null, cat: EnrichedLeagueStatCategory): string {
-  if (value === null) return '-';
-  const name = cat.display_name;
-  if (['AVG', 'OBP', 'SLG', 'OPS'].includes(name)) return value.toFixed(3).replace(/^0/, '');
-  if (['ERA', 'WHIP'].includes(name)) return value.toFixed(2);
-  if (name === 'IP') return value.toFixed(1);
-  return Number.isInteger(value) ? value.toString() : value.toFixed(1);
+  return formatStatValue(value, cat.display_name);
 }
 
 type SortDir = 'asc' | 'desc';
@@ -73,8 +71,7 @@ function StandingsTable({
   );
 
   return (
-    <div className="bg-surface rounded-lg shadow p-4">
-      <h2 className="text-sm font-semibold text-foreground mb-3">Standings</h2>
+    <Panel title="Standings">
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -117,7 +114,7 @@ function StandingsTable({
           </tbody>
         </table>
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -160,7 +157,7 @@ function RankBadge({ rank, total }: { rank: number; total: number }) {
     rank >= total - 1 ? 'text-error' :
     rank >= total - 3 ? 'text-accent' :
     'text-muted-foreground';
-  return <span className={`text-[10px] ${color}`}>{rank}</span>;
+  return <span className={`text-caption ${color}`}>{rank}</span>;
 }
 
 function StatRankingsTable({
@@ -216,29 +213,22 @@ function StatRankingsTable({
   }, [standings, sort]);
 
   return (
-    <div className="bg-surface rounded-lg shadow p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-foreground">Stat Rankings</h2>
-        <div className="flex gap-1">
-          <button
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              tab === 'batting' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            onClick={() => setTab('batting')}
-          >
-            Batting
-          </button>
-          <button
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              tab === 'pitching' ? 'bg-accent/20 text-accent' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            onClick={() => setTab('pitching')}
-          >
-            Pitching
-          </button>
-        </div>
-      </div>
-      <p className="text-[10px] text-muted-foreground mb-2">
+    <Panel
+      title="Stat Rankings"
+      action={
+        <Tabs
+          variant="underline"
+          items={[
+            { id: 'batting', label: 'Batting' },
+            { id: 'pitching', label: 'Pitching' },
+          ]}
+          value={tab}
+          onChange={setTab}
+          ariaLabel="Stat category group"
+        />
+      }
+    >
+      <p className="text-caption text-muted-foreground mb-2">
         Click any column header to sort. Rank numbers show league position per category.
       </p>
       <div className="overflow-x-auto">
@@ -295,7 +285,7 @@ function StatRankingsTable({
           </tbody>
         </table>
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -313,9 +303,9 @@ export default function LeagueManager() {
   if (ctxError) {
     return (
       <div className="p-6">
-        <div className="bg-surface rounded-lg shadow p-8 text-center">
+        <Panel className="p-8 text-center">
           <p className="text-sm text-error">Failed to load fantasy context</p>
-        </div>
+        </Panel>
       </div>
     );
   }
@@ -330,9 +320,9 @@ export default function LeagueManager() {
       </div>
 
       {isLoading ? (
-        <div className="bg-surface rounded-lg shadow p-8 text-center">
+        <Panel className="p-8 text-center">
           <div className="animate-pulse text-sm text-muted-foreground">Loading league data...</div>
-        </div>
+        </Panel>
       ) : (
         <>
           <StandingsTable standings={standings} userTeamKey={teamKey} />

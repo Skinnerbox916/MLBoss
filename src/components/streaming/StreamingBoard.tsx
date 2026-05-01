@@ -1,0 +1,533 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { FiWind, FiChevronDown, FiX } from 'react-icons/fi';
+import Icon from '@/components/Icon';
+import Badge from '@/components/ui/Badge';
+import Panel from '@/components/ui/Panel';
+import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
+import type { EnrichedGame } from '@/lib/hooks/useGameDay';
+import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
+import type { ProbablePitcher, ParkData, GameWeather, MLBGame } from '@/lib/mlb/types';
+import type { TeamOffense } from '@/lib/mlb/teams';
+import {
+  getPitcherRating, tierLabel,
+  type PillInput, type PitcherRating,
+} from '@/lib/pitching/scoring';
+import {
+  tierColor, weatherIcon, hasWeatherData,
+  matchFreeAgentToGame,
+  categoryFit, categoryFitClasses,
+  verdictLabel, buildRiskSummary,
+} from '@/lib/pitching/display';
+import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
+import type { Focus } from '@/lib/mlb/batterRating';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface StreamCandidate {
+  player: FreeAgentPlayer;
+  pp: ProbablePitcher;
+  opponent: string;
+  opponentMlbId: number;
+  isHome: boolean;
+  park: ParkData | null;
+  weather: GameWeather;
+  game: MLBGame;
+  /** Full pitcher rating — categories + multipliers. Drives the row score,
+   *  category-fit strip, and the expanded evidence panel. */
+  rating: PitcherRating;
+  /** Up to two short risk phrases surfaced under the row. */
+  riskSummary: string[];
+}
+
+interface StreamingBoardProps {
+  date: string;
+  games: EnrichedGame[];
+  freeAgents: FreeAgentPlayer[];
+  gamesLoading: boolean;
+  faLoading: boolean;
+  faError: boolean;
+  teamOffense: Record<number, TeamOffense>;
+  offenseLoading: boolean;
+  /** Optional helper text rendered under the header (e.g. data-thin day warnings). */
+  helper?: string;
+  /** League-scored pitcher categories — drives the per-category rating. */
+  scoredPitcherCategories?: EnrichedLeagueStatCategory[];
+  /** Chase/punt focus per stat_id. */
+  focusMap?: Record<number, Focus>;
+}
+
+// ---------------------------------------------------------------------------
+// Row subcomponents
+// ---------------------------------------------------------------------------
+
+function CategoryStrip({ rating, compact = false }: { rating: PitcherRating; compact?: boolean }) {
+  if (rating.categories.length === 0) return null;
+  return (
+    <div className={`inline-flex items-center ${compact ? 'gap-0.5' : 'gap-1'} flex-wrap`}>
+      {rating.categories.map(cat => {
+        const fit = categoryFit(cat.subScore, cat.weight);
+        const score = Math.round(cat.subScore * 100);
+        return (
+          <span
+            key={cat.statId}
+            className={`inline-flex items-center ${compact ? 'px-1 py-0' : 'px-1.5 py-0.5'} rounded border text-caption font-semibold ${categoryFitClasses(fit)}`}
+            title={fit === 'punted'
+              ? `${cat.label} punted — ${cat.detail}`
+              : `${cat.label} ${score}/100 · ${cat.detail}`}
+          >
+            {cat.goal}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function VerdictStack({ rating, size = 'md' }: { rating: PitcherRating; size?: 'sm' | 'md' }) {
+  const v = verdictLabel(rating.score);
+  const toneClass =
+    v.color === 'success' ? 'text-success' :
+    v.color === 'error' ? 'text-error' :
+    'text-accent';
+  return (
+    <div className="text-right leading-tight">
+      <div className={`${size === 'md' ? 'text-lg' : 'text-base'} font-bold tabular-nums ${toneClass}`}>
+        {Math.round(rating.score * 100)}
+      </div>
+      <div className={`text-caption font-semibold uppercase tracking-wide ${toneClass}`}>
+        {v.label}
+      </div>
+    </div>
+  );
+}
+
+function ContextLine({
+  c, teamOffense,
+}: {
+  c: StreamCandidate;
+  teamOffense: Record<number, TeamOffense>;
+}) {
+  const opp = teamOffense[c.opponentMlbId];
+  const oppSplit = c.pp.throws === 'L' ? opp?.vsLeft : opp?.vsRight;
+  const oppOps = oppSplit?.ops ?? opp?.ops ?? null;
+  const oppKRate = oppSplit?.strikeOutRate ?? opp?.strikeOutRate ?? null;
+  const oppOpsColor =
+    oppOps === null ? 'text-foreground' :
+    oppOps <= 0.680 ? 'text-success font-semibold' :
+    oppOps <= 0.720 ? 'text-success' :
+    oppOps >= 0.800 ? 'text-error font-semibold' :
+    oppOps >= 0.770 ? 'text-error' :
+    'text-foreground';
+  const parkFactor = c.park?.parkFactor ?? null;
+  const parkHR = c.park?.parkFactorHR ?? null;
+  const displayPf = parkHR !== null && parkFactor !== null
+    ? (Math.abs(parkHR - 100) > Math.abs(parkFactor - 100) ? parkHR : parkFactor)
+    : (parkFactor ?? parkHR);
+  const pfIsHR = displayPf !== null && parkHR !== null && displayPf === parkHR && parkHR !== parkFactor;
+  const pfColor =
+    displayPf === null ? 'bg-surface-muted text-muted-foreground' :
+    displayPf >= 110 ? 'bg-error/15 text-error font-semibold' :
+    displayPf >= 104 ? 'bg-error/10 text-error' :
+    displayPf <= 90 ? 'bg-success/15 text-success font-semibold' :
+    displayPf <= 96 ? 'bg-success/10 text-success' :
+    'bg-surface-muted text-muted-foreground';
+  const windOut = c.weather.windDirection?.toLowerCase().includes('out') ?? false;
+  const windBad = windOut && (c.weather.windSpeed ?? 0) >= 10;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-[11px]">
+      <span className="text-muted-foreground">
+        {c.isHome ? 'vs' : '@'}{' '}
+        <span className="font-semibold text-foreground">{c.opponent}</span>
+      </span>
+      {oppOps !== null && (
+        <>
+          <span className="text-border">|</span>
+          <span className="text-muted-foreground">
+            Opp (vs{c.pp.throws}) <span className={oppOpsColor}>{oppOps.toFixed(3).replace(/^0\./, '.')}</span>
+            {oppKRate !== null && (oppKRate >= 0.240 || oppKRate <= 0.185) && (
+              <span className={`ml-1 ${oppKRate >= 0.240 ? 'text-success' : 'text-error'}`}>
+                {(oppKRate * 100).toFixed(1)}% K
+              </span>
+            )}
+          </span>
+        </>
+      )}
+      <span className="text-border">|</span>
+      <span
+        className={`px-1.5 py-0.5 rounded text-caption ${pfColor}`}
+        title={parkFactor !== null && parkHR !== null ? `Overall PF ${parkFactor} · HR PF ${parkHR}` : undefined}
+      >
+        {pfIsHR ? 'HR' : 'PF'} {displayPf ?? '—'}
+      </span>
+      {hasWeatherData(c.weather) && (
+        <div className="flex items-center gap-1">
+          {(() => {
+            const Wx = weatherIcon(c.weather.condition);
+            return Wx ? <Icon icon={Wx} size={12} className="text-muted-foreground" /> : null;
+          })()}
+          {c.weather.temperature != null && (
+            <span className="text-muted-foreground">{c.weather.temperature}°</span>
+          )}
+          {c.weather.windSpeed != null && c.weather.windSpeed > 0 && (
+            <span className={`flex items-center gap-0.5 ${windBad ? 'text-error' : 'text-muted-foreground'}`}>
+              <Icon icon={FiWind} size={10} />
+              {c.weather.windSpeed}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Compare tray
+// ---------------------------------------------------------------------------
+
+function CompareTray({
+  candidates, onToggle, onClear,
+}: {
+  candidates: StreamCandidate[];
+  onToggle: (playerKey: string) => void;
+  onClear: () => void;
+}) {
+  if (candidates.length === 0) return null;
+  // Union of categories across selected rows — in practice same league so
+  // they all share the same goal set, but guard for mixed inputs anyway.
+  const goals: string[] = [];
+  const seen = new Set<string>();
+  for (const c of candidates) {
+    for (const cat of c.rating.categories) {
+      if (!seen.has(cat.goal)) { seen.add(cat.goal); goals.push(cat.goal); }
+    }
+  }
+
+  return (
+    <div className="mb-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-caption font-semibold text-primary uppercase tracking-wide">
+          Compare · {candidates.length}
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-caption text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Clear all
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-caption">
+          <thead>
+            <tr className="text-muted-foreground border-b border-border-muted">
+              <th className="text-left font-medium py-1 pr-3">Pitcher</th>
+              <th className="text-center font-medium py-1 px-2">Score</th>
+              {goals.map(g => (
+                <th key={g} className="text-center font-medium py-1 px-1">{g}</th>
+              ))}
+              <th className="text-left font-medium py-1 px-2">Key risk</th>
+              <th className="w-5" />
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map(c => {
+              const v = verdictLabel(c.rating.score);
+              const toneClass =
+                v.color === 'success' ? 'text-success' :
+                v.color === 'error' ? 'text-error' :
+                'text-accent';
+              const byGoal = new Map(c.rating.categories.map(cat => [cat.goal as string, cat]));
+              return (
+                <tr
+                  key={c.player.player_key}
+                  className="border-b border-border-muted/40 last:border-b-0"
+                >
+                  <td className="py-1.5 pr-3 align-top">
+                    <div className="font-semibold text-foreground leading-tight">{c.player.name}</div>
+                    <div className="text-caption text-muted-foreground leading-tight">
+                      {c.player.editorial_team_abbr} · {c.isHome ? 'vs' : '@'} {c.opponent}
+                    </div>
+                  </td>
+                  <td className="py-1.5 px-2 text-center align-top">
+                    <div className={`text-base font-bold tabular-nums ${toneClass}`}>
+                      {Math.round(c.rating.score * 100)}
+                    </div>
+                    <div className={`text-caption font-semibold uppercase ${toneClass}`}>
+                      {v.label}
+                    </div>
+                  </td>
+                  {goals.map(g => {
+                    const cat = byGoal.get(g);
+                    if (!cat) {
+                      return <td key={g} className="py-1.5 px-1 text-center align-middle text-muted-foreground">—</td>;
+                    }
+                    const fit = categoryFit(cat.subScore, cat.weight);
+                    const score = Math.round(cat.subScore * 100);
+                    return (
+                      <td key={g} className="py-1.5 px-1 text-center align-middle">
+                        <span
+                          className={`inline-flex items-center justify-center min-w-[28px] px-1 py-0.5 rounded border text-caption font-mono font-semibold tabular-nums ${categoryFitClasses(fit)}`}
+                          title={fit === 'punted'
+                            ? `${cat.label} punted — ${cat.detail}`
+                            : `${cat.label} ${score}/100 · ${cat.detail}`}
+                        >
+                          {score}
+                        </span>
+                      </td>
+                    );
+                  })}
+                  <td className="py-1.5 px-2 align-top text-caption text-muted-foreground italic">
+                    {c.riskSummary.length > 0 ? c.riskSummary.join(' · ') : '—'}
+                  </td>
+                  <td className="py-1.5 align-top">
+                    <button
+                      type="button"
+                      onClick={() => onToggle(c.player.player_key)}
+                      className="text-muted-foreground hover:text-error transition-colors"
+                      aria-label={`Remove ${c.player.name} from compare`}
+                      title="Remove from compare"
+                    >
+                      <Icon icon={FiX} size={14} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main board
+// ---------------------------------------------------------------------------
+
+export default function StreamingBoard({
+  date, games, freeAgents, gamesLoading, faLoading, faError,
+  teamOffense, offenseLoading, helper,
+  scoredPitcherCategories, focusMap,
+}: StreamingBoardProps) {
+  const candidates = useMemo(() => {
+    if (games.length === 0 || freeAgents.length === 0) return [];
+    const results: StreamCandidate[] = [];
+
+    for (const fa of freeAgents) {
+      // Hide all waiver-pool pitchers — Yahoo won't process the add until
+      // they clear, so they're not actually streamable. We don't have a
+      // per-player clear date from Yahoo's player-listing endpoint, so we
+      // can't conditionally surface them on dates after the clear. If we
+      // ever wire up the transactions endpoint to recover clear dates, this
+      // can become a `waiver_date > date` check instead.
+      if (fa.ownership_type === 'waivers') continue;
+
+      const match = matchFreeAgentToGame(fa, games);
+      if (!match) continue;
+
+      const { game, pp, isHome } = match;
+      const opponentTeam = isHome ? game.awayTeam : game.homeTeam;
+      const oppOffense = teamOffense[opponentTeam.mlbId] ?? null;
+
+      const pillInput: PillInput = {
+        pp,
+        oppOffense,
+        park: game.park ?? null,
+        weather: game.weather,
+        isHome,
+        game,
+        scoredCategories: scoredPitcherCategories,
+        focusMap,
+      };
+      const rating = getPitcherRating(pillInput);
+      const oppPp = isHome ? game.awayProbablePitcher : game.homeProbablePitcher;
+      const ownStaffEra = (isHome ? game.homeTeam.staffEra : game.awayTeam.staffEra) ?? null;
+      const riskSummary = buildRiskSummary(rating, pp, oppOffense, game.park ?? null, { oppPp, ownStaffEra });
+
+      results.push({
+        player: fa,
+        pp,
+        opponent: opponentTeam.abbreviation,
+        opponentMlbId: opponentTeam.mlbId,
+        isHome,
+        park: game.park ?? null,
+        weather: game.weather,
+        game,
+        rating,
+        riskSummary,
+      });
+    }
+
+    results.sort((a, b) => b.rating.score - a.rating.score);
+    return results;
+  }, [games, freeAgents, teamOffense, scoredPitcherCategories, focusMap]);
+
+  const isLoading = gamesLoading || faLoading;
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [compareSet, setCompareSet] = useState<Set<string>>(() => new Set());
+
+  const compared = useMemo(
+    () => candidates.filter(c => compareSet.has(c.player.player_key)),
+    [candidates, compareSet],
+  );
+
+  function toggleCompare(playerKey: string) {
+    setCompareSet(prev => {
+      const next = new Set(prev);
+      if (next.has(playerKey)) next.delete(playerKey);
+      else next.add(playerKey);
+      return next;
+    });
+  }
+
+  if (isLoading) {
+    return (
+      <Panel>
+        <div className="h-4 bg-border-muted rounded w-48 mb-3 animate-pulse" />
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="animate-pulse flex items-center gap-3 px-3 py-2 mb-1">
+            <div className="flex-1 space-y-1">
+              <div className="h-3.5 bg-border-muted rounded w-40" />
+              <div className="h-2.5 bg-border-muted rounded w-56" />
+            </div>
+            <div className="h-5 w-12 bg-border-muted rounded" />
+          </div>
+        ))}
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel
+      title={`Streaming Board — ${date}`}
+      action={
+        <span className="text-xs text-muted-foreground">
+          {candidates.length} starter{candidates.length !== 1 ? 's' : ''}
+        </span>
+      }
+      helper={helper}
+    >
+      {offenseLoading && (
+        <p className="text-xs text-muted-foreground mb-2 animate-pulse">Loading team offense data...</p>
+      )}
+
+      <CompareTray
+        candidates={compared}
+        onToggle={toggleCompare}
+        onClear={() => setCompareSet(new Set())}
+      />
+
+      {faError ? (
+        <p className="text-sm text-error text-center py-4">Failed to load free agents</p>
+      ) : candidates.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">
+          {freeAgents.length === 0
+            ? 'No free agent data available'
+            : 'No free agent pitchers with probable starts found'}
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {candidates.map((c, i) => {
+            const isExpanded = expandedKey === c.player.player_key;
+            const isCompared = compareSet.has(c.player.player_key);
+            return (
+              <div key={c.player.player_key} className={`rounded-lg overflow-hidden ${isCompared ? 'ring-1 ring-primary/40' : ''} ${c.rating.score >= 0.70 ? 'bg-success/5' : c.rating.score < 0.50 ? 'bg-error/5' : ''}`}>
+                <div className="flex items-stretch">
+                  <label
+                    className="flex items-center justify-center w-8 shrink-0 cursor-pointer hover:bg-primary/10 transition-colors"
+                    title={isCompared ? 'Remove from compare' : 'Add to compare'}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isCompared}
+                      onChange={() => toggleCompare(c.player.player_key)}
+                      className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                      aria-label={`Compare ${c.player.name}`}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedKey(isExpanded ? null : c.player.player_key)}
+                    className="flex-1 min-w-0 flex items-start gap-3 px-3 py-2 text-left hover:bg-surface-muted/40 transition-colors"
+                  >
+                    <div className="w-5 text-center text-xs font-bold text-muted-foreground mt-2.5 shrink-0">
+                      {i + 1}
+                    </div>
+
+                    {c.player.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={c.player.image_url}
+                        alt={c.player.name}
+                        className="w-9 h-9 rounded-full border border-border object-cover shrink-0 mt-0.5"
+                        onError={e => {
+                          e.currentTarget.style.display = 'none';
+                          e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                        }}
+                      />
+                    ) : null}
+                    <div className={`w-9 h-9 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold ${c.player.image_url ? 'hidden' : ''}`}>
+                      {c.player.name.charAt(0).toUpperCase()}
+                    </div>
+
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold text-foreground truncate">{c.player.name}</span>
+                        <span className={`text-[11px] font-bold ${c.pp.throws === 'L' ? 'text-accent' : 'text-primary'}`}>
+                          ({c.pp.throws}HP)
+                        </span>
+                        <span className={`text-caption font-bold ${tierColor(c.pp.quality?.tier ?? 'unknown')}`}>
+                          {tierLabel(c.pp.quality?.tier ?? 'unknown')}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {c.player.editorial_team_abbr} · {c.player.display_position}
+                        </span>
+                        {c.player.ownership_type === 'waivers' && (
+                          <Badge color="accent">WW</Badge>
+                        )}
+                      </div>
+
+                      <ContextLine c={c} teamOffense={teamOffense} />
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <CategoryStrip rating={c.rating} />
+                        {c.riskSummary.length > 0 && (
+                          <span className="text-caption text-muted-foreground italic">
+                            risk: {c.riskSummary.join(' · ')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 flex items-start gap-2 mt-0.5">
+                      <VerdictStack rating={c.rating} />
+                      <Icon
+                        icon={FiChevronDown}
+                        size={16}
+                        className={`text-muted-foreground transition-transform mt-1.5 ${isExpanded ? 'rotate-180' : ''}`}
+                      />
+                    </div>
+                  </button>
+                </div>
+
+                {isExpanded && (
+                  <ScoreBreakdownPanel
+                    c={c}
+                    teamOffense={teamOffense}
+                    scoredCategories={scoredPitcherCategories}
+                    focusMap={focusMap}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Panel>
+  );
+}

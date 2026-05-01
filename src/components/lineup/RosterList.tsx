@@ -2,8 +2,10 @@
 
 import { useMemo } from 'react';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
-import type { BatterSeasonStats } from '@/lib/mlb/types';
-import { type MatchupContext, getBatterContextScore } from '@/lib/mlb/analysis';
+import type { PlayerStatLine } from '@/lib/mlb/types';
+import type { MatchupContext } from '@/lib/mlb/analysis';
+import { getBatterRating, type Focus } from '@/lib/mlb/batterRating';
+import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import PlayerRow from './PlayerRow';
 import { type LineupMode, getRowStatus, isPitcher } from './types';
 
@@ -30,27 +32,12 @@ interface RosterListProps {
   isLoading: boolean;
   isError: boolean;
   getMatchupContext: (teamAbbr: string) => MatchupContext | null;
-  /** xwOBA-backed OPS equivalent when Savant data is available; raw OPS otherwise */
-  getPlayerTalentOPS: (name: string, team: string) => number | null;
-  /** Full stats record (OPS + xwOBA + wOBA) for display in PlayerRow */
-  getPlayerStats: (name: string, team: string) => BatterSeasonStats | null;
-}
-
-/**
- * Combine talent baseline with matchup context into a single sortable score.
- * Talent gets 65% weight — studs stay near the top but a great matchup can
- * meaningfully reorder bench decisions.
- *
- * talentOPS is xwOBA-scaled when Savant data is available, raw OPS otherwise.
- * Normalised: .600 → 0.0, .900 → 1.0 (clamped).
- */
-function compositeSort(talentOPS: number | null, contextScore: number): number {
-  const TALENT_W = 0.65;
-  const CONTEXT_W = 0.35;
-  const talentVal = talentOPS !== null
-    ? Math.max(0, Math.min(1, (talentOPS - 0.600) / 0.300))
-    : 0.4;
-  return TALENT_W * talentVal + CONTEXT_W * contextScore;
+  /** Stratified `PlayerStatLine` lookup — drives sort and feeds PlayerRow. */
+  getPlayerLine: (name: string, team: string) => PlayerStatLine | null;
+  /** Batter-side league scoring categories — drive the category-weighted rating. */
+  scoredBatterCategories: EnrichedLeagueStatCategory[];
+  /** Per-category chase/punt focus state for this page. */
+  focusMap: Record<number, Focus>;
 }
 
 export default function RosterList({
@@ -60,8 +47,9 @@ export default function RosterList({
   isLoading,
   isError,
   getMatchupContext,
-  getPlayerTalentOPS,
-  getPlayerStats,
+  getPlayerLine,
+  scoredBatterCategories,
+  focusMap,
 }: RosterListProps) {
   const { sorted, noGameCount } = useMemo(() => {
     const scoped = filterByMode(roster, mode);
@@ -86,21 +74,25 @@ export default function RosterList({
       withGame.push(p);
     }
 
-    // Sort by talent-weighted composite — best expected value first.
-    const _sorted = withGame.slice().sort((a, b) => {
-      const scoreA = compositeSort(
-        getPlayerTalentOPS(a.name, a.editorial_team_abbr),
-        getBatterContextScore(getMatchupContext(a.editorial_team_abbr)),
-      );
-      const scoreB = compositeSort(
-        getPlayerTalentOPS(b.name, b.editorial_team_abbr),
-        getBatterContextScore(getMatchupContext(b.editorial_team_abbr)),
-      );
-      return scoreB - scoreA;
-    });
+    // Sort by the same category-weighted rating the expanded card
+    // shows, so "Great" rows stay above "Good" rows above "Poor" rows.
+    // Using two different scores for sort vs. display was the source
+    // of apparently-random ordering.
+    const scoreFor = (p: RosterEntry): number => {
+      const context = getMatchupContext(p.editorial_team_abbr);
+      const line = getPlayerLine(p.name, p.editorial_team_abbr);
+      return getBatterRating({
+        context,
+        stats: line,
+        scoredCategories: scoredBatterCategories,
+        focusMap,
+        battingOrder: p.batting_order,
+      }).score;
+    };
+    const _sorted = withGame.slice().sort((a, b) => scoreFor(b) - scoreFor(a));
 
     return { sorted: _sorted, noGameCount: _noGameCount };
-  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerTalentOPS]);
+  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, focusMap]);
 
   if (isLoading) {
     return (
@@ -145,7 +137,9 @@ export default function RosterList({
           key={player.player_key}
           player={player}
           context={getMatchupContext(player.editorial_team_abbr)}
-          seasonStats={getPlayerStats(player.name, player.editorial_team_abbr)}
+          seasonStats={getPlayerLine(player.name, player.editorial_team_abbr)}
+          scoredBatterCategories={scoredBatterCategories}
+          focusMap={focusMap}
         />
       ))}
       {noGameCount > 0 && (

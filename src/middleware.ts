@@ -10,9 +10,8 @@ export async function middleware(request: NextRequest) {
   const protectedRoutes = [
     '/dashboard',
     '/admin',
-    '/matchup',
     '/lineup',
-    '/pitching',
+    '/streaming',
     '/roster',
     '/league',
     '/api/fantasy',

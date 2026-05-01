@@ -115,7 +115,7 @@ export default function MLBDebugPanel() {
               <p className="font-semibold text-red-800 dark:text-red-200">Error</p>
               <p className="text-red-700 dark:text-red-300">{result.error}</p>
               {result.stack && (
-                <pre className="mt-2 text-[10px] whitespace-pre-wrap text-red-600 dark:text-red-400">
+                <pre className="mt-2 text-caption whitespace-pre-wrap text-red-600 dark:text-red-400">
                   {result.stack}
                 </pre>
               )}

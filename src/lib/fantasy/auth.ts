@@ -1,4 +1,4 @@
-import { redisUtils } from '@/lib/redis';
+import { redis, redisUtils } from '@/lib/redis';
 import { YahooOAuth } from '@/lib/yahoo-oauth';
 
 /**
@@ -34,7 +34,14 @@ export async function isTokenValid(userId: string): Promise<boolean> {
 }
 
 /**
- * Refresh user tokens if needed
+ * Refresh user tokens if needed.
+ *
+ * Single MULTI so the user-hash field updates, the 7-day TTL refresh, the
+ * old token-lookup deletion, and the new token-lookup write all land
+ * atomically. Without this, a concurrent request can read the new
+ * `accessToken` against an already-deleted `token:{old}` lookup. The
+ * EXPIRE re-up keeps the user hash from silently expiring 7 days after
+ * the original login even when the user is actively refreshing.
  */
 export async function refreshUserTokens(userId: string): Promise<boolean> {
   try {
@@ -44,20 +51,21 @@ export async function refreshUserTokens(userId: string): Promise<boolean> {
     const yahooOAuth = new YahooOAuth();
     const newTokens = await yahooOAuth.refreshAccessToken(user.refreshToken);
 
-    // Update tokens in Redis
     const userKey = `user:${userId}`;
     const expiresAt = Date.now() + (newTokens.expires_in * 1000);
-
-    await redisUtils.hset(userKey, 'accessToken', newTokens.access_token);
-    await redisUtils.hset(userKey, 'refreshToken', newTokens.refresh_token);
-    await redisUtils.hset(userKey, 'expiresAt', expiresAt.toString());
-
-    // Update token lookup
     const oldTokenKey = `token:${user.accessToken}`;
     const newTokenKey = `token:${newTokens.access_token}`;
 
-    await redisUtils.del(oldTokenKey);
-    await redisUtils.set(newTokenKey, userId, newTokens.expires_in);
+    await redis.multi()
+      .hset(userKey, {
+        accessToken: newTokens.access_token,
+        refreshToken: newTokens.refresh_token,
+        expiresAt: expiresAt.toString(),
+      })
+      .expire(userKey, 7 * 24 * 60 * 60)
+      .del(oldTokenKey)
+      .set(newTokenKey, userId, 'EX', newTokens.expires_in)
+      .exec();
 
     return true;
   } catch (error) {

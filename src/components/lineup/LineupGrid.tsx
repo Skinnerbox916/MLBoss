@@ -128,7 +128,7 @@ function SlotRow({ slot, player, isSelected, isEligible, editable, locked, onCli
         <div className="flex-1 min-w-0">
           <span className="text-sm font-medium text-foreground truncate block">
             {player.name}
-            {locked && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">locked</span>}
+            {locked && <span className="ml-1.5 text-caption uppercase tracking-wide text-muted-foreground">locked</span>}
           </span>
           <span className="text-xs text-muted-foreground">
             {player.editorial_team_abbr} — {player.display_position}

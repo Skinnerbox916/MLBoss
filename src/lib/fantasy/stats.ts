@@ -8,7 +8,7 @@ import { COMMON_MLB_STATS } from '@/constants/statCategories';
  */
 export async function getStatCategories(gameKey: string, userId?: string): Promise<StatCategory[]> {
   return withCache(
-    `${CACHE_CATEGORIES.STATIC.prefix}:stat_categories:${gameKey}`,
+    `${CACHE_CATEGORIES.STATIC.prefix}:stat-categories:${gameKey}`,
     CACHE_CATEGORIES.STATIC.ttlLong,
     () => new YahooFantasyAPI(userId).getStatCategories(gameKey),
   );
@@ -20,7 +20,7 @@ export async function getStatCategories(gameKey: string, userId?: string): Promi
  */
 export async function getStatCategoryMap(gameKey: string, userId?: string): Promise<Record<number, StatCategory>> {
   return withCache(
-    `${CACHE_CATEGORIES.STATIC.prefix}:stat_category_map:${gameKey}`,
+    `${CACHE_CATEGORIES.STATIC.prefix}:stat-category-map:${gameKey}`,
     CACHE_CATEGORIES.STATIC.ttlLong,
     async () => {
       const categories = await getStatCategories(gameKey, userId);
@@ -98,7 +98,7 @@ export async function getEnrichedLeagueStatCategories(
   leagueKey: string
 ): Promise<EnrichedLeagueStatCategory[]> {
   return withCache(
-    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:enriched_league_cats:${leagueKey}`,
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:enriched-league-cats:${leagueKey}`,
     CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong,
     async () => {
       const api = new YahooFantasyAPI(userId);

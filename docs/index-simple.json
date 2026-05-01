@@ -1,11 +1,15 @@
 {
   "README": "This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files.",
   "dashboard-components": "The dashboard is built from **self-contained React components** (\"cards\") rendered inside a flexible grid.",
-  "data-layer": "The fantasy data layer (`src/lib/fantasy/`) sits between page/API-route code and the raw Yahoo Fantasy API client. It adds caching, token management, type safety, and domain-specific logic.",
+  "data-architecture": "This is the canonical reference for how MLBoss fetches, models, and composes data. Read this before touching anything in `src/lib/fantasy/`, `src/lib/mlb/`, `src/lib/roster/`, `src/lib/pitching/`, or `src/lib/lineup/`.",
   "design-system": "This document defines the visual design standards for MLBoss, including colors, typography, and component patterns. All design tokens are implemented as CSS variables and wired into Tailwind CSS utilities.",
   "for-ai-developers": "This guide is specifically written for LLMs working on the MLBoss codebase. It contains documentation strategy and key patterns to follow.",
-  "product-spec": "MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.",
+  "mlb-api-reference": "The MLB Stats API (`https://statsapi.mlb.com/api/v1`) is the public, unauthenticated data source MLBoss uses for everything the Yahoo Fantasy API can't give us: probable pitchers, player stats, handedness splits, team offense profiles, venues, weather, and player identity.",
+  "product-spec": "MLBoss is a fantasy baseball decision support tool designed to help users make informed daily lineup and pitcher-streaming decisions through comprehensive data analysis. The system provides parallel batter and pitcher analysis surfaces backed by fantasy league-wide context for strategic decision-making.",
+  "scoring-conventions": "This is the reference for HOW the app turns raw stats into the talent ratings, matchup ratings, and streaming verdicts surfaced in the UI. Read this before adding a new category, tuning a constant, or writing a second function that \"estimates how good a player is\".",
   "setup": "This document is the single source of truth for all environment variables and the Yahoo OAuth setup required to run MLBoss.",
   "stats": "MLBoss uses `stat_id` as the canonical identifier for all player and team statistics. This numeric key system eliminates ambiguity between similar statistics (like pitcher vs batter strikeouts) and provides consistent identification across all API calls.",
+  "streaming-page": "The `/streaming` page is MLBoss's dedicated pitcher-pickup tool. It is **not** a daily lineup surface — daily pitcher sit/start lives on the Today page (`/lineup`, Pitchers tab). Streaming is about rotating through the ~6 moves-per-week budget on the 1-2 bench pitcher slots that rotate, with visibility multiple days ahead.",
+  "ui-patterns": "Before building new UI, check this inventory. Reuse existing patterns and shared components rather than creating new ones.",
   "yahoo-api-reference": "* [Introduction](#introduction)"
 }

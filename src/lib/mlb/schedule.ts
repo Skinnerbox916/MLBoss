@@ -1,6 +1,17 @@
 import { mlbFetchSchedule, mlbFetchTeamStats } from './client';
+import {
+  applyPitcherPlatoon,
+  applyPitcherRecentForm,
+  applyPitcherStatsLine,
+  applySavantSignals,
+} from './model';
 import { getParkByVenueId } from './parks';
-import { getPitcherQuality, fetchPitcherFullLine, fetchPitcherPlatoonSplits, fetchPitcherRecentForm } from './players';
+import {
+  fetchPitcherFullLine,
+  fetchPitcherPlatoonSplits,
+  fetchPitcherRecentForm,
+  getPitcherQuality,
+} from './players';
 import { fetchStatcastPitchers } from './savant';
 import type { MLBGame, ProbablePitcher, GameWeather, LineupEntry } from './types';
 
@@ -21,6 +32,9 @@ interface RawPitcherStats {
       gamesStarted?: number;
       pitchesPerInning?: string;
       baseOnBalls?: number;
+      homeRuns?: number;
+      hits?: number;
+      atBats?: number;
       groundOuts?: number;
       airOuts?: number;
     };
@@ -108,6 +122,9 @@ function parsePitcherStats(stat: NonNullable<RawPitcherStats['splits']>[number][
   const ip = parseFloat2(stat.inningsPitched) ?? 0;
   const gs = stat.gamesStarted ?? null;
   const bb = stat.baseOnBalls ?? 0;
+  const hr = stat.homeRuns ?? 0;
+  const hitsAllowed = stat.hits ?? 0;
+  const abAgainst = stat.atBats ?? 0;
   const go = stat.groundOuts ?? 0;
   const ao = stat.airOuts ?? 0;
   return {
@@ -122,6 +139,8 @@ function parsePitcherStats(stat: NonNullable<RawPitcherStats['splits']>[number][
     pitchesPerInning: parseFloat2(stat.pitchesPerInning),
     inningsPerStart: gs && gs > 0 ? Math.round((ip / gs) * 100) / 100 : null,
     bb9: ip > 0 ? Math.round((bb / ip * 9) * 100) / 100 : null,
+    hr9: ip > 0 ? Math.round((hr / ip * 9) * 100) / 100 : null,
+    battingAvgAgainst: abAgainst > 0 ? Math.round((hitsAllowed / abAgainst) * 1000) / 1000 : null,
     gbRate: (go + ao) > 0 ? Math.round((go / (go + ao)) * 1000) / 1000 : null,
   };
 }
@@ -141,6 +160,8 @@ function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
     pitchesPerInning: null as number | null,
     inningsPerStart: null as number | null,
     bb9: null as number | null,
+    hr9: null as number | null,
+    battingAvgAgainst: null as number | null,
     gbRate: null as number | null,
   };
 
@@ -165,6 +186,9 @@ function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
     quality: null,
     xera: null,
     xwoba: null,
+    avgFastballVelo: null,
+    avgFastballVeloPrior: null,
+    runValuePer100: null,
   };
 }
 
@@ -289,21 +313,24 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
 
   const games = dateEntry.games.map(parseGame);
 
-  // Fetch Savant + team ERA once up front so enrichPitcher can reference
-  // the same cached maps without triggering repeated fetches
-  const [savantMap, teamEraMap] = await Promise.all([
-    fetchStatcastPitchers(),
+  // Fetch Savant (current + prior season) + team ERA once up front. Prior
+  // season is blended with current season via sample-weighted averaging —
+  // see `blendRateOrNull` calls in `model/pitcherEnrichment.ts`. Fetching
+  // both years unconditionally is cheap because both CSVs are cached 24h
+  // at the fetch layer.
+  const currentYear = new Date().getFullYear();
+  const [savantMap, priorSavantMap, teamEraMap] = await Promise.all([
+    fetchStatcastPitchers(currentYear),
+    fetchStatcastPitchers(currentYear - 1),
     fetchTeamStaffEra(),
   ]);
 
-  // Enrich probable pitchers with tiered quality, extended stats, and xERA.
-  // (parallel, cached at the underlying fetch layer). Falls back to prior
-  // season when current IP is too thin — important in early April.
-  //
-  // `line` is always fetched (not gated on missing era) because the schedule's
-  // inline pitcher stats are aggregate (starts + relief), which inflates
-  // IP/GS and skews ERA/WHIP for swingmen. The `line` version is sp-only —
-  // prefer it over any inline schedule values.
+  // Enrich probable pitchers with tiered quality, extended stats, and Savant
+  // signals. Per-pitcher fetches run in parallel — the actual modeling
+  // happens in pure functions (`apply*` helpers from ./model). The line
+  // fetch is unconditional because the schedule's inline pitcher stats
+  // aggregate starts + relief, inflating IP/GS for swingmen. The
+  // `fetchPitcherFullLine` value is starter-only, so we always prefer it.
   const enrichPitcher = async (p: ProbablePitcher) => {
     const [quality, line, platoon, recentForm] = await Promise.all([
       getPitcherQuality(p.mlbId),
@@ -312,29 +339,10 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
       fetchPitcherRecentForm(p.mlbId),
     ]);
     p.quality = quality;
-    if (line) {
-      p.era = line.era ?? p.era;
-      p.whip = line.whip ?? p.whip;
-      p.wins = line.wins || p.wins;
-      p.losses = line.losses || p.losses;
-      p.inningsPitched = line.ip || p.inningsPitched;
-      p.strikeoutsPer9 = line.strikeoutsPer9 ?? p.strikeoutsPer9;
-      p.strikeOuts = line.strikeOuts ?? p.strikeOuts;
-      p.gamesStarted = line.gamesStarted ?? p.gamesStarted;
-      p.pitchesPerInning = line.pitchesPerInning ?? p.pitchesPerInning;
-      p.inningsPerStart = line.inningsPerStart ?? p.inningsPerStart;
-      p.bb9 = line.bb9 ?? p.bb9;
-      p.gbRate = line.gbRate ?? p.gbRate;
-    }
-    // Attach Savant data (null when pitcher has too few BIP)
-    const savant = savantMap.get(p.mlbId);
-    p.xera = (savant && savant.bip >= 10) ? savant.xera : null;
-    p.xwoba = (savant && savant.bip >= 10) ? savant.xwoba : null;
-    // Platoon splits
-    p.platoonOpsVsLeft = platoon?.vsLeft?.ops ?? null;
-    p.platoonOpsVsRight = platoon?.vsRight?.ops ?? null;
-    // Recent form (last 3 starts)
-    p.recentFormEra = recentForm?.era ?? null;
+    applyPitcherStatsLine(p, line);
+    applySavantSignals(p, savantMap.get(p.mlbId), priorSavantMap.get(p.mlbId));
+    applyPitcherPlatoon(p, platoon);
+    applyPitcherRecentForm(p, recentForm);
   };
 
   // Enrich all pitchers in parallel now that shared maps are ready

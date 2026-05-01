@@ -13,7 +13,7 @@ npm run dev          # Start dev server (Turbopack) — MUST be on port 3000
 npm run build        # Production build
 npm run lint         # ESLint (next lint)
 npm start            # Start production server
-docker run -d -p 6379:6379 redis:alpine  # Redis (required dependency)
+docker start mlboss-redis                # Start Redis (persistent container, auto-starts on boot)
 pkill -f "next-server"                   # Kill stale dev servers before restart
 ```
 
@@ -32,7 +32,7 @@ No test framework is configured.
 ### Authentication & Sessions
 - Custom Yahoo OAuth 2.0 flow: login (`/api/auth/login`) -> callback (`/api/auth/callback/yahoo`) -> logout (`/api/auth/logout`)
 - Sessions use `iron-session` with encrypted cookies (`src/lib/session.ts`)
-- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/matchup`, `/lineup`, `/pitching`, `/roster`, `/league`, `/api/fantasy`, `/api/test-stats`
+- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/lineup`, `/streaming`, `/roster`, `/league`, `/api/fantasy`, `/api/test-stats`
 - Token auto-refresh handled by `YahooFantasyAPI` (`src/lib/yahoo-fantasy-api.ts`)
 
 ### Data Layer
@@ -55,13 +55,19 @@ No test framework is configured.
 - `transactions.ts` — League transactions (adds, drops, trades)
 - `index.ts` — Barrel re-exports; consumer code imports from `@/lib/fantasy`
 
-### Lineup & Pitching Pages
-- `/lineup` — batters only. Uses `LineupManager` with `mode="batting"` to filter roster, position filters, and lineup grid to batting positions
-- `/pitching` — dedicated pitcher streaming tool. Uses `PitchingManager` (`src/components/pitching/PitchingManager.tsx`) with two tabs:
-  - **Today**: sit/start decisions — shows rostered pitchers with today's game context
-  - **Tomorrow** (default): streaming board — cross-references Yahoo free agent pitchers (`getLeaguePlayers` API) with MLB probable starters to surface pickup candidates sorted by quality tier
-- Both share the lineup component library (`src/components/lineup/`) via a `LineupMode` type (`'batting' | 'pitching'`)
-- Matchup Pulse (pitching category scores vs opponent) is always visible on the pitching page
+### Navigation & Page Model
+Five primary routes, organized by the time horizon of the decisions they support:
+
+- `/dashboard` — **Reference.** Mixed-horizon snapshot: lineup issues, player updates, current-week scoreboard (`CurrentScoreCard`), opponent status, season comparison, waivers, activity.
+- `/lineup` — **Today.** Daily sit/start. Uses `TodayManager` (`src/components/lineup/TodayManager.tsx`) with segment tabs `[Batters | Pitchers]`:
+  - Batters tab: `LineupManager` with `mode="batting"`
+  - Pitchers tab: `TodayPitchers` (`src/components/lineup/TodayPitchers.tsx`) for rostered pitchers + today's game context
+  - Shared `MatchupPulse` (`side="both"`) above the tabs so category leverage informs both decisions.
+- `/streaming` — **This-week pitcher pickups.** `StreamingManager` + `StreamingBoard` with a `DateStrip` covering D+1 through D+5 (MLB probables hydrate 3-5 days out). Shared `MatchupPulse` (`side="pitching"`) at the top.
+- `/roster` — **Long-term roster construction.** `RosterManager` with segment tabs `[Batters | Pitchers]`. `RankStrip` (season-to-date league ranks from `useSeasonCategoryRanks`, sourced from the same standings the league page uses) at the top of each tab. Batters tab runs the full depth-chart + swap optimizer; the pitchers tab lists rostered + available pitchers (full pitcher optimizer is follow-up work).
+- `/league` — **Reference.** Standings, stat rankings, league-wide context.
+
+Both the Today and Streaming pages share the lineup component library (`src/components/lineup/`) via a `LineupMode` type (`'batting' | 'pitching'`).
 
 ### Dashboard
 - Card-based architecture: `src/components/dashboard/`
@@ -71,6 +77,7 @@ No test framework is configured.
 - Add cards by creating in `src/components/dashboard/cards/`, registering in `src/app/dashboard/page.tsx`
 
 ### UI System
+- **Before creating new UI components, read `docs/ui-patterns.md`** — it lists every shared component and display pattern. Reuse before inventing.
 - Tailwind CSS v4 with custom design tokens defined as CSS variables in `src/app/globals.css`
 - Brand colors: primary (Prussian blue `#132F43`), accent (dark goldenrod `#C89222`), success (green), error (red) — all with 50-900 intensity scales
 - Three fonts: Pacifico (display/headings), Quicksand (body), JetBrains Mono (code/data)
@@ -91,13 +98,17 @@ Schema and validation: `src/constants/envSchema.ts`
 
 All docs live in `docs/`. Index: `docs/README.md`. Key files:
 - `docs/product-spec.md` — product vision and features
-- `docs/design-system.md` — colors, typography, component patterns
+- `docs/design-system.md` — colors, typography, component patterns, container intent rubric
 - `docs/setup.md` — environment setup and OAuth configuration
 - `docs/for-ai-developers.md` — LLM contributor guide with gotchas
 - `docs/yahoo-api-reference.md` — Yahoo Fantasy API reference
 - `docs/dashboard-components.md` — dashboard card architecture
-- `docs/data-layer.md` — data layer architecture, caching, types, full API reference
+- `docs/ui-patterns.md` — shared UI components, display patterns, and anti-patterns (points to design-system.md for container rubric)
+- `docs/data-architecture.md` — data layer architecture, caching, identity contract, full API reference
+- `docs/scoring-conventions.md` — stat levels, calibration knobs, one-source-of-truth rule
+- `docs/recommendation-system.md` — matchup-state layer: `analyzeMatchup` as the single source of truth for "which categories should I chase?", Boss Brief, focus suggestions, leverage
 - `docs/stats.md` — stat_id architecture and disambiguation patterns
+- `docs/streaming-page.md` — streaming board internals (team-abbr aliasing, FA→probable matching, pill scoring)
 
 ## Gotchas
 

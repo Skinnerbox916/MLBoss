@@ -4,7 +4,7 @@ The MLB Stats API (`https://statsapi.mlb.com/api/v1`) is the public, unauthentic
 
 All MLBoss access goes through `src/lib/mlb/` — consumers should never hit `statsapi.mlb.com` directly.
 
-➜ Data layer: [data-layer.md](data-layer.md) | Pitching page: [pitching-page.md](pitching-page.md)
+➜ Data layer: [data-architecture.md](data-architecture.md) | Streaming page: [streaming-page.md](streaming-page.md)
 
 ## Module Structure
 
@@ -191,7 +191,7 @@ This matters on the Pitching page's Tomorrow tab — every card would otherwise 
 | `average` | everything in between |
 | `unknown` | either stat is null |
 
-Tiers drive both the batter-row "Facing Ace" / "Weak SP" pills (via `getPitcherQualityPill` in `analysis.ts`) and the streaming board's row tint and composite scoring (see [pitching-page.md](pitching-page.md)).
+Tiers drive both the batter-row "Facing Ace" / "Weak SP" pills (via `getPitcherQualityPill` in `analysis.ts`) and the streaming board's row tint and composite scoring (see [streaming-page.md](streaming-page.md)).
 
 ## Park Factors
 

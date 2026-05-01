@@ -7,7 +7,7 @@ import { withCache, CACHE_CATEGORIES } from './cache';
  */
 export async function getTeamStatsSeason(userId: string, teamKey: string): Promise<TeamStats> {
   return withCache(
-    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:team_stats_season:${teamKey}`,
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:team-stats-season:${teamKey}`,
     CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
     () => new YahooFantasyAPI(userId).getTeamStats(teamKey),
   );
@@ -19,7 +19,7 @@ export async function getTeamStatsSeason(userId: string, teamKey: string): Promi
  */
 export async function getTeamStatsWeek(userId: string, teamKey: string, week: number): Promise<TeamStats> {
   return withCache(
-    `${CACHE_CATEGORIES.DYNAMIC.prefix}:team_stats_week:${teamKey}:week${week}`,
+    `${CACHE_CATEGORIES.DYNAMIC.prefix}:team-stats-week:${teamKey}:week${week}`,
     CACHE_CATEGORIES.DYNAMIC.ttl,
     () => new YahooFantasyAPI(userId).getTeamStats(teamKey, week),
   );

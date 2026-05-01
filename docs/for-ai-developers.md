@@ -6,7 +6,8 @@ This guide is specifically written for LLMs working on the MLBoss codebase. It c
 
 ## Quick Links
 
-- **Data Layer Architecture** - See [data-layer.md](./data-layer.md)
+- **Data Layer Architecture** - See [data-architecture.md](./data-architecture.md)
+- **Scoring Conventions** - See [scoring-conventions.md](./scoring-conventions.md)
 - **Statistical Architecture** - See [stats.md](./stats.md)
 - **Yahoo API Reference** - See [yahoo-api-reference.md](./yahoo-api-reference.md)
 - **Dashboard Components** - See [dashboard-components.md](./dashboard-components.md)
@@ -16,7 +17,8 @@ This guide is specifically written for LLMs working on the MLBoss codebase. It c
 ### Core Principles
 
 1. **Keep docs near code** - Documentation lives next to the code it describes
-   - `docs/data-layer.md` for data layer
+   - `docs/data-architecture.md` for data layer
+   - `docs/scoring-conventions.md` for stat-level conventions
    - Component-level docs in their directories
 
 2. **One README per package root** - Don't over-nest documentation
@@ -34,13 +36,14 @@ This guide is specifically written for LLMs working on the MLBoss codebase. It c
 
 ## Common Patterns
 
-Authentication, caching, and stat enrichment patterns are documented in **[data-layer.md](./data-layer.md)**.
+Authentication, caching, and stat enrichment patterns are documented in **[data-architecture.md](./data-architecture.md)**. Per-stat conventions (which fields are regressed, calibration knobs) live in **[scoring-conventions.md](./scoring-conventions.md)**.
 
 ## Navigation Tips
 
-1. **Check the data layer** - See [data-layer.md](./data-layer.md) for stats, caching, and auth patterns
-2. **Reference Yahoo API guide** - [yahoo-api-reference.md](./yahoo-api-reference.md) for API details
-3. **Dashboard architecture** - [dashboard-components.md](./dashboard-components.md) for card system
+1. **Check the data layer** - See [data-architecture.md](./data-architecture.md) for the three-layer model, fetch+cache contract, and identity contract
+2. **Reference scoring conventions** - [scoring-conventions.md](./scoring-conventions.md) for stat levels and calibration knobs
+3. **Reference Yahoo API guide** - [yahoo-api-reference.md](./yahoo-api-reference.md) for API details
+4. **Dashboard architecture** - [dashboard-components.md](./dashboard-components.md) for card system
 
 ## Environment Variables
 
@@ -53,14 +56,14 @@ Complete and up-to-date environment variable definitions live in **[Setup & Conf
 3. **Rate limits** - Yahoo allows ~60-100 requests/hour, implement tiered caching (Static/Semi-dynamic/Dynamic)
 4. **JSON structure** - Yahoo's JSON has numeric keys, consider using XML
 5. **`position_types` from Yahoo JSON is unreliable** - The field can be absent, a plain string (`"B"`), a nested object (`{"position_type":"B"}`), or a numeric-key object (`{"position_type":{"0":"B","count":1}}`). Always use `normalizePositionTypes()` in `yahoo-fantasy-api.ts` when parsing it. `getEnrichedLeagueStatCategories` also falls back to `COMMON_MLB_STATS` in `src/constants/statCategories.ts` as a last resort.
-6. **Never use `flushdb` to clear cache** - It wipes `user:*` auth data alongside cache keys, breaking all Yahoo API calls. Use the `/admin/cache` page (targets `cache:*` only) or `invalidateCachePattern()`. See also the cache tier key format note in [data-layer.md](./data-layer.md).
+6. **Never use `flushdb` to clear cache** - It wipes `user:*` auth data alongside cache keys, breaking all Yahoo API calls. Use the `/admin/cache` page (targets `cache:*` only) or `invalidateCachePattern()`. See also the cache tier key format note in [data-architecture.md](./data-architecture.md).
 7. **Cache Redis key format** - `withCache` stores keys as `cache:{tier}:{resource}:{id}` (e.g. `cache:static:stat_category_map:458`). The `CACHE_CATEGORIES` prefix constants are the tier segment only — you must include the `cache:` namespace when querying Redis directly.
 
 ## Quick Command Reference
 
 ```powershell
-# Start Redis (Docker)
-docker run -d -p 6379:6379 redis:alpine
+# Start Redis (persistent container, auto-starts with Docker Desktop)
+docker start mlboss-redis
 
 # Start development server
 npm run dev

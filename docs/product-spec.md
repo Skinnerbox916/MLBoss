@@ -3,7 +3,7 @@
 >**LLM Agents Please Read:**
 >**Purpose of this document**: This file captures the **product vision, user requirements, and high-level architecture**. It does **not** describe the source-code implementation. For engineering details and API contracts, start at `docs/README.md`.
 
-➜ Environment setup: [setup.md](setup.md) | Data layer: [data-layer.md](data-layer.md)
+➜ Environment setup: [setup.md](setup.md) | Data layer: [data-architecture.md](data-architecture.md)
 
 ## Overview
 MLBoss is a fantasy baseball decision support tool designed to help users make informed daily lineup and pitcher-streaming decisions through comprehensive data analysis. The system provides parallel batter and pitcher analysis surfaces backed by fantasy league-wide context for strategic decision-making.
@@ -27,16 +27,18 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
 - **Lineup decisions** (sit/start against a given matchup)
 
 ### Pitcher Analysis
-- **Streaming Board**
-  - Free-agent and waiver starting pitchers with tomorrow's probable starts
+- **Today's Pitcher Sit/Start**
+  - On the Today page alongside batter lineup — rostered pitchers grouped by Active / Bench / Injured with today's matchup context (opponent offense, park, weather) so you can sit a starter walking into Coors.
+- **Streaming Board** (dedicated `/streaming` page)
+  - Free-agent and waiver starting pitchers with probable starts for the selected day
+  - Multi-day date strip covering **D+1 through D+5** — Yahoo only publishes probables for tomorrow, but MLB's schedule hydrates probables 3-5 days out, letting you plan pickups against the 6-moves-per-week cap.
   - Per-pitcher "Stream for:" category indicators (QS / K / W / ERA / WHIP) showing which fantasy categories each start is likely to help or hurt
   - Quality tier and composite quality score (color-coded row backgrounds)
-  - Daily-lineup workflow: today's roster shows sit/start candidates; tomorrow's board surfaces streaming pickups
 - **Opposing Offense Analysis**
   - Team OPS vs LHP / RHP (handedness-aware matchup strength)
   - Team strikeout rate and runs per game
 - **Matchup Pulse**
-  - Live pitching-category scoreboard vs this week's opponent (which categories you're winning/losing/tied)
+  - Live head-to-head category scoreboard vs this week's opponent, pinned above both Today and Streaming so pickup/lineup decisions know which categories to chase.
 
 ### Performance Context
 - **Hot/Cold Tracking**
@@ -65,17 +67,25 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
 
 ## Interface Structure
 
+Pages are organized around the **time horizon of the decision** being made rather than entity type. This keeps "Am I punting saves?" (long-term construction), "Do I start Skubal today?" (daily), and "Who do I stream Thursday?" (this week) on distinct, focused surfaces.
+
 ### User Interface
-- **Dashboard**
-  - Card-based layout for quick insights
-  - Key metrics and alerts
+
+Five primary pages in the sidebar, in order of decision cadence:
+
+1. **Dashboard** — reference/mixed-horizon snapshot
+2. **Today** — daily sit/start for batters and pitchers
+3. **Streaming** — D+1 through D+5 pitcher pickups
+4. **Roster** — long-term roster construction (add/drop batters and pitchers)
+5. **League** — standings and statistical reference
 
 ### Dedicated Pages
-- **Matchup Analysis** — weekly head-to-head category comparison
-- **Lineup Management** — batter-only daily sit/start decisions with splits and context
-- **Pitching** — dedicated pitcher tool with a Today tab (sit/start for rostered pitchers) and a Tomorrow tab (streaming board for free-agent pickups)
-- **Roster Management** — including future waiver wire and trade features
-- **League Overview** — rankings, matchups, statistics
+
+- **Dashboard** — card-based grid of key metrics and alerts. Absorbs the head-to-head category scoreboard (`CurrentScoreCard`) and season-comparison view that formerly lived on a separate Matchup page, and adds `OpponentStatusCard` (opponent injuries + probable pitchers) for scouting.
+- **Today** — tabs for Batters and Pitchers. Both share a live **Matchup Pulse** at the top showing where you're winning and losing categories this week, so sit/start decisions are made with category leverage in mind.
+- **Streaming** — standalone page for pitcher pickups. Date strip spans D+1 through D+5 so the 6-moves-per-week budget can be planned against advance probables; per-row pills call out QS / K / W / ERA / WHIP fit; composite score tints each row.
+- **Roster** — tabs for Batters and Pitchers. Top of each tab: **RankStrip**, showing league rank + delta-to-leader for each category aggregated over the last 3 completed weeks of actual stat values (not W/L records) so the punt/chase call reflects recent reality post-roster-move. Batters tab is a full depth-chart + swap optimizer; Pitchers tab lists rostered + available pitchers (full pitcher optimizer is on the roadmap).
+- **League Overview** — standings, rankings, statistics.
 
 ### Admin Panel
 - User management

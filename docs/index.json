@@ -1,61 +1,85 @@
 {
-  "generated": "2026-04-10T17:45:56.165Z",
+  "generated": "2026-04-30T23:49:26.975Z",
   "baseDir": "docs",
-  "count": 9,
+  "count": 13,
   "docs": {
     "README": {
       "path": "README.md",
       "title": "MLBoss Documentation Index",
       "description": "This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files.",
-      "lastModified": "2026-04-10T17:45:28.544Z"
+      "lastModified": "2026-04-30T22:37:07.543Z"
     },
     "dashboard-components": {
       "path": "dashboard-components.md",
       "title": "Dashboard Component System",
       "description": "The dashboard is built from **self-contained React components** (\"cards\") rendered inside a flexible grid.",
-      "lastModified": "2026-04-10T17:45:47.954Z"
+      "lastModified": "2026-04-30T22:38:25.255Z"
     },
-    "data-layer": {
-      "path": "data-layer.md",
-      "title": "Fantasy Data Layer",
-      "description": "The fantasy data layer (`src/lib/fantasy/`) sits between page/API-route code and the raw Yahoo Fantasy API client. It adds caching, token management, type safety, and domain-specific logic.",
-      "lastModified": "2026-04-10T17:45:01.429Z"
+    "data-architecture": {
+      "path": "data-architecture.md",
+      "title": "Data Architecture",
+      "description": "This is the canonical reference for how MLBoss fetches, models, and composes data. Read this before touching anything in `src/lib/fantasy/`, `src/lib/mlb/`, `src/lib/roster/`, `src/lib/pitching/`, or `src/lib/lineup/`.",
+      "lastModified": "2026-04-30T23:48:26.982Z"
     },
     "design-system": {
       "path": "design-system.md",
       "title": "MLBoss Design System",
       "description": "This document defines the visual design standards for MLBoss, including colors, typography, and component patterns. All design tokens are implemented as CSS variables and wired into Tailwind CSS utilities.",
-      "lastModified": "2025-06-12T17:13:18.000Z"
+      "lastModified": "2026-04-30T17:46:19.208Z"
     },
     "for-ai-developers": {
       "path": "for-ai-developers.md",
       "title": "For AI Developers",
       "description": "This guide is specifically written for LLMs working on the MLBoss codebase. It contains documentation strategy and key patterns to follow.",
-      "lastModified": "2026-04-10T17:45:37.243Z"
+      "lastModified": "2026-04-30T22:38:17.581Z"
+    },
+    "mlb-api-reference": {
+      "path": "mlb-api-reference.md",
+      "title": "MLB Stats API Reference",
+      "description": "The MLB Stats API (`https://statsapi.mlb.com/api/v1`) is the public, unauthenticated data source MLBoss uses for everything the Yahoo Fantasy API can't give us: probable pitchers, player stats, handedness splits, team offense profiles, venues, weather, and player identity.",
+      "lastModified": "2026-04-30T22:37:45.805Z"
     },
     "product-spec": {
       "path": "product-spec.md",
       "title": "MLBoss: Fantasy Baseball Decision Support System",
-      "description": "MLBoss is a fantasy baseball decision support tool designed to help users make informed lineup decisions through comprehensive data analysis. The system focuses primarily on batter performance analysis while providing fantasy league-wide context for strategic decision-making.",
-      "lastModified": "2026-04-10T17:45:49.292Z"
+      "description": "MLBoss is a fantasy baseball decision support tool designed to help users make informed daily lineup and pitcher-streaming decisions through comprehensive data analysis. The system provides parallel batter and pitcher analysis surfaces backed by fantasy league-wide context for strategic decision-making.",
+      "lastModified": "2026-04-30T22:37:47.778Z"
+    },
+    "scoring-conventions": {
+      "path": "scoring-conventions.md",
+      "title": "Scoring Conventions",
+      "description": "This is the reference for HOW the app turns raw stats into the talent ratings, matchup ratings, and streaming verdicts surfaced in the UI. Read this before adding a new category, tuning a constant, or writing a second function that \"estimates how good a player is\".",
+      "lastModified": "2026-04-30T23:49:06.328Z"
     },
     "setup": {
       "path": "setup.md",
       "title": "Setup & Configuration",
       "description": "This document is the single source of truth for all environment variables and the Yahoo OAuth setup required to run MLBoss.",
-      "lastModified": "2025-06-10T22:16:43.000Z"
+      "lastModified": "2026-04-30T17:46:19.208Z"
     },
     "stats": {
       "path": "stats.md",
       "title": "Statistical Data Architecture",
       "description": "MLBoss uses `stat_id` as the canonical identifier for all player and team statistics. This numeric key system eliminates ambiguity between similar statistics (like pitcher vs batter strikeouts) and provides consistent identification across all API calls.",
-      "lastModified": "2026-04-10T17:45:18.798Z"
+      "lastModified": "2026-04-10T21:41:20.424Z"
+    },
+    "streaming-page": {
+      "path": "streaming-page.md",
+      "title": "Streaming Page Architecture",
+      "description": "The `/streaming` page is MLBoss's dedicated pitcher-pickup tool. It is **not** a daily lineup surface — daily pitcher sit/start lives on the Today page (`/lineup`, Pitchers tab). Streaming is about rotating through the ~6 moves-per-week budget on the 1-2 bench pitcher slots that rotate, with visibility multiple days ahead.",
+      "lastModified": "2026-04-30T23:47:38.451Z"
+    },
+    "ui-patterns": {
+      "path": "ui-patterns.md",
+      "title": "UI Patterns & Shared Components",
+      "description": "Before building new UI, check this inventory. Reuse existing patterns and shared components rather than creating new ones.",
+      "lastModified": "2026-04-30T17:46:19.208Z"
     },
     "yahoo-api-reference": {
       "path": "yahoo-api-reference.md",
       "title": "Yahoo Fantasy Baseball API Guide",
       "description": "* [Introduction](#introduction)",
-      "lastModified": "2025-06-09T21:29:17.000Z"
+      "lastModified": "2026-04-29T20:23:58.659Z"
     }
   }
 }

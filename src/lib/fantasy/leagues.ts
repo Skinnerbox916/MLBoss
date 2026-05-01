@@ -69,7 +69,7 @@ function findUserTeam(teams: Team[]): Team | undefined {
  */
 export async function getCurrentMLBGameKey(userId?: string): Promise<{ game_key: string; season: string; is_active: boolean }> {
   return withCache(
-    `${CACHE_CATEGORIES.STATIC.prefix}:current_mlb_game`,
+    `${CACHE_CATEGORIES.STATIC.prefix}:current-mlb-game`,
     CACHE_CATEGORIES.STATIC.ttl,
     () => new YahooFantasyAPI(userId).getCurrentMLBSeason(),
   );

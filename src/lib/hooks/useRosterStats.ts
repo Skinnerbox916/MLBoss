@@ -1,6 +1,7 @@
 import useSWR from 'swr';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
-import type { BatterSeasonStats } from '@/lib/mlb/types';
+import type { BatterSeasonStats, PlayerStatLine } from '@/lib/mlb/types';
+import { fromBatterSeasonStats } from '@/lib/mlb/adapters';
 
 interface RosterStatsResponse {
   stats: Record<string, BatterSeasonStats>;
@@ -44,26 +45,36 @@ export function useRosterStats(roster: RosterEntry[]) {
     return statsMap[makeKey(name, team)] ?? null;
   }
 
+  /**
+   * Stratified `PlayerStatLine` view of the same data. New consumers should
+   * prefer this over `getPlayerStats` — `current` / `prior` / `talent` /
+   * `statcast` / `splits` make the field's stat level explicit.
+   */
+  function getPlayerLine(name: string, team: string): PlayerStatLine | null {
+    const stats = statsMap[makeKey(name, team)];
+    return stats ? fromBatterSeasonStats(stats) : null;
+  }
+
   function getPlayerOPS(name: string, team: string): number | null {
     return getPlayerStats(name, team)?.ops ?? null;
   }
 
   /**
    * Returns xwOBA when Savant has enough data, otherwise falls back to OPS.
-   * xwOBA is on a ~0.250–0.400 scale; we map it to OPS-equivalent (multiply
-   * by ~3.2) so downstream comparisons stay consistent.  When xwOBA is
-   * available it's a better talent signal than raw OPS at any sample size.
+   * xwOBA is on a ~0.250-0.400 scale; we map it to OPS-equivalent (multiply
+   * by ~2.4) so downstream comparisons stay consistent.
    */
   function getPlayerTalentOPS(name: string, team: string): number | null {
     const stats = getPlayerStats(name, team);
     if (!stats) return null;
-    if (stats.xwoba !== null) return stats.xwoba * 2.4; // xwOBA → OPS-scale (~.315 xwOBA ≈ .730 OPS)
+    if (stats.xwoba !== null) return stats.xwoba * 2.4;
     return stats.ops;
   }
 
   return {
     statsMap,
     getPlayerStats,
+    getPlayerLine,
     getPlayerOPS,
     getPlayerTalentOPS,
     isLoading,

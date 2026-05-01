@@ -1,6 +1,5 @@
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 import Image from 'next/image';
 
 export default async function HomePage() {
@@ -35,12 +34,12 @@ export default async function HomePage() {
         priority
         className="mx-auto mb-8 hidden dark:block"
       />
-      <Link
+      <a
         href="/api/auth/login"
         className="mt-4 px-8 py-4 rounded-lg bg-accent text-white text-xl font-bold shadow-lg hover:bg-accent-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent-500 transition-colors"
       >
         Sign in with Yahoo!
-      </Link>
+      </a>
     </div>
   );
 }

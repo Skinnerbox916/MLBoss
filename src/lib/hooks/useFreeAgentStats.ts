@@ -1,6 +1,7 @@
 import useSWR from 'swr';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
-import type { BatterSeasonStats } from '@/lib/mlb/types';
+import type { BatterSeasonStats, PlayerStatLine } from '@/lib/mlb/types';
+import { fromBatterSeasonStats } from '@/lib/mlb/adapters';
 
 interface StatsResponse {
   stats: Record<string, BatterSeasonStats>;
@@ -37,5 +38,10 @@ export function useFreeAgentStats(players: FreeAgentPlayer[]) {
     return statsMap[makeKey(name, team)] ?? null;
   }
 
-  return { statsMap, getPlayerStats, isLoading, isError: !!error };
+  function getPlayerLine(name: string, team: string): PlayerStatLine | null {
+    const stats = statsMap[makeKey(name, team)];
+    return stats ? fromBatterSeasonStats(stats) : null;
+  }
+
+  return { statsMap, getPlayerStats, getPlayerLine, isLoading, isError: !!error };
 }

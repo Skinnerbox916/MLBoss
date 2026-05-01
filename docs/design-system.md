@@ -288,6 +288,82 @@ Colors are wired into Tailwind CSS v4 via the `@theme` directive, enabling stand
 </div>
 ```
 
+## Container Intent Rubric
+
+Every surface in the app is built out of a small, consistent vocabulary of containers. Picking the right one is what keeps the UI feeling coherent across pages. This rubric is the source of truth — when there's a mismatch, follow the table and fix the code to match.
+
+| Container | Use when | Don't use when |
+|---|---|---|
+| **Page** | One primary decision, one time horizon. | You have ≥3 unrelated decisions on it. Split the page. |
+| **`DashboardCard`** | Reference/summary tile on the Dashboard grid. | Outside the Dashboard (use `Panel`). |
+| **`Panel`** | Section container on a non-dashboard page (lineup, roster, streaming, league). | On Dashboard (use `DashboardCard`). Anywhere you're tempted to type `bg-surface rounded-lg shadow p-4` by hand. |
+| **`Tabs variant="segment"`** | Mode switch — what the user is *doing* changes between tabs (e.g. Batters vs Pitchers). | Peer views of the same data (use `underline`). |
+| **`Tabs variant="underline"`** | Peer views of same-shape data (e.g. Batting vs Pitching category tables). | The user's decision changes (use `segment`). |
+| **Expanding row** | On-demand detail for one entity in a list (player splits, pitcher score breakdown). | For any global/persistent UI state. |
+| **`Badge`** | Non-interactive status or classification tag. | As a button — use a real `<button>`. |
+| **Modal** | Destructive actions, forms, or focused flows that must block the page. | Anything that fits inline. We have none today — keep it that way unless a real reason emerges. |
+
+### Page / `DashboardCard` / `Panel`
+
+- **Page** is the top-level route. One horizon (today / this week / construction / reference). One primary decision.
+- **`DashboardCard`** wraps grid tiles on `/dashboard`. Built-in header, loading skeleton, size prop (`sm | md | lg | xl`). Only use inside the dashboard.
+- **`Panel`** is the non-dashboard equivalent. Replaces the repeated `bg-surface rounded-lg shadow p-4` pattern. Optional `title`, `action`, and `helper` props cover the common "section header + optional count on the right + helper copy" layout:
+
+```tsx
+import Panel from '@/components/ui/Panel';
+
+<Panel title="Your Batters" action={<span className="text-caption text-muted-foreground">12 on roster</span>}>
+  <RosterTable ... />
+</Panel>
+```
+
+Use `noPadding` when the child needs full-bleed control (e.g. a wide scrolling table).
+
+### `Tabs`
+
+One component, two variants. The variant telegraphs intent to the user — segment-style means "the mode/task is about to change"; underline means "you're looking at the same kind of information, sliced differently."
+
+```tsx
+import Tabs from '@/components/ui/Tabs';
+
+// Mode switch: batters and pitchers are different workflows
+<Tabs
+  variant="segment"
+  items={[{ id: 'batting', label: 'Batters' }, { id: 'pitching', label: 'Pitchers' }]}
+  value={mode}
+  onChange={setMode}
+/>
+
+// Peer data views: same scoreboard, sliced by category group
+<Tabs
+  variant="underline"
+  items={[{ id: 'batting', label: 'Batting' }, { id: 'pitching', label: 'Pitching' }]}
+  value={activeTab}
+  onChange={setActiveTab}
+/>
+```
+
+**Do not hand-roll tab styles.** If both variants exist in the codebase, two different tabs should be visually distinct by variant — that's the whole point.
+
+### Shared display patterns
+
+These aren't containers but are shared, reusable display surfaces. Prefer them before inventing new ones:
+
+- **`MatchupPulse`** (`src/components/shared/MatchupPulse.tsx`) — horizontal strip of per-category tiles showing current-week head-to-head. Props: `side: 'batting' | 'pitching' | 'both'`.
+- **`RankStrip`** (`src/components/shared/RankStrip.tsx`) — horizontal strip of per-category tiles showing league rank and delta to leader over a rolling window.
+- **`CategoryFocusBar`** (`src/components/shared/CategoryFocusBar.tsx`) — multi-state pill group for chase/punt/neutral per category.
+- **`DivergingRow`** (`src/components/ui/DivergingRow.tsx`) — center-origin bar showing who's winning a category.
+
+### Anti-patterns
+
+- **No new color systems.** Use `primary | accent | success | error | muted-foreground`.
+- **No new pill/tag/chip components.** Use `Badge`.
+- **No new card wrappers.** `DashboardCard` for dashboard tiles, `Panel` everywhere else.
+- **No inline `bg-surface rounded-lg shadow ...`.** Always `Panel`.
+- **No per-file tab styles.** Always `Tabs`.
+- **No two visual styles for the same intent.** If you need a new look, update this rubric first and then update every usage.
+- **No per-page reinventions** of `MatchupPulse`, `RankStrip`, or `CategoryFocusBar` — they live in `src/components/shared/` and get extended via props.
+
 ## Component Patterns
 
 ### Icon System

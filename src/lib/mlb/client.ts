@@ -197,9 +197,11 @@ export async function mlbFetch<T>(path: string, opts: FetchOptions = {}): Promis
  * Cached MLB Stats API fetch. Wraps `withCache` and applies the standard
  * retry + concurrency policy. Prefer this for any single-resource fetch.
  *
- * `cacheKey` is namespaced under `cache:{tier}:mlb:{group}:` by the four
- * wrapper helpers; if you call `mlbFetchCached` directly, supply a fully
- * scoped key so cache buckets don't collide.
+ * `cacheKey` MUST start with one of `static:`, `semi-dynamic:`, or
+ * `dynamic:` — the four wrapper helpers below already pre-namespace
+ * correctly (`{tier}:mlb:{group}:...`). If you call `mlbFetchCached`
+ * directly, supply a fully scoped tier-prefixed key. See
+ * `docs/data-architecture.md` (Tier discipline).
  */
 export async function mlbFetchCached<T>(
   path: string,
@@ -212,12 +214,17 @@ export async function mlbFetchCached<T>(
 // Group-flavoured wrappers — kept as 1-line aliases for back-compat.
 // New callers should generally prefer mlbFetchCached + an explicit cacheKey,
 // but the wrappers are convenient and worth keeping.
+//
+// Each helper writes a fully tier-prefixed cache key
+// (`{tier}:mlb:{group}:{cacheKey}`) so it shows up in the right bucket on
+// /admin/cache and so `invalidateCachePattern('static:mlb:identity:')`
+// (etc.) works the way the docs promise.
 // ---------------------------------------------------------------------------
 
 /** Schedule data: changes as probable pitchers are confirmed. Cache 5 min. */
 export async function mlbFetchSchedule<T>(path: string, cacheKey: string): Promise<T> {
   return mlbFetchCached<T>(path, {
-    cacheKey: `mlb:schedule:${cacheKey}`,
+    cacheKey: `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:mlb:schedule:${cacheKey}`,
     ttl: CACHE_CATEGORIES.SEMI_DYNAMIC.ttl, // 5 min
   });
 }
@@ -225,7 +232,7 @@ export async function mlbFetchSchedule<T>(path: string, cacheKey: string): Promi
 /** Player splits: updated daily at most. Cache 1 hour. */
 export async function mlbFetchSplits<T>(path: string, cacheKey: string): Promise<T> {
   return mlbFetchCached<T>(path, {
-    cacheKey: `mlb:splits:${cacheKey}`,
+    cacheKey: `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:mlb:splits:${cacheKey}`,
     ttl: CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong, // 1 hour
   });
 }
@@ -233,7 +240,7 @@ export async function mlbFetchSplits<T>(path: string, cacheKey: string): Promise
 /** Player identity (name->MLB ID). Very stable. Cache 24 hours. */
 export async function mlbFetchIdentity<T>(path: string, cacheKey: string): Promise<T> {
   return mlbFetchCached<T>(path, {
-    cacheKey: `mlb:identity:${cacheKey}`,
+    cacheKey: `${CACHE_CATEGORIES.STATIC.prefix}:mlb:identity:${cacheKey}`,
     ttl: CACHE_CATEGORIES.STATIC.ttl, // 24 hours
   });
 }
@@ -241,7 +248,7 @@ export async function mlbFetchIdentity<T>(path: string, cacheKey: string): Promi
 /** Team aggregate stats. Stable day-to-day. Cache 24 hours. */
 export async function mlbFetchTeamStats<T>(path: string, cacheKey: string): Promise<T> {
   return mlbFetchCached<T>(path, {
-    cacheKey: `mlb:teamstats:${cacheKey}`,
+    cacheKey: `${CACHE_CATEGORIES.STATIC.prefix}:mlb:teamstats:${cacheKey}`,
     ttl: CACHE_CATEGORIES.STATIC.ttl, // 24 hours
   });
 }

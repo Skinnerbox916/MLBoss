@@ -10,8 +10,8 @@ Environment variable schema is defined in TypeScript at `src/constants/envSchema
 
 **Quick reference:**
 - `APP_URL` — Public base URL for OAuth redirects
-- `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` — Yahoo Developer app credentials  
-- `REDIS_URL` — Redis connection string
+- `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` — Yahoo Developer app credentials
+- Redis: `REDIS_URL` (preferred) or the discrete `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` fallback. Validation in `src/constants/envSchema.ts` requires one or the other.
 - `SESSION_SECRET` — 64-character cookie encryption key
 
 **Generate .env.local template:**

@@ -4,12 +4,15 @@ export {
   CACHE_CATEGORIES,
   cacheResult,
   getCachedResult,
+  getCacheStats,
   invalidateCache,
   invalidateCachePattern,
   listCacheKeys,
+  resetCacheStats,
   withCache,
   withCacheGated,
 } from './cache';
+export type { CacheStats, CacheTier } from './cache';
 
 export {
   getUserFromRedis,

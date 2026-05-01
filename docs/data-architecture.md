@@ -90,7 +90,7 @@ Both apply the same machinery:
 4. Return the parsed body or throw a normalized `MlbFetchError`
 5. Log each failure with `[mlb-fetch] {host}{path} failed (attempt N/M)` so the dev log is greppable
 
-Four group-flavoured helpers (`mlbFetchSchedule`, `mlbFetchSplits`, `mlbFetchIdentity`, `mlbFetchTeamStats`) are 1-line aliases over `mlbFetchCached` and remain the recommended entry points for their respective resource groups — they pre-namespace the cache key (`mlb:splits:*`, `mlb:identity:*`, etc.) and fix the TTL for that resource class.
+Four group-flavoured helpers (`mlbFetchSchedule`, `mlbFetchSplits`, `mlbFetchIdentity`, `mlbFetchTeamStats`) are 1-line aliases over `mlbFetchCached` and remain the recommended entry points for their respective resource groups — they pre-namespace the cache key with both the tier and the group (`semi-dynamic:mlb:schedule:*`, `semi-dynamic:mlb:splits:*`, `static:mlb:identity:*`, `static:mlb:teamstats:*`) and fix the TTL for that resource class. If you ever call `mlbFetchCached` directly, supply a fully tier-prefixed `cacheKey` yourself — see *Tier discipline* below.
 
 Savant CSV requests go through `externalFetchText(url, opts?)` in the same module; it shares the per-host limiter and retry policy.
 
@@ -105,6 +105,39 @@ All cache values live under Redis keys formatted as `cache:{tier}:{resource}:{id
 | `DYNAMIC` | 30 s - 1 min | Scoreboards, live stats, transactions | `cache:dynamic:*` |
 
 The `CACHE_CATEGORIES.{TIER}.prefix` constants are the *tier segment only*. `withCache` / `cacheResult` add the `cache:` namespace prefix automatically. When scanning Redis directly always use the full `cache:{tier}:*` pattern.
+
+### Tier discipline (the rule)
+
+**Every cache key written through `withCache` / `withCacheGated` / `cacheResult` must start with one of `static:`, `semi-dynamic:`, or `dynamic:`.** No exceptions. The tier prefix is not decoration — it's load-bearing for:
+
+1. The `/admin/cache` panel's per-tier counts, byte totals, and "Clear *Tier*" buttons
+2. The hit/miss/gate-reject counters in `getCacheStats()`, which bucket by leading prefix
+3. `invalidateCachePattern('static:savant:')`-style sweeps from feature code
+4. Future eviction policy or partial flushes — anything that wants to operate on "all stale-tolerant data" needs to find it by prefix
+
+**Always build keys via the constants:**
+
+```typescript
+import { CACHE_CATEGORIES, withCache } from '@/lib/fantasy/cache';
+
+return withCache(
+  `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:fa-batters:${leagueKey}`,
+  CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
+  fetchFn,
+);
+```
+
+Never hardcode `'semi-dynamic:'` and never write a key that starts with anything else (e.g. `mlb:` or the bare resource name). `cacheResult` logs `[cache] write to non-tier-prefixed key "…"` if you do — treat that warning as a build-blocking bug.
+
+**Picking the tier — the rubric:**
+
+| If the underlying data… | Use tier | Pick TTL |
+|---|---|---|
+| Is fixed for the season (game key, stat categories, roster positions, league limits) or recomputed nightly (Savant) | `STATIC` | `STATIC.ttl` (24 h) or `STATIC.ttlLong` (48 h) |
+| Updates a few times per day (standings, league settings, schedule, splits, market signals, team season stats) | `SEMI_DYNAMIC` | `ttl` (5 m) / `ttlMedium` (10 m) / `ttlLong` (1 h) — pick the slowest the UX tolerates |
+| Changes during live games or between requests (scoreboard, weekly team stats, roster, transactions) | `DYNAMIC` | `DYNAMIC.ttl` (1 m) — only loosen if the data really moves slower |
+
+If the choice isn't obvious, **lean to the shorter TTL within the tier** rather than escalating to a higher tier — staleness in the wrong tier shows up as wrong-data bugs that are very hard to triage.
 
 ### Quality gate
 
@@ -121,11 +154,15 @@ return withCacheGated(
 
 A run that fails to resolve at least 70% of its inputs is treated as a transient outage and not cached. The caller still receives the (degraded) result, but the next request retries instead of being stuck for the full TTL. The cache write skip is logged as `[cache] gate rejected result for key=…`. This is the structural fix for the "broken state persists" pattern.
 
-Canonical example: `getRosterSeasonStats` in [src/lib/mlb/players.ts](../src/lib/mlb/players.ts).
+Canonical examples (all multi-fanout, all gated):
+
+- `getRosterSeasonStats` in [src/lib/mlb/players.ts](../src/lib/mlb/players.ts) — per-player stats fetch (70% coverage gate)
+- `getAvailablePitchers` in [src/lib/fantasy/players.ts](../src/lib/fantasy/players.ts) — 4-way Yahoo fan-out across SP/RP × FA/W (≥50 merged pitchers)
+- `getPlayerMarketSignals` in [src/lib/fantasy/players.ts](../src/lib/fantasy/players.ts) — per-key market signal fetch (70% coverage gate)
 
 ### Schema versioning
 
-Cache keys carry an inline version segment (`roster-stats-v6`, `savant:pitchers:v2`) so a payload-shape change can be invalidated by bumping a number rather than by clearing Redis. Bump the version segment whenever you:
+Cache keys carry an inline version segment (`roster-stats-v7`, `savant:pitchers:v2`) so a payload-shape change can be invalidated by bumping a number rather than by clearing Redis. Bump the version segment whenever you:
 
 - Add or remove a field from the cached value
 - Change the meaning of a field (e.g. raw vs. regressed)
@@ -144,7 +181,9 @@ await invalidateCache('semi-dynamic:teams:458.l.12345');
 await invalidateCachePattern('semi-dynamic:teams:458.l.12345');
 ```
 
-Never call `redis.flushdb()` — it wipes `user:*` and `token:*` keys alongside the cache, breaking all Yahoo API calls until the user re-logs in. Use the `/admin/cache` page or target `cache:*` keys directly.
+`invalidateCachePattern` walks the keyspace via `SCAN` (not `KEYS`) so it stays safe as the cache grows; deletions happen in batches of 500. There is also `listCacheKeys(match)` exported from `@/lib/fantasy` for read-only key enumeration — use that from admin pages.
+
+Never call `redis.flushdb()` — it wipes `user:*` and `token:*` keys alongside the cache, breaking all Yahoo API calls until the user re-logs in. The function is no longer exposed on `redisUtils`; call `invalidateCachePattern('static:')` (etc.) or use the `/admin/cache` page instead.
 
 ## Identity contract — Yahoo to MLB
 
@@ -199,7 +238,7 @@ The Yahoo half of the source layer is mature and stable. Modules live under `src
 
 ```
 src/lib/fantasy/
-├── cache.ts         — withCache, withCacheGated, TTL tiers, invalidation
+├── cache.ts         — withCache, withCacheGated, listCacheKeys, TTL tiers, SCAN-backed invalidation
 ├── auth.ts          — token validation and refresh via Redis
 ├── stats.ts         — stat categories, enrichment, league-specific categories
 ├── leagues.ts       — league/team discovery, user team identification
@@ -229,6 +268,8 @@ Functions that fetch a single cacheable resource (like `getStatCategories`) thro
 `YahooFantasyAPI` handles token refresh internally with a 5-minute buffer before expiry. The data layer does NOT pre-validate tokens before API calls — this avoids redundant Redis round-trips.
 
 User auth data (`user:{id}` hash and `token:{accessToken}` lookup) is stored in Redis as a backup, but the iron-session cookie is the source of truth. If Redis is cleared, `getValidAccessToken` falls back to the session cookie automatically — no re-login required.
+
+Token refresh is wrapped in a Redis `MULTI` so the user-hash field updates, the 7-day hash TTL re-up, the stale `token:{old}` deletion, and the new `token:{new}` write all land atomically. Concurrent requests cannot observe partial state mid-rotation. The OAuth callback uses the same MULTI shape on initial login. See [src/lib/fantasy/auth.ts](../src/lib/fantasy/auth.ts) `refreshUserTokens` and [src/lib/yahoo-fantasy-api.ts](../src/lib/yahoo-fantasy-api.ts) `getValidAccessToken`.
 
 `auth.ts` provides utilities for pages that need to check or display token status:
 

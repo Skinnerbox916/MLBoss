@@ -38,6 +38,9 @@ No test framework is configured.
 ### Data Layer
 - Redis (`src/lib/redis.ts`) used for caching and session backup
 - Three-tier TTL caching: static (24-48h), semi-dynamic (5min-1h), dynamic (30s-1min)
+- All cached fetches go through `withCache` / `withCacheGated` (`src/lib/fantasy/cache.ts`); never write to Redis directly from feature code
+- **Every cache key must start with a tier prefix** — build it via `${CACHE_CATEGORIES.{TIER}.prefix}:{resource}:{id}`. The tier you pick must match the data's volatility (rubric in `docs/data-architecture.md` "Tier discipline"). `cacheResult` warns on non-tier-prefixed keys; treat the warning as a bug
+- Multi-fanout fetchers (anything that does `Promise.all` over a list of IDs) must use `withCacheGated` with a coverage predicate so a partial outage isn't pinned for the full TTL
 - Yahoo Fantasy API wrapper: `src/lib/yahoo-fantasy-api.ts` (raw client, ESLint-ignored until fully typed)
 - Yahoo OAuth client: `src/lib/yahoo-oauth.ts`
 - Stats use `stat_id` as canonical identifier (see `src/constants/statCategories.ts`, `docs/stats.md`)
@@ -90,7 +93,7 @@ Both the Today and Streaming pages share the lineup component library (`src/comp
 
 ## Environment Variables
 
-Required: `APP_URL`, `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `REDIS_URL`, `SESSION_SECRET`
+Required: `APP_URL`, `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `SESSION_SECRET`, plus Redis (either `REDIS_URL` or `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`)
 
 Schema and validation: `src/constants/envSchema.ts`
 

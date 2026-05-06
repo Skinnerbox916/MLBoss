@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/session';
+import { getSession } from '@/lib/auth';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy';
 
 export async function GET(
@@ -12,7 +12,7 @@ export async function GET(
   try {
     // Authentication handled by middleware - get user from session
     const session = await getSession();
-    const user = session.user as NonNullable<import('@/lib/session').SessionData['user']>;
+    const user = session.user as NonNullable<import('@/lib/auth').SessionData['user']>;
 
     if (!leagueKey) {
       return NextResponse.json(

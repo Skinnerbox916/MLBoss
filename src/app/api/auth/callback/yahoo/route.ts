@@ -1,7 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { YahooOAuth, YahooUserInfo } from '@/lib/yahoo-oauth';
+import { YahooOAuth, YahooUserInfo, getSession } from '@/lib/auth';
 import { redis, redisUtils } from '@/lib/redis';
-import { getSession } from '@/lib/session';
 
 export async function GET(request: NextRequest) {
   try {

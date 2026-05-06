@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/session';
+import { getSession } from '@/lib/auth';
 import { getTeamStatsSeason, getTeamStatsWeek } from '@/lib/fantasy';
 
 /**

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { YahooOAuth } from '@/lib/yahoo-oauth';
+import { YahooOAuth } from '@/lib/auth';
 import { redisUtils } from '@/lib/redis';
 import { randomBytes } from 'crypto';
 

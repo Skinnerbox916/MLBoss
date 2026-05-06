@@ -1,6 +1,5 @@
-import { YahooOAuth } from '@/lib/yahoo-oauth';
+import { YahooOAuth, getSession } from '@/lib/auth';
 import { redis, redisUtils } from '@/lib/redis';
-import { getSession } from '@/lib/session';
 
 interface YahooFantasyAPIError {
   error: string;

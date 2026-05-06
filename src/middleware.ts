@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { getIronSession } from 'iron-session';
-import { sessionOptions, SessionData } from '@/lib/session';
+import { sessionOptions, SessionData } from '@/lib/auth';
 
 export async function middleware(request: NextRequest) {
   // Get the pathname from the request
@@ -15,7 +15,7 @@ export async function middleware(request: NextRequest) {
     '/roster',
     '/league',
     '/api/fantasy',
-    '/api/test-stats'
+    '/api/admin/test-stats'
   ];
   
   // Check if the current path matches any protected route
@@ -82,12 +82,11 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - api/auth (authentication routes)
      * - api/ping (health check)
-     * - api/test-redis (test routes)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      * - public folder files
      */
-    '/((?!api/auth|api/ping|api/test-redis|_next/static|_next/image|favicon.ico|public).*)',
+    '/((?!api/auth|api/ping|_next/static|_next/image|favicon.ico|public).*)',
   ],
 }; 

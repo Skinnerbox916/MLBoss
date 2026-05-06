@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/session';
+import { getSession } from '@/lib/auth';
 import { getCurrentMLBGameKey, analyzeUserFantasyLeagues } from '@/lib/fantasy';
 
 /**

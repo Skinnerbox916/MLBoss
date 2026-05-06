@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/session';
+import { getSession } from '@/lib/auth';
 import { resolveMLBId, getBatterSplits, getCareerVsPitcher } from '@/lib/mlb/players';
 import { getGameDay } from '@/lib/mlb/schedule';
 

@@ -1,5 +1,5 @@
 import { redis, redisUtils } from '@/lib/redis';
-import { YahooOAuth } from '@/lib/yahoo-oauth';
+import { YahooOAuth } from '@/lib/auth';
 
 /**
  * Get user information from Redis backup storage

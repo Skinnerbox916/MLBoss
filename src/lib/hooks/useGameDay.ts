@@ -1,10 +1,8 @@
 import useSWR from 'swr';
 import { fetcher } from './fetcher';
-import type { MLBGame, ParkData } from '@/lib/mlb/types';
+import type { EnrichedGame } from '@/lib/mlb/types';
 
-export interface EnrichedGame extends MLBGame {
-  park: ParkData | null;
-}
+export type { EnrichedGame };
 
 interface GameDayResponse {
   date: string;

@@ -66,7 +66,7 @@ export function datesThroughEndOfWeek(start: string): string[] {
   return out;
 }
 
-async function fetchRoster(teamKey: string, date: string): Promise<RosterEntry[]> {
+export async function fetchRoster(teamKey: string, date: string): Promise<RosterEntry[]> {
   const res = await fetch(`/api/fantasy/roster?teamKey=${teamKey}&date=${date}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -76,7 +76,7 @@ async function fetchRoster(teamKey: string, date: string): Promise<RosterEntry[]
   return (data.roster ?? []) as RosterEntry[];
 }
 
-async function fetchGames(date: string): Promise<EnrichedGame[]> {
+export async function fetchGames(date: string): Promise<EnrichedGame[]> {
   const res = await fetch(`/api/mlb/game-day?date=${date}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -86,7 +86,7 @@ async function fetchGames(date: string): Promise<EnrichedGame[]> {
   return (data.games ?? []) as EnrichedGame[];
 }
 
-async function saveLineup(
+export async function saveLineup(
   teamKey: string,
   date: string,
   players: { player_key: string; position: string }[],

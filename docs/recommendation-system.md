@@ -80,17 +80,21 @@ All recommendation-layer thresholds live in [src/lib/matchup/analysis.ts](../src
 | Constant | Value | What it controls |
 |----------|-------|------------------|
 | `LOCKED_THRESHOLD` | `0.7` | `\|margin\|` ≥ this → `suggestedFocus = punt` (locked either way) |
-| `CONTESTED_THRESHOLD` | `0.4` | `\|margin\|` < this → `suggestedFocus = chase` (close enough to fight for) |
-| `RATE_SCALE` | per-stat table | Typical-swing scale per rate stat (AVG 0.040, ERA 0.50, etc.). Margin = `gap × dir / scale × confidence` |
+| `CONTESTED_THRESHOLD` | `0.4` | Sunday chase cutoff. Scaled by `0.2 + 0.8 × weekProgress` so early-week chases are more selective (Tuesday ~0.15, Friday ~0.29) |
+| `RATE_SCALE` | per-stat table | Typical-swing scale per rate stat (AVG 0.040, ERA 0.50, etc.). Margin = `gap × dir / scale × confidence` where `confidence = 0.15 + 0.85 × weekProgress` |
 
-`suggestedFocus` falls out of those two thresholds:
+`suggestedFocus` falls out of those thresholds:
 
 ```text
-|margin| ≥ 0.7  → punt   (locked win or out of reach)
-|margin| < 0.4  → chase  (contested)
-otherwise       → neutral
-hasData = false → neutral
+|margin| ≥ 0.7                              → punt   (locked win or out of reach)
+|margin| < 0.4 × (0.2 + 0.8 × weekProgress) → chase  (genuinely close)
+otherwise                                    → neutral
+no signal                                    → neutral
 ```
+
+The chase threshold scales with week progress because early in the week almost every category sits inside a static 0.4 band — when everything is "contested," nothing is. Tighter early-week thresholds keep chase suggestions to the cats that are genuinely close, while still relaxing to the full 0.4 by Sunday.
+
+A row has "no signal" when either (a) Yahoo omitted the value (`hasData = false` — typical for ERA/WHIP/AVG when 0 IP / 0 AB) or (b) both sides are exactly zero (the Monday-morning pattern: counting stats are reported as `0=0` before any games complete). Without rule (b), every counting cat would land in `chase` on Monday since `|0| < CONTESTED_THRESHOLD`, making the rate cats look like they were "demoted" by the engine when they're actually the only ones being correctly handled. Aggregates (`leverage`, `contestedCount`, `lockedCount`) skip no-signal rows on the same logic — a flat 0=0 matchup should read as flat, not as fully contested.
 
 The same vocabulary (`chase | neutral | punt`) is what `getBatterRating` and `getPitcherRating` consume via `focusMap`. Punt = 0 weight, chase = 2× weight, neutral = 1× weight (renormalized). See [scoring-conventions.md](./scoring-conventions.md).
 

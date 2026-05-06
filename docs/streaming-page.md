@@ -2,7 +2,7 @@
 
 The `/streaming` page is MLBoss's dedicated pitcher-pickup tool. It is **not** a daily lineup surface — daily pitcher sit/start lives on the Today page (`/lineup`, Pitchers tab). Streaming is about rotating through the ~6 moves-per-week budget on the 1-2 bench pitcher slots that rotate, with visibility multiple days ahead.
 
-➜ Data layer: [data-architecture.md](data-architecture.md) | MLB API: [mlb-api-reference.md](mlb-api-reference.md) | Today page: split between `src/components/lineup/TodayPitchers.tsx` and `src/components/lineup/TodayManager.tsx`
+➜ Architecture: [unified-rating-model.md](unified-rating-model.md) (canonical) | Data layer: [data-architecture.md](data-architecture.md) | MLB API: [mlb-api-reference.md](mlb-api-reference.md) | Today page: split between `src/components/lineup/TodayPitchers.tsx` and `src/components/lineup/TodayManager.tsx`
 
 ## Entry Point
 
@@ -109,63 +109,81 @@ function normalizeName(name: string): string {
 }
 ```
 
-Match priority in `matchFreeAgentToGame`:
+Match priority in `matchFreeAgentToGame` (and the parallel rostered-pitcher matcher in `probableMatch.ts` / `TodayPitchers.tsx`):
 1. Team abbreviation must match (after aliasing)
-2. Normalized last name equality, OR
-3. Full normalized name equality, OR
-4. Full name containment either direction (handles "J.T. Brubaker" ↔ "JT Brubaker")
+2. Either:
+   - Full normalized name equality, OR
+   - Normalized last name equality **AND** first-initial agreement
 
-**Note:** This is intentionally looser than the dashboard's batter matching. For pitchers, the team+last-name combination is essentially unique on any given day, so we don't need MLB-ID disambiguation here.
+The first-initial gate is what stops the same-team-same-surname collision: when the Athletics carry both Jacob and Otto López (or — historically — two Ureñas), last-name-only matching attached the probable starter's projection to BOTH players, surfacing two streamers for one game. The `isLikelySamePlayer` helper in `display.tsx` is the single canonical matcher; both the streaming page and the today/dashboard probable-starter matchers route through it.
+
+**Future improvement:** if we ever sync Yahoo `player_id` ↔ MLB `id`, this name-based matching becomes unnecessary and we should switch to ID-based matching.
 
 ## Per-Category Sub-Scores
 
-Every pitcher row is rated by `getPitcherRating` in `src/lib/pitching/scoring.ts`, which builds a 0-1 sub-score per fantasy category the league actually scores (default cats: QS, K, W, ERA, WHIP). The sub-scores drive both:
+Every pitcher row is rated by `scorePitcher` in `src/lib/pitching/scoring.ts` (UI-shaped wrapper around `getPitcherRating` in `src/lib/pitching/rating.ts`), which builds a 0-1 sub-score per fantasy category the league actually scores (default cats: QS, K, W, ERA, WHIP). The sub-scores drive both:
 
 - The **category-fit pills** on each row (strong / weak / punted), and
-- The **composite score** — a focus-weighted average of the active sub-scores, multiplied by global matchup multipliers (velocity trend, platoon vulnerability) and a sample-size credibility multiplier.
+- The **composite score** — a focus-weighted average of the active sub-scores, multiplied at the composite by **only** velocity and platoon. Park, weather, and opp lineup quality live at the per-PA layer (in `forecast.ts`) — they shape `expectedPerPA` directly so different stats respond differently to the same stadium (Coors suppresses K and inflates HR; a flat composite multiplier would conflate the two). See [unified-rating-model.md](unified-rating-model.md) for the layered architecture.
 
-Sub-scores are **causally motivated** — each one only moves when its real drivers move. The K sub-score doesn't care about IP/GS, and the QS sub-score doesn't care about K/9. Inputs:
+The park multiplier comes from `getParkAdjustment` in [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) — the same primitive the lineup-side batter rating consumes, so a pitcher rating @ Coors and a batter rating @ Coors agree on the underlying park math.
 
-| Sub-score | Inputs (with weights) |
-|-----------|-----------------------|
-| **QS** | IP/GS (35%), pitcher talent (25%), ERA proxy (15%), opp OPS-vs-hand (25%) |
-| **K** | K/9 (50%), pitcher talent (25%), opp K-rate-vs-hand (25%) |
-| **W** | Pitcher talent (35%), opposing starter talent inverted (25%), opp OPS-vs-hand (20%), own bullpen ERA (10%), home/away (10%) |
-| **ERA** | Pitcher talent (35%), ERA proxy (25%), opp OPS-vs-hand (15%), park HR factor (15%), weather (10%), GB-arm bonus in HR parks (up to +4%) |
-| **WHIP** | BB/9 (35%), WHIP (25%), pitcher talent (20%), opp OPS-vs-hand (20%) |
+Sub-scores are produced by [`PitcherRating`](../src/lib/pitching/rating.ts) (Layer 3). Each Yahoo-scored category gets projected from the `GameForecast.expectedPerGame` and normalised against a per-stat league window. The category-to-projection map:
 
-### Pitcher talent — hierarchical resolution
+| Sub-score | Projection source (from `GameForecast.expectedPerGame`) | Normalisation window |
+|-----------|---------------------------------------------------------|----------------------|
+| **QS** | `probabilities.qs` (function of IP and ERA) | 0.10 → 0.70 |
+| **K** | `expectedPerGame.k` | 3.5 → 9.0 |
+| **W** | `probabilities.w` (talent diff vs opp SP, bullpen, home/away) | 0.20 → 0.65 |
+| **ERA** | `expectedERA` | 5.50 → 2.30 (lower is better) |
+| **WHIP** | derived from `expectedPerPA.bbPerPA` and `expectedPerPA.baa` | 1.55 → 0.95 (lower is better) |
 
-The streaming module delegates to the canonical `pitcherTalentScore` in `src/lib/pitching/quality.ts` (via a thin `resolveTalent` projection). The resolution order is:
-
-1. **Run Value per 100 (Savant pitch-model proxy)** — used when the pitcher has ≥40 current-season IP. Below that, the blended RV/100 leans too hard on prior year.
-2. **Component xwOBA-allowed** from `talentModel.ts` (regressed K%/BB%/xwOBACON).
-3. **Tier fallback** (`ace`/`tough`/`average`/`weak`/`bad` → 0.90/0.70/0.50/0.30/0.10).
-4. Neutral 0.5 with `available: false`.
+There is no longer a separate "pitcher talent score" function — the canonical talent vector lives in `PitcherTalent` (`src/lib/pitching/talent.ts`) and is consumed by `buildGameForecast` to produce the per-game projections above. See [pitcher-evaluation.md](pitcher-evaluation.md).
 
 ### Opposing-starter signal in W
 
-`MLBGame` carries both probables (the schedule pipeline enriches them in lockstep). For each candidate we resolve the opposing starter's talent the same way and invert it inside `scoreW` — facing an ace collapses W odds regardless of how good our guy is.
+`MLBGame` carries both probables (the schedule pipeline enriches both in lockstep, stamping `pp.talent` on each). `buildGameForecast` reads the opposing pitcher's `PitcherTalent` and uses the talent-vs-talent xwOBA differential to dampen P(W) — facing an ace collapses W odds regardless of how good our guy is.
 
 ### Bullpen signal in W
 
-Currently uses **team staff ERA** (`MLBGame.homeTeam.staffEra` / `awayTeam.staffEra`) as a proxy for bullpen quality — overall pitching ERA, not relief-only. Correlates ~0.7 with true bullpen ERA. Upgrade path: fetch sitCodes=rp split if the proxy isn't sharp enough.
+Bullpen quality only feeds the W probability, not the composite. Uses **team staff ERA** (`MLBGame.homeTeam.staffEra` / `awayTeam.staffEra`) as a proxy — overall pitching ERA, not relief-only. Correlates ~0.7 with true bullpen ERA. The contribution is halved before applying to P(W), since the bullpen only pitches ~3 of every 9 innings. Upgrade path: fetch sitCodes=rp split if the proxy isn't sharp enough.
 
 ### Pills
 
-`getStreamPills` reads the same sub-scores: **strong** at sub-score ≥ 0.72, **weak** at ≤ 0.35. One hard gate: a pitcher with `IP/GS < 5.0` always gets the QS-weak pill regardless of sub-score (a 4.6-IP opener simply can't QS). Pills are suppressed entirely below `MIN_CRED_FOR_PILLS` (0.60) — no confident category claims when we don't trust the underlying score.
+`getStreamPills` (in `scoring.ts`) reads the rating's category contributions: **strong** when normalized ≥ 0.72, **weak** when ≤ 0.35. One hard gate: a pitcher with projected IP < 5.0 always gets the QS-weak pill regardless of sub-score (a 4.6-IP opener simply can't QS). Confidence is surfaced separately as a UI cue but does NOT gate pills — we don't hide low-confidence pitchers, we mark them.
 
 ### Multipliers
 
-Applied on top of the weighted sub-score sum:
+**Composite-level** (applied to the score):
 
-- **Velocity** (year-over-year fastball delta): ±2 mph → asymmetric ±7% (losses 4%/mph, gains 3%/mph). Top-quartile early-season decline predictor.
+- **Velocity** (year-over-year fastball delta): ±2 mph → asymmetric ±6% (losses 4%/mph, gains 3%/mph). Asymmetry is empirically motivated — velo loss is a stronger negative predictor than velo gain is a positive one.
 - **Platoon vulnerability** (weak-side OPS allowed): clean split → +5%, vulnerable → -5%.
-- **Credibility** (sample-size downweight, ≤ 1.0): proven tier → 1.0; unclassified ramp on current IP; debut cap of 0.40 below 20 IP.
+
+**Surface-level** (already in per-cat numbers; shown for breakdown transparency):
+
+- **Park** — feeds per-cat via parkSO (K), parkBB (BB), parkHR with gbRate gating (HR), and overall parkFactor (non-HR contact value).
+- **Weather** — folds into HR rate (±8%) and non-HR contact value (±4%) at per-PA. K/BB/SB are weather-independent.
+- **Opp lineup** — drives per-cat K rate (log5 against opp K-rate-vs-hand), BB rate (× oppOpsFactor), and contact quality.
+
+The breakdown panel labels these "Context (already in cats above)" so the user doesn't think they were multiplied a second time.
+
+Sample-size handling has moved from a runtime "credibility multiplier" applied after scoring to a Bayesian regression applied upstream at the talent layer. Thin-sample pitchers are pulled toward the prior via the `effectivePA`-weighted blend in `computePitcherTalent`, and the resulting `confidence` cue (`high`/`medium`/`low`) is surfaced in the UI as a label PLUS a numeric ± band on the score (e.g. `62 ± 8`). The score band renders next to the number when ≥ 5 score points; large bands (≥ 10) flag in error tone.
+
+## Compare Tray
+
+Each row has a checkbox column on the left for adding the candidate to a side-by-side comparison tray that renders above the row list when at least one candidate is selected. The tray surfaces:
+
+- Player name + team / opponent
+- Composite score with optional ± band
+- Tier label (ACE / Tough / Avg / Weak / Bad)
+- Per-cat sub-score cells colored by fit (strong / neutral / weak / punted)
+- Top risk phrases (up to 2)
+
+The component is engine-agnostic — `src/components/shared/CompareTray.tsx` consumes a `CompareTraySlot[]`, and the streaming page builds slots via `streamSlotsFromCandidates` (in `StreamingBoard.tsx`). The same component is reusable on the lineup pages with a different slot adapter.
 
 ## Row Tint
 
-Background tint comes from the final composite score (post-multipliers, post-credibility):
+Background tint comes from the final composite score:
 
 - `score ≥ 0.70` → `bg-success/5` (green — favorable stream)
 - `0.50 ≤ score < 0.70` → no tint (neutral)

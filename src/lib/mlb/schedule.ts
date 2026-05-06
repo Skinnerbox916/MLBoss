@@ -10,9 +10,13 @@ import {
   fetchPitcherFullLine,
   fetchPitcherPlatoonSplits,
   fetchPitcherRecentForm,
-  getPitcherQuality,
+  resolveMLBId,
+  getPitcherSeasonLines,
 } from './players';
 import { fetchStatcastPitchers } from './savant';
+import { computePitcherTalent } from '../pitching/talent';
+import { fetchESPNScoreboard, extractPitchersFromEvent } from '../espn/client';
+import { recordPostedLineup } from './lineupSpots';
 import type { MLBGame, ProbablePitcher, GameWeather, LineupEntry } from './types';
 
 // ---------------------------------------------------------------------------
@@ -183,12 +187,12 @@ function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
     recentFormEra: null,
     platoonOpsVsLeft: null,
     platoonOpsVsRight: null,
-    quality: null,
     xera: null,
     xwoba: null,
     avgFastballVelo: null,
     avgFastballVeloPrior: null,
     runValuePer100: null,
+    talent: null,
   };
 }
 
@@ -287,79 +291,192 @@ async function fetchTeamStaffEra(
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// ESPN pitcher-name lookup (single source of truth for probable-pitcher names)
+//
+// MLB's /schedule endpoint only fills `probablePitcher` for games ~2-3 days
+// out. ESPN publishes them for the full week. To avoid having a fast lane
+// (today) and a slow lane (later in the week) with subtly different data,
+// we drop MLB's pitcher hydrate entirely and source every probable-pitcher
+// name from ESPN. Names are then resolved to MLB IDs via `resolveMLBId`,
+// after which the standard enrichment pipeline (line + Savant + platoon +
+// recent form + talent) runs unchanged.
 // ---------------------------------------------------------------------------
 
 /**
- * Get all MLB games for a given date (YYYY-MM-DD).
- * Returns games enriched with probable pitchers, venue, and weather.
- * Cached 5 minutes — probable pitchers are confirmed ~2–3 hours before game time.
+ * Build a `Map<homeAbbr|awayAbbr, { home, away }>` from an ESPN scoreboard
+ * response so MLB games can look up probable-pitcher names in O(1) by team
+ * pair. Falls back to per-team-abbreviation entries so doubleheaders that
+ * don't have a clean pair-key still resolve.
+ */
+function indexEspnPitchers(
+  espn: { events: import('../espn/client').ESPNEvent[] },
+): Map<string, { home: string | null; away: string | null }> {
+  const map = new Map<string, { home: string | null; away: string | null }>();
+  for (const event of espn.events ?? []) {
+    const comp = event.competitions?.[0];
+    if (!comp) continue;
+    const home = comp.competitors?.find(c => c.homeAway === 'home');
+    const away = comp.competitors?.find(c => c.homeAway === 'away');
+    if (!home || !away) continue;
+    const [homeName, awayName] = extractPitchersFromEvent(event);
+    const key = `${(home.team.abbreviation || '').toUpperCase()}|${(away.team.abbreviation || '').toUpperCase()}`;
+    map.set(key, { home: homeName, away: awayName });
+  }
+  return map;
+}
+
+/**
+ * Build a stub `ProbablePitcher` from a name. `mlbId: 0` is the sentinel
+ * that tells `enrichPitcher` to do an identity lookup before running the
+ * stats pipeline. Throws side defaults to 'R' and is overwritten by the
+ * stats-line application once we have real data.
+ */
+function stubPitcher(name: string): ProbablePitcher {
+  return {
+    mlbId: 0,
+    name,
+    throws: 'R',
+    era: null,
+    whip: null,
+    wins: 0,
+    losses: 0,
+    inningsPitched: 0,
+    strikeoutsPer9: null,
+    strikeOuts: null,
+    gamesStarted: null,
+    pitchesPerInning: null,
+    inningsPerStart: null,
+    bb9: null,
+    hr9: null,
+    battingAvgAgainst: null,
+    gbRate: null,
+    eraLast30: null,
+    recentFormEra: null,
+    platoonOpsVsLeft: null,
+    platoonOpsVsRight: null,
+    xera: null,
+    xwoba: null,
+    avgFastballVelo: null,
+    avgFastballVeloPrior: null,
+    runValuePer100: null,
+    talent: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Per-date game fetching
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch all MLB games for a date with probable pitchers, weather, and park data.
+ * Refreshes every 5 minutes — probable pitchers get confirmed close to game time.
+ *
+ * Probable-pitcher names come from ESPN (full-week coverage); MLB Stats API
+ * provides everything else (schedule, venue, weather, lineups, the per-pitcher
+ * stats that drive enrichment). After name → MLB ID resolution, every pitcher
+ * runs through the documented enrichment + talent pipeline; this is the
+ * canonical stamp point for `pp.talent` per `docs/pitcher-evaluation.md`.
  */
 export async function getGameDay(date: string): Promise<MLBGame[]> {
-  const hydrate = [
-    'probablePitcher(note,stats(type=season,group=pitching))',
-    'venue',
-    'weather',
-    'team',
-    'lineups',
-  ].join(',');
-
+  // No probablePitcher hydrate — ESPN owns that field. We keep venue,
+  // weather, team, and lineups (all MLB-only).
+  const hydrate = ['venue', 'weather', 'team', 'lineups'].join(',');
   const path = `/schedule?sportId=1&date=${date}&hydrate=${encodeURIComponent(hydrate)}`;
 
-  const raw = await mlbFetchSchedule<RawScheduleResponse>(path, date);
+  // Fetch MLB schedule + ESPN scoreboard + slate-wide context in parallel.
+  // ESPN is the source of truth for who's pitching; MLB owns the game shell.
+  const currentYear = new Date().getFullYear();
+  const [raw, espn, savantMap, priorSavantMap, teamEraMap] = await Promise.all([
+    mlbFetchSchedule<RawScheduleResponse>(path, date),
+    fetchESPNScoreboard(date, date).catch(err => {
+      console.error('ESPN scoreboard fetch failed; pitcher names will be missing:', err);
+      return { events: [] };
+    }),
+    fetchStatcastPitchers(currentYear),
+    fetchStatcastPitchers(currentYear - 1),
+    fetchTeamStaffEra(),
+  ]);
 
   const dateEntry = raw.dates?.[0];
   if (!dateEntry) return [];
 
   const games = dateEntry.games.map(parseGame);
 
-  // Fetch Savant (current + prior season) + team ERA once up front. Prior
-  // season is blended with current season via sample-weighted averaging —
-  // see `blendRateOrNull` calls in `model/pitcherEnrichment.ts`. Fetching
-  // both years unconditionally is cheap because both CSVs are cached 24h
-  // at the fetch layer.
-  const currentYear = new Date().getFullYear();
-  const [savantMap, priorSavantMap, teamEraMap] = await Promise.all([
-    fetchStatcastPitchers(currentYear),
-    fetchStatcastPitchers(currentYear - 1),
-    fetchTeamStaffEra(),
-  ]);
+  // Splice ESPN pitcher names onto each MLB game by matching home|away
+  // team abbreviation. Replaces whatever MLB returned (which is now empty
+  // anyway since we dropped the probablePitcher hydrate) with the ESPN
+  // name, ensuring full-week coverage.
+  const espnByMatchup = indexEspnPitchers(espn);
+  for (const game of games) {
+    const key = `${game.homeTeam.abbreviation.toUpperCase()}|${game.awayTeam.abbreviation.toUpperCase()}`;
+    const espnNames = espnByMatchup.get(key);
+    if (espnNames) {
+      game.homeProbablePitcher = espnNames.home ? stubPitcher(espnNames.home) : null;
+      game.awayProbablePitcher = espnNames.away ? stubPitcher(espnNames.away) : null;
+    } else {
+      game.homeProbablePitcher = null;
+      game.awayProbablePitcher = null;
+    }
+  }
 
-  // Enrich probable pitchers with tiered quality, extended stats, and Savant
-  // signals. Per-pitcher fetches run in parallel — the actual modeling
-  // happens in pure functions (`apply*` helpers from ./model). The line
-  // fetch is unconditional because the schedule's inline pitcher stats
-  // aggregate starts + relief, inflating IP/GS for swingmen. The
-  // `fetchPitcherFullLine` value is starter-only, so we always prefer it.
-  const enrichPitcher = async (p: ProbablePitcher) => {
-    const [quality, line, platoon, recentForm] = await Promise.all([
-      getPitcherQuality(p.mlbId),
+  // Enrich each pitcher: resolve ESPN name → MLB ID, then run the
+  // documented enrichment pipeline (line + Savant + platoon + recent form)
+  // and stamp the canonical talent vector. `enrichPitcher` is a closure so
+  // it can access the slate-wide maps fetched above.
+  const enrichPitcher = async (p: ProbablePitcher, teamAbbr: string) => {
+    if (p.mlbId === 0) {
+      const identity = await resolveMLBId(p.name, teamAbbr);
+      if (!identity?.mlbId) return; // unknown name — leave as stub
+      p.mlbId = identity.mlbId;
+    }
+
+    const [line, platoon, recentForm, seasonLines] = await Promise.all([
       fetchPitcherFullLine(p.mlbId),
       fetchPitcherPlatoonSplits(p.mlbId),
       fetchPitcherRecentForm(p.mlbId),
+      getPitcherSeasonLines(p.mlbId),
     ]);
-    p.quality = quality;
     applyPitcherStatsLine(p, line);
     applySavantSignals(p, savantMap.get(p.mlbId), priorSavantMap.get(p.mlbId));
     applyPitcherPlatoon(p, platoon);
     applyPitcherRecentForm(p, recentForm);
+
+    p.talent = computePitcherTalent({
+      mlbId: p.mlbId,
+      throws: p.throws,
+      currentLine: seasonLines.current,
+      priorLine: seasonLines.prior,
+      currentSavant: savantMap.get(p.mlbId) ?? null,
+      priorSavant: priorSavantMap.get(p.mlbId) ?? null,
+    });
   };
 
-  // Enrich all pitchers in parallel now that shared maps are ready
   await Promise.all(
     games.flatMap(game => {
       const jobs: Promise<void>[] = [];
-      if (game.homeProbablePitcher) jobs.push(enrichPitcher(game.homeProbablePitcher));
-      if (game.awayProbablePitcher) jobs.push(enrichPitcher(game.awayProbablePitcher));
+      if (game.homeProbablePitcher) jobs.push(enrichPitcher(game.homeProbablePitcher, game.homeTeam.abbreviation));
+      if (game.awayProbablePitcher) jobs.push(enrichPitcher(game.awayProbablePitcher, game.awayTeam.abbreviation));
       return jobs;
     }),
   );
 
-  // Attach team staff ERA to each game's team objects
+  // Attach team staff ERA for the opposing-staff pill (today batting),
+  // batter rating's bullpen modifier, and forecast.ts ownStaffEra reads.
   for (const game of games) {
     game.homeTeam.staffEra = teamEraMap.get(game.homeTeam.mlbId);
     game.awayTeam.staffEra = teamEraMap.get(game.awayTeam.mlbId);
   }
+
+  // Fire-and-forget: record any posted lineup spots so the forward-projection
+  // engine can apply them as priors for D+1+ where MLB hasn't posted lineups
+  // yet. No-op when arrays are empty (typical for future dates). See
+  // `lineupSpots.ts` for the cache shape and 7-day TTL.
+  void Promise.all(
+    games.flatMap(game => [
+      recordPostedLineup(game.homeLineup, date),
+      recordPostedLineup(game.awayLineup, date),
+    ]),
+  );
 
   return games;
 }

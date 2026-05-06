@@ -2,6 +2,8 @@
 
 This is the reference for HOW the app turns raw stats into the talent ratings, matchup ratings, and streaming verdicts surfaced in the UI. Read this before adding a new category, tuning a constant, or writing a second function that "estimates how good a player is".
 
+> **Architecture overview:** [unified-rating-model.md](./unified-rating-model.md) — the single canonical reference for both pitcher and batter rating engines. Consult that doc first for the high-level picture; this file covers the calibration knobs and stat-level discipline.
+
 For the data layer (where stats come from, how they're cached, how identity is resolved) see [data-architecture.md](./data-architecture.md). For the matchup layer that decides which categories the user should chase or punt this week, see [recommendation-system.md](./recommendation-system.md). This file covers the player-rating modeling that sits between the two.
 
 ## The four stat levels
@@ -44,13 +46,30 @@ The same modeling concept must have exactly one canonical implementation. When t
 |---------|-------------------|----------|
 | Bayesian rate blender | `blendRate(input)` (always returns a value) and `blendRateOrNull(input)` (returns `null` when no current/prior/league input — Savant-secondary use case) | [src/lib/mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) |
 | Component talent xwOBA (batter) | `computeBatterTalentXwoba` | talentModel.ts |
-| Component talent xwOBA-allowed (pitcher) | `computePitcherTalentXwobaAllowed` | talentModel.ts |
+| Component talent xwOBA-allowed (pitcher, low-level) | `computePitcherTalentXwobaAllowed` | talentModel.ts |
 | Per-category Bayesian baseline | `blendedBaselineForCategory(stats, statId)` | [src/lib/mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) |
 | Per-category 0-1 normaliser | `normalizeRate(rate, statId, betterIs)` | categoryBaselines.ts |
-| Pitcher tier (5-bucket categorical) | `classifyPitcherTier` | [src/lib/mlb/model/quality.ts](../src/lib/mlb/model/quality.ts) |
-| Pitcher talent score (continuous, for streaming) | `pitcherTalentScore` | [src/lib/pitching/quality.ts](../src/lib/pitching/quality.ts) |
-| Pitcher streaming rating (matchup-adjusted) | `getPitcherRating` | [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
+| Pitcher talent (canonical, context-free) | `computePitcherTalent` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent → xERA conversion | `xwobaToXera` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent → composed xwOBA-allowed (linear weights w/ explicit HR) | `composeXwobaAllowed` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| In-game adjusted xwOBA-allowed (per-PA inputs already park/opp/weather adjusted) | `composeAdjustedXwobaAllowed` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent's non-HR contact value (HR-removed average) | `talentNonHrContactXwoba` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent → BAA proxy | `talentBaa` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent → per-PA HR rate (no park) | `talentHrPerPA` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent → per-PA contact rate | `talentContactRate` | [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Talent → SP-perspective xERA / HR / BAA (with null-safe wrappers) | `spExpectedEra` / `spHrPerPA` / `spBaa` | [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts) (thin wrappers around the talent.ts primitives) |
+| Park-factor adjustment (per-stat, hand-aware, wind-amplified) | `getParkAdjustment` and `formatParkBadge` | [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) — single source of truth for batter and pitcher sides; consumes `parkFactorHrL/HrR`, `parkFactor2B/3B`, `parkFactorBACON`, and `windSensitivity` fields on `ParkData`. Feature code MUST go through this primitive — never read `ParkData` numbers directly for math. |
+| Pitcher game forecast (talent + context) | `buildGameForecast` | [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts) |
+| Pitcher rating (0-100, tier derived from score) | `getPitcherRating` | [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts) |
+| Pitcher tier classifier | `tierFromScore` (single mapping; never use categorical inputs) | [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts) |
+| Pitcher tier label | `tierLabel` (single function; handles `undefined` for loading state) | [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts) |
+| Free-agent / roster → probable-starter name match | `isLikelySamePlayer` | [src/lib/pitching/display.tsx](../src/lib/pitching/display.tsx) |
+| Streaming-page composite rating (UI-shaped wrapper) | `scorePitcher` | [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
 | Batter matchup rating (level 4) | `getBatterRating` | [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts) |
+| Unified matchup context (both engines) | `MatchupContext` | [src/lib/mlb/matchupContext.ts](../src/lib/mlb/matchupContext.ts) |
+| Unified rating shape (both engines) | `Rating` discriminated union | [src/lib/rating/types.ts](../src/lib/rating/types.ts) |
+| Single breakdown panel (consumes Rating) | `ScoreBreakdownPanel` | [src/components/shared/ScoreBreakdownPanel.tsx](../src/components/shared/ScoreBreakdownPanel.tsx) |
+| Single compare tray (engine-agnostic) | `CompareTray` (over `CompareTraySlot[]`) | [src/components/shared/CompareTray.tsx](../src/components/shared/CompareTray.tsx) |
 | Roster talent score (multi-week) | `blendedCategoryScore` | [src/lib/roster/scoring.ts](../src/lib/roster/scoring.ts) |
 | Playing-time factor | `playingTimeFactor` | roster/scoring.ts |
 | League-pace reference (full-time benchmark) | `estimateFullTimePaceRef` / `estimateFullTimeGpRef` | roster/scoring.ts |
@@ -65,7 +84,20 @@ What's NOT fine:
 - A `_v2` variant introduced "just for this page"
 - Inlining the math at the call site
 
-If you find yourself wanting to do any of the above, push the customisation into the canonical function as an option. The Bayesian blender duplication (`blendRate` vs the legacy `blendSavant`) was resolved in Phase 4b: `blendRateOrNull` wraps `blendRate` with the "all-empty → null" semantics Savant secondaries needed, and `blendSavant` is gone. The pitcher-talent scorer duplication (`pitcherTalentScore` vs `resolveTalent`) was resolved in Phase 4c: `pitcherTalentScore` now owns the RV/100 → xwOBA → tier → neutral resolution order, and `resolveTalent` is a thin file-local projection inside `src/lib/pitching/scoring.ts` that adds no behaviour.
+If you find yourself wanting to do any of the above, push the customisation into the canonical function as an option. The Bayesian blender duplication (`blendRate` vs the legacy `blendSavant`) was resolved in Phase 4b: `blendRateOrNull` wraps `blendRate` with the "all-empty → null" semantics Savant secondaries needed, and `blendSavant` is gone. The pitcher-evaluation rebuild (Phase 4d) consolidated the previous fork between `classifyPitcherTier` (rule-based) and `pitcherTalentScore` (RV/100-based) into a single three-layer pipeline (`PitcherTalent` → `GameForecast` → `PitcherRating`). The tier label now derives from the rating score via a single `tierFromScore` function — there is no separate tier classifier any more, and the Montero-style "ace by one rule, fair by another" inconsistency is structurally impossible. See [pitcher-evaluation.md](pitcher-evaluation.md).
+
+The 2026-05-04 cleanup eliminated three more drift hazards that survived Phase 4d:
+1. Three inlined `xwobaToXera` copies (forecast.ts, batterRating.ts, display.tsx) with two different slopes (5.0 vs canonical 25). Caused the "Max Meyer Bad in his own card / ace in Painter's risk summary" inversion. Now lives once in talent.ts; consumers import and re-derive.
+2. Three name matchers (free-agent, roster, today-page) using last-name-only comparison. Caused two same-surname players on the same team (Lopez / Ureña) to both attach to the probable starter. Replaced with a single `isLikelySamePlayer(a, b)` requiring full match OR last + first-initial.
+3. Duplicated tier label / tier color / TIER_LABEL mappings between rating.ts and scoring.ts. Consolidated to a single `tierLabel` in rating.ts (re-exported through scoring.ts) and a single `tierColor` in display.tsx.
+
+The 2026-05 unified-rating overhaul fixed the math integration (see [unified-rating-model.md](./unified-rating-model.md)) and structurally enforced the per-PA-vs-composite distinction:
+
+1. **`composeXwobaAllowed` carries HR explicitly** via FanGraphs linear weights (BB·0.69 + nonHrContact·nonHrXwoba + HR·1.97). Before, HR was implicitly inside `contactXwoba`, and per-game HR-park scaling never propagated to `expectedERA`. Now park HR (gb-gated), opp, and weather all flow into ERA via the chain.
+2. **Park / opp / weather live at the per-PA layer.** The composite formula on the pitcher side multiplies only `× velocity × platoon`. Pre-fix, K and BB got park hits twice (per-PA AND composite), ERA only got the composite hit. Architecture rule documented in `pitching/rating.ts`: composite multipliers are matchup-wide signals only.
+3. **`gbRate` is now wired into HR-park.** A 60%-GB arm gets half the parkHR bump; a 30%-GB arm gets the full bump. Was dead in the math layer pre-fix despite being computed.
+4. **Confidence band on the score.** Both engines surface a numeric ± uncertainty alongside the high/medium/low label. Renders as `62 ± 8` in the UI when band ≥ 5 score points.
+5. **One `MatchupContext`, one `Rating`.** Replaced parallel batter/pitcher context shapes with a single discriminated context. Replaced disjoint rating shapes with a unified `Rating` consumed by one `ScoreBreakdownPanel` and one `CompareTray`.
 
 ## Calibration knobs
 
@@ -94,14 +126,22 @@ These tune one bonus / penalty inside one rating function.
 | `CHASE_WEIGHT` | roster/scoring.ts | How much a "chased" category over-weights |
 | `QUALITY_BIP_GATE`, `QUALITY_BIP_FULL_WEIGHT` | roster/scoring.ts | When the current-year Statcast bonus engages and saturates |
 | `RISING_DELTA_FLOOR`, `RISING_DELTA_CEIL` | roster/scoring.ts | wOBA delta band that earns the Rising bonus |
-| `MIN_IP_CURRENT`, `MIN_IP_PRIOR` | model/quality.ts | When pitcher tier classification trusts current vs prior season |
-| `MIN_BIP_FOR_XERA` | model/quality.ts | Minimum Savant BIP before xERA replaces ERA in the tier classifier |
+| `tierFromScore` thresholds (78/62/42/28) | pitching/rating.ts | Score boundaries between `ace`/`tough`/`average`/`weak`/`bad` tiers |
+| `PA_FULL_TRUST` | pitching/talent.ts | Effective PA at which the talent regression places no weight on league prior |
+| `xwobaToXera` slope/intercept | pitching/talent.ts | Linear xwOBA-allowed → xERA conversion (anchored to league avg). Single canonical home — do **not** redefine in feature modules |
+| `composeXwobaAllowed`, `talentBaa`, `talentHrPerPA`, `talentContactRate` | pitching/talent.ts | Pure functions on the `PitcherTalent` vector. Same single-canonical-home rule — drift here causes batter and pitcher ratings to disagree about the same SP |
+| `LEAGUE_OPS` | pitching/talent.ts | League-avg team OPS, used as anchor for forecast-layer game-context multipliers (opp / platoon) |
+| `REGIME_SD_K`, `REGIME_SD_BB`, `REGIME_SD_WHIFF`, `REGIME_SD_BARREL`, `REGIME_SD_VELO` | pitching/talent.ts | Per-metric Y-Y noise bands for the regime-shift probe. A current-vs-prior delta divided by these SDs gives the z-score that drives prior-cap shrinkage |
+| `REGIME_SIGNIFICANT_Z` (0.8) | pitching/talent.ts | Threshold for a metric's z-score to count toward the regime score. Below this, the metric is treated as noise. Lowering this widens the population that gets regime-shrunk; raising it makes regime detection require larger swings |
+| `regimeShiftToShrink` slope (0.4) and floor (0.25) | pitching/talent.ts | Map from \|regime-score\| to prior-cap multiplier. The floor prevents prior weight from collapsing entirely; the slope controls how aggressively co-directional leading indicators reduce prior weight. League prior gets `sqrt(shrink)` (less aggressive collapse — population norms stay as a softer anchor) |
+| `bbCompoundingPenalty` slope (10) and cap (1.0 ERA) | pitching/forecast.ts | Additive ERA penalty for BB% above league mean (.085). Captures runner-stacking damage that xwOBA's linear weights miss. Calibrated against the empirical BB%-vs-(ERA−xERA) relationship in MLB starter data |
 
 ### Local blast radius (one matchup factor)
 
 These tweak a single contributor inside `getBatterRating` / `getPitcherRating` and rarely need attention.
 
-- Park factor scaling (parks.ts)
+- Park-factor track clamps and field-selection logic (`getParkAdjustment` in parkAdjustment.ts) — the per-stat band (HR `[0.7, 1.4]`, AVG `[0.85, 1.15]`, R/RBI `[0.80, 1.20]`, composite `[0.90, 1.10]`) and the wind-amplification ±5% bump
+- Per-park raw factor values (parks.ts) — refreshed from Baseball Savant's Statcast 3-year rolling window
 - Batting-order multipliers (batterRating.ts)
 - Weather adjustment thresholds (batterRating.ts)
 - Platoon-rescaling sample-size gate (`MIN_HAND_PA = 50` in players.ts)

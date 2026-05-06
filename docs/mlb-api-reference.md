@@ -113,23 +113,30 @@ Two related gotchas that both manifest in the first few weeks of a season:
 
 When the season is young, `hydrate=probablePitcher(...stats...)` sometimes returns the pitcher record with `stats: []` or missing fields. The pitcher has thrown real innings but the hydrate pipeline hasn't caught up.
 
-**Mitigation:** `getGameDay` in `schedule.ts` back-fills with a second call:
+**Mitigation:** `getGameDay` in `schedule.ts` enriches each probable pitcher in two phases:
 
 ```typescript
 const enrichPitcher = async (p: ProbablePitcher) => {
-  const [quality, line] = await Promise.all([
-    getPitcherQuality(p.mlbId),
-    p.era === null ? fetchPitcherFullLine(p.mlbId) : Promise.resolve(null),
+  const [currentLine, priorLine, currentSavant, priorSavant, appearances] = await Promise.all([
+    getPitcherSeasonLines(p.mlbId, currentSeason),     // current Stats-API line
+    getPitcherSeasonLines(p.mlbId, priorSeason),       // prior Stats-API line
+    /* Savant skills + arsenal merge from the schedule fanout */,
+    /* prior-season Savant from the same merge */,
+    getPitcherAppearances(p.mlbId, currentSeason),     // gamelog with opponent + PA
   ]);
-  // ... merges `line` into `p` for any null fields
+  p.talent = computePitcherTalent({
+    mlbId: p.mlbId, throws: p.throws,
+    currentLine, priorLine, currentSavant, priorSavant,
+    appearances, teamOffense: /* prefetched team-offense map */,
+  });
 };
 ```
 
-`fetchPitcherFullLine` (in `players.ts`) tries the current season first, then falls back to the prior season if current IP is 0.
+`getPitcherSeasonLines` and `getPitcherAppearances` (in `players.ts`) both fall back to the prior season when current data is empty.
 
-### 2. Current-season sample too thin for tiering
+### 2. Current-season sample handled by Bayesian regression
 
-`getPitcherQuality` gates on **IP ≥ 25** before classifying a pitcher by their current line. Below that, it falls back to the prior season (gated on **IP ≥ 60**). Below both gates, the pitcher is tagged `tier: 'unknown'` and the UI omits the quality pill.
+The old IP-gated tier classifier (`classifyPitcherTier` with IP ≥ 25 cutoffs and an `'unknown'` bucket) is gone. Thin current-season samples are now handled by the talent layer's Bayesian regression: current-season K%/BB%/xwOBACON-allowed are blended against prior-season values (capped at a fraction of current PA) and against league means, weighted by their respective sample sizes. A pitcher with 27 IP gets pulled hard toward the prior; a pitcher with 150 IP gets pulled mostly toward themselves. There is no `'unknown'` state — every pitcher gets a regressed estimate plus a `confidence` cue (`high`/`medium`/`low`) based on `effectivePA`. See [pitcher-evaluation.md](pitcher-evaluation.md).
 
 The same pattern applies to batters: `getBatterSplits` swaps the splits source to the prior season when current PA < 30, but always preserves the **current calendar year line** as `currentSeason` so the UI can still show "how this player is hitting THIS year" prominently (via the `RawStat` parsed line on the root response).
 
@@ -180,24 +187,48 @@ This matters on the Pitching page's Tomorrow tab — every card would otherwise 
 
 ## Pitcher Tier Classification
 
-`classifyPitcherTier(era, whip)` in `players.ts`:
+Tiers are derived from the rating score, not classified by stat thresholds. `tierFromScore(score: number)` in [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts):
 
-| Tier | Condition |
-|------|-----------|
-| `ace` | ERA ≤ 2.75 AND WHIP ≤ 1.05 |
-| `tough` | ERA ≤ 3.50 AND WHIP ≤ 1.20 |
-| `bad` | ERA ≥ 5.00 AND WHIP ≥ 1.45 |
-| `weak` | ERA ≥ 4.25 OR WHIP ≥ 1.36 |
-| `average` | everything in between |
-| `unknown` | either stat is null |
+| Tier | Score range |
+|------|-------------|
+| `ace` | ≥ 78 |
+| `tough` | 62–77 |
+| `average` | 42–61 |
+| `weak` | 28–41 |
+| `bad` | < 28 |
 
-Tiers drive both the batter-row "Facing Ace" / "Weak SP" pills (via `getPitcherQualityPill` in `analysis.ts`) and the streaming board's row tint and composite scoring (see [streaming-page.md](streaming-page.md)).
+The score itself comes out of the three-layer pipeline: `PitcherTalent` (context-free) → `GameForecast` (talent + opponent/park/weather/platoon) → `PitcherRating` (forecast projected onto the user's scored categories with their focus weights). There is no `'unknown'` bucket — pitchers with thin samples get a `confidence: 'low'` cue but still place where their data suggests. See [pitcher-evaluation.md](pitcher-evaluation.md).
+
+Tiers drive the batter-row "Facing Ace" / "Weak SP" pills and the streaming board's row tint and composite scoring (see [streaming-page.md](streaming-page.md)).
 
 ## Park Factors
 
-`src/lib/mlb/parks.ts` holds static per-venue park data keyed by `mlbVenueId`, which matches the `venue.id` returned by the `/schedule` hydrate. Park factors (parkFactor, parkFactorL, parkFactorR, parkFactorHR) are sourced from Baseball Savant's Statcast 3-year rolling window.
+`src/lib/mlb/parks.ts` holds static per-venue park data keyed by `mlbVenueId`, which matches the `venue.id` returned by the `/schedule` hydrate. All numeric factors are scraped from [Baseball Savant's Statcast Park Factors leaderboard](https://baseballsavant.mlb.com/leaderboard/statcast-park-factors) — see `scripts/scrape-park-factors.mjs` for the reproducible pull. The default window is 3-year rolling (28 of 30 parks); Sutter Health uses 2025-only (no 3y history yet) and Tropicana uses 3y through 2023 (Rays were displaced 2024–2025). 100 = league average. Refresh preseason.
 
-`getParkByVenueId(id)` is the lookup helper. `analysis.ts` uses handedness-aware thresholds (`parkFactor ≥ 108` = extreme hitter, `≤ 92` = extreme pitcher) so only true outliers (Coors, Fenway for LHB, T-Mobile for RHB) surface as pills.
+The `ParkData` shape exposes:
+
+| Field | What it captures |
+|---|---|
+| `parkFactor` | Overall wOBA index — used by the composite (pitcher rating) and as the AVG/R/RBI fallback when batter handedness is unknown |
+| `parkFactorL` / `parkFactorR` | Overall index split by batter handedness — drives the AVG/R/RBI per-hand modifier |
+| `parkFactorHR` | HR-specific index, collapsed across handedness — used as the HR fallback |
+| `parkFactorHrL` / `parkFactorHrR` | HR index split by batter handedness — captures asymmetric porches (Camden ~126 vs L, ~88 vs R; Citizens Bank ~128 vs L; Dodger ~134 vs R) |
+| `parkFactor2B` / `parkFactor3B` | Doubles / triples factors — Fenway boosts 2B via the Monster carom (122), Kauffman boosts 3B via spacious alleys (182) |
+| `parkFactorBACON` | Batting Average ON Contact (Savant's `index_bacon`, includes HR). Closest published park-level proxy for "did this park's environment turn balls in play into hits?". **Not BABIP** — BABIP excludes HR and isn't published as a park factor |
+| `windSensitivity: 'high' \| 'normal'` | Marks parks whose run environment swings materially with sustained wind (Wrigley, Oracle, Sutter Health). Drives the wind-amplification term inside `getParkAdjustment` — the static 3y factor averages over wind variance, this flag fires only on the day-of weather |
+
+**Reading these fields directly from feature code is forbidden.** All math goes through `getParkAdjustment` in [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) — the single canonical primitive shared by the lineup side (`batterRating`) and the streaming/pitcher side (`forecast`). The primitive:
+
+- Selects the right field for the stat (`statId`)
+- Resolves the batter side. `'L'` and `'R'` pick directly. Switch hitters (`'S'`) resolve against `pitcherThrows` to the side they'll actually bat from (opposite the pitcher); when the pitcher's hand is unknown, switch hitters fall back to the overall factor — never to a 50/50 blend, which always overstates a park's hand-skew effect.
+- Applies the wind amplification when `park.windSensitivity === 'high'` and sustained game-day wind is parallel to home plate
+- Clamps to the per-stat band
+
+The composite (pitcher rating, no `statId`) uses **overall `parkFactor` only** and is bats-agnostic. The HR-park amplification is already applied at the per-PA HR-rate path in `forecast.ts` and propagates into the ERA / WHIP / W sub-scores; multiplying the composite by an HR-derived factor on top would double-count.
+
+`getParkByVenueId(id)` is the lookup helper. `formatParkBadge(park)` produces the badge value (number + isHR flag) for the park column on row UIs — note this badge intentionally picks the more-extreme of `parkFactor` and `parkFactorHR` for at-a-glance UI use, even though the math layer's composite uses overall PF only.
+
+The `tendency` bucket (`extreme-hitter`/`hitter`/`neutral`/`pitcher`/`extreme-pitcher`) is computed from the max-magnitude across the four primary factors so a park that's neutral overall but extreme on one dimension (e.g. Yankee Stadium: 100 overall, 119 HR) lands in the right bucket for the dimension that matters.
 
 ## Full Function Reference
 
@@ -222,7 +253,8 @@ getTeamGame(teamAbbr, date): Promise<MLBGame | null>  // One team's game
 ```typescript
 resolveMLBId(fullName, teamAbbr?): Promise<MLBPlayerIdentity | null>
 getBatterSplits(mlbId, season?): Promise<BatterSplits | null>
-getPitcherQuality(mlbId, season?): Promise<PitcherQuality>
+getPitcherSeasonLines(mlbId, season?): Promise<PitcherSeasonLine | null>
+getPitcherAppearances(mlbId, season?): Promise<PitcherAppearance[]>
 fetchPitcherFullLine(mlbId, season?): Promise<PitcherSeasonLine | null>
 getCareerVsPitcher(batterId, pitcherId): Promise<SplitLine | null>
 ```
@@ -244,7 +276,8 @@ getHandednessVerdict(splits, pitcherThrows): VerdictLabel
 getVenueVerdict(splits, isHome): VerdictLabel
 getDayNightVerdict(splits, gameDateIso): VerdictLabel
 getParkVerdict(park, bats): { verdict, label } | null
-getPitcherQualityPill(pitcher): { verdict, label } | null
+/* getPitcherQualityPill removed in Phase 4d — tier reads come from the
+ * rating layer (`PitcherRating.tier`), not from a standalone classifier. */
 getFormTrend(splits): FormLabel
 getWeatherFlag(game, park): WeatherFlag
 ```

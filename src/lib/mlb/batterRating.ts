@@ -7,32 +7,41 @@
  * the user can skew the rating toward the stats they're trying to win
  * (e.g. "I'm chasing AVG this week, punting HR").
  *
- * Structure:
+ * Structure (post-2026-05 unified architecture):
  *   1. For each scored category, build an `expected` per-PA rate:
  *        baseline = Bayesian blend (current + prior + league)
  *        expected = baseline · matchup modifier (log5 for K/AVG, mult
- *                    for HR/R/RBI/SB, pass-through for H/BB)
+ *                    for HR/R/RBI/SB, pass-through for BB)
+ *      Matchup modifiers fold in **all** stat-specific signals: the
+ *      opposing SP, the park (per-stat track via `getParkAdjustment`),
+ *      and weather (via the per-cat weather factor below).
  *   2. Normalise `expected` onto 0-1 using the category's floor/elite
  *      window (shared with roster scoring).
  *   3. Weight each category by focus (chase / neutral / punt) and sum.
- *   4. Multiply the composite by three matchup-wide adjustments:
+ *   4. Multiply the composite by ONLY the matchup-wide adjustments:
  *        - platoon multiplier (regressed split ratio, centered on 1.0)
  *        - opportunity multiplier (batting order → PA count)
- *        - weather multiplier (wind + temp effects on ball carry)
+ *      Weather and park live at the per-cat layer; pulling them up to
+ *      the composite would double-count and would also paper over the
+ *      stat-specific differences (wind out helps HR/R/RBI but doesn't
+ *      help K-suppression — the per-cat layer captures that).
  *   5. Multiply by 100 and bucket into great/good/neutral/poor/bad tiers.
  *
  * Matchup modifiers live INSIDE each category's expected rate so we
- * don't double-count (old system applied SP quality / park / K-rate as
- * a separate weighted factor AND implicitly inside the talent term).
- * Platoon and opportunity are multipliers on the whole composite because
- * they scale every category proportionally — representing them per-
- * category would re-introduce the double-count.
+ * don't double-count. Platoon and opportunity are multipliers on the
+ * whole composite because they scale every category proportionally
+ * (platoon: every per-PA rate is shifted by the same talent-vs-hand
+ * factor; opportunity: PA count scales every counting stat the same).
  */
 
-import { blendRate } from './talentModel';
 import { toBatterSeasonStats } from './adapters';
 import type { BatterSeasonStats, PlayerStatLine } from './types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
+import {
+  talentExpectedEra,
+  talentBaa as talentBaaPrimitive,
+  talentHrPerPA as talentHrPerPAPrimitive,
+} from '@/lib/pitching/talent';
 
 /** Migration-era helper. Accept either shape; operate on the legacy one. */
 function asBatterStats(
@@ -48,6 +57,7 @@ import {
   supportsStatId,
 } from './categoryBaselines';
 import { getPlatoonAdjustedTalent, getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
+import { getParkAdjustment } from './parkAdjustment';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -97,6 +107,9 @@ export interface RatingMultiplier {
 export interface BatterRating {
   /** Final rating on 0-100 (50 = neutral). */
   score: number;
+  /** Symmetric ± uncertainty band (in score points). Reflects effective
+   *  PA across the rated categories — thinner samples → wider band. */
+  scoreBand: number;
   /** score - 50, displayed in the "net vs neutral" header. */
   netVsNeutral: number;
   tier: 'great' | 'good' | 'neutral' | 'poor' | 'bad';
@@ -105,7 +118,13 @@ export interface BatterRating {
   categories: CategoryContribution[];
   platoon: RatingMultiplier;
   opportunity: RatingMultiplier;
+  /** Surface multiplier — weather is now applied per-cat, this is the
+   *  display-only summary for the breakdown panel. */
   weather: RatingMultiplier;
+  /** Confidence level + reason + numeric band, mirroring the pitcher
+   *  side. Sample size on the batter side comes from the per-cat
+   *  effectivePA (capped at 200). */
+  confidence: { level: 'high' | 'medium' | 'low'; reason: string; band: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -114,9 +133,33 @@ export interface BatterRating {
 
 const LEAGUE_AVG = 0.243;
 const LEAGUE_K_PER_PA = 0.223;
+/** League-average HR per plate appearance. ~0.034 across MLB pitchers. */
+const LEAGUE_HR_PER_PA = 0.034;
 
-/** Minimum SP innings before we trust their per-PA modifiers. */
-const MIN_SP_IP = 25;
+// SP-perspective wrappers around the canonical talent-math primitives in
+// `pitching/talent.ts`. We accept either a `null`/`undefined` SP (no
+// talent → null) or one with `talent: null` and shrink to a single null
+// guard. Keeping the wrappers thin so the underlying primitives remain
+// the only place these formulas live — we used to have a stale local
+// `xwobaToXera` here with the wrong slope (5.0 vs canonical 25), which
+// caused batter ratings vs SP to score way too low.
+
+type SpForXera = { talent?: { kPerPA: number; bbPerPA: number; contactXwoba: number; hrPerContact: number } | null };
+type SpForHr = { talent?: { kPerPA: number; bbPerPA: number; hrPerContact: number } | null };
+type SpForBaa = { talent?: { contactXwoba: number } | null };
+
+function spExpectedEra(sp: SpForXera | null | undefined): number | null {
+  const t = sp?.talent;
+  return t ? talentExpectedEra(t) : null;
+}
+function spHrPerPA(sp: SpForHr | null | undefined): number | null {
+  const t = sp?.talent;
+  return t ? talentHrPerPAPrimitive(t) : null;
+}
+function spBaa(sp: SpForBaa | null | undefined): number | null {
+  const t = sp?.talent;
+  return t ? talentBaaPrimitive(t) : null;
+}
 
 // ---------------------------------------------------------------------------
 // Category-specific matchup adjustments
@@ -134,31 +177,32 @@ function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
 }
 
-/** Shared run-like modifier for R / RBI — SP ERA + park + opposing staff. */
-function runsLikeMod(ctx: MatchupContext | null, useStaff: boolean): number {
-  const sp = ctx?.opposingPitcher ?? null;
-  const park = ctx?.park?.parkFactor ?? 100;
-
-  const spEra = sp?.era ?? null;
-  const spIp = sp?.inningsPitched ?? 0;
-  const trustSp = spEra != null && spIp >= MIN_SP_IP;
-  const spMod = trustSp ? clamp(Math.sqrt(spEra! / 4.0), 0.7, 1.35) : 1.0;
-
-  const parkMod = clamp(park / 100, 0.85, 1.15);
-
-  const opposingTeam = ctx?.isHome ? ctx.game.awayTeam : ctx?.game.homeTeam ?? null;
-  const staffEra = opposingTeam?.staffEra ?? null;
-  const staffMod = useStaff && staffEra != null ? clamp(Math.sqrt(staffEra / 4.2), 0.85, 1.2) : 1.0;
-
-  return spMod * parkMod * staffMod;
-}
-
 interface ExpectedRate {
   /** Matchup-adjusted rate (HR/PA, AVG, etc.). */
   expected: number;
   /** Short hint describing the strongest non-neutral modifier applied,
    *  used on the waterfall row. "" when everything netted to neutral. */
   modifierHint: string;
+}
+
+/**
+ * Per-cat weather factors. Weather offense effect (wind/temp) is small
+ * but real: wind-out + warm air → HR carry up ~5-8%, R/RBI up ~3-5%
+ * (less than HR because R/RBI are mediated by team offense too); cold
+ * + wind-in → opposite. Mirrors the pitcher-side weather factors in
+ * forecast.ts for symmetry.
+ */
+function weatherCatFactor(ctx: MatchupContext | null, statId: number): number {
+  if (!ctx) return 1.0;
+  const score = getWeatherScore(ctx.game, ctx.game.park); // 0=suppress, 1=boost
+  // HR — biggest swing (±8%); R/RBI smaller (±4%); H/TB tiny (±2%).
+  // K, BB, SB are weather-independent.
+  switch (statId) {
+    case 12: return clamp(0.92 + score * 0.16, 0.92, 1.08); // HR
+    case 7: case 13: return clamp(0.96 + score * 0.08, 0.96, 1.04); // R, RBI
+    case 8: case 23: return clamp(0.98 + score * 0.04, 0.98, 1.02); // H, TB
+    default: return 1.0;
+  }
 }
 
 /**
@@ -173,34 +217,44 @@ function applyMatchupModifier(
   battingOrder: number | null,
 ): ExpectedRate {
   const sp = ctx?.opposingPitcher ?? null;
+  const weatherMult = weatherCatFactor(ctx, statId);
+
+  // Shared `getParkAdjustment` call for any stat with park signal — the
+  // primitive picks the right field by `statId`, resolves switch hitters
+  // against `pitcherThrows`, and applies the wind term in wind-sensitive
+  // parks. Cases below just use it.
+  const parkAdj = getParkAdjustment({
+    park: ctx?.game.park ?? null,
+    statId,
+    batterHand: bats,
+    pitcherThrows: sp?.throws ?? null,
+    weather: ctx?.game.weather ?? null,
+  });
 
   switch (statId) {
-    case 3: { // AVG — log5 against SP BAA + park
-      const baa = sp?.battingAvgAgainst ?? null;
-      const spIp = sp?.inningsPitched ?? 0;
-      const useLog5 = baa != null && spIp >= MIN_SP_IP;
-      const parkMod = clamp((ctx?.park?.parkFactor ?? 100) / 100, 0.9, 1.08);
+    case 3: { // AVG — log5 against SP BAA + park.
+      const baa = spBaa(sp);
+      const useLog5 = baa != null;
       const expected = useLog5
-        ? log5(baseline, baa, LEAGUE_AVG) * parkMod
-        : baseline * parkMod;
+        ? log5(baseline, baa, LEAGUE_AVG) * parkAdj.multiplier
+        : baseline * parkAdj.multiplier;
       const hints: string[] = [];
       if (useLog5 && baa! <= 0.225) hints.push(`sub-${baa!.toFixed(3)} BAA SP`);
       else if (useLog5 && baa! >= 0.260) hints.push(`${baa!.toFixed(3)} BAA SP`);
-      if (parkMod >= 1.04) hints.push('hitter park');
-      else if (parkMod <= 0.96) hints.push('pitcher park');
+      if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 12: { // HR — pitcher HR/9 + park HR factor
-      const parkFactorHR = ctx?.park?.parkFactorHR ?? 100;
-      const spMod = sp?.hr9 != null ? clamp(sp.hr9 / 1.2, 0.5, 2.0) : 1.0;
-      const parkMod = clamp(parkFactorHR / 100, 0.7, 1.4);
-      const expected = baseline * spMod * parkMod;
+    case 12: { // HR — pitcher HR/PA from talent vector + park HR + weather.
+      const hrPerPA = spHrPerPA(sp);
+      const spMod = hrPerPA != null ? clamp(hrPerPA / LEAGUE_HR_PER_PA, 0.5, 2.0) : 1.0;
+      const expected = baseline * spMod * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
-      if (sp?.hr9 != null && sp.hr9 >= 1.4) hints.push(`${sp.hr9.toFixed(2)} HR/9 SP`);
-      else if (sp?.hr9 != null && sp.hr9 <= 0.9) hints.push(`${sp.hr9.toFixed(2)} HR/9 SP`);
-      if (parkFactorHR >= 110) hints.push(`HR+ park (${parkFactorHR})`);
-      else if (parkFactorHR <= 90) hints.push(`HR− park (${parkFactorHR})`);
+      if (hrPerPA != null && hrPerPA >= 0.045) hints.push('HR-prone SP');
+      else if (hrPerPA != null && hrPerPA <= 0.025) hints.push('HR-suppressing SP');
+      if (parkAdj.hint) hints.push(parkAdj.hint);
+      if (weatherMult >= 1.04) hints.push('wind-boost');
+      else if (weatherMult <= 0.96) hints.push('wind-suppress');
       return { expected, modifierHint: hints.join(' · ') };
     }
 
@@ -210,56 +264,64 @@ function applyMatchupModifier(
       return { expected: baseline * vsRhpBump, modifierHint: hints.join(' · ') };
     }
 
-    case 7: { // R — SP quality + park + staff + batting order (top of order boost)
+    case 7: { // R — SP quality + park + staff ERA + batting order + weather.
       const orderMod = battingOrder && battingOrder >= 1 && battingOrder <= 3 ? 1.05
                      : battingOrder && battingOrder >= 7 ? 0.92
                      : 1.0;
-      const expected = baseline * runsLikeMod(ctx, true) * orderMod;
+      const expEra = spExpectedEra(sp);
+      const spMod = expEra != null ? clamp(Math.sqrt(expEra / 4.0), 0.7, 1.35) : 1.0;
+      const opposingTeam = ctx?.isHome ? ctx.game.awayTeam : ctx?.game.homeTeam ?? null;
+      const staffEra = opposingTeam?.staffEra ?? null;
+      const staffMod = staffEra != null ? clamp(Math.sqrt(staffEra / 4.2), 0.85, 1.2) : 1.0;
+      const expected = baseline * spMod * parkAdj.multiplier * staffMod * orderMod * weatherMult;
       const hints: string[] = [];
-      if (sp?.era != null && sp.era >= 4.5) hints.push(`${sp.era.toFixed(2)} ERA SP`);
+      if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
+      else if (expEra != null && expEra <= 3.20) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('top of order');
+      if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 13: { // RBI — same as R but with middle-of-order boost
+    case 13: { // RBI — SP quality + park + middle-of-order + weather. (Staff-
+              //       ERA intentionally NOT applied: RBI scoring depends on
+              //       SP and own batters in front, not the relief pen.)
       const orderMod = battingOrder && battingOrder >= 3 && battingOrder <= 5 ? 1.08
                      : battingOrder && battingOrder >= 8 ? 0.9
                      : 1.0;
-      const expected = baseline * runsLikeMod(ctx, false) * orderMod;
+      const expEra = spExpectedEra(sp);
+      const spMod = expEra != null ? clamp(Math.sqrt(expEra / 4.0), 0.7, 1.35) : 1.0;
+      const expected = baseline * spMod * parkAdj.multiplier * orderMod * weatherMult;
       const hints: string[] = [];
-      if (sp?.era != null && sp.era >= 4.5) hints.push(`${sp.era.toFixed(2)} ERA SP`);
+      if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
+      else if (expEra != null && expEra <= 3.20) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('middle of order');
+      if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 21: { // K — log5 against SP K/PA (derived from K/9 ≈ 4.2 PA/inning)
-      const k9 = sp?.strikeoutsPer9 ?? null;
-      const spIp = sp?.inningsPitched ?? 0;
-      const spKRate = k9 != null && spIp >= MIN_SP_IP ? clamp(k9 / 9 / 4.2, 0.08, 0.45) : null;
-      const expected = spKRate != null
+    case 21: { // K — log5 against SP K/PA + park SO factor.
+      const spKRate = sp?.talent?.kPerPA ?? null;
+      const expected = (spKRate != null
         ? log5(baseline, spKRate, LEAGUE_K_PER_PA)
-        : baseline;
+        : baseline) * parkAdj.multiplier;
       const hints: string[] = [];
-      if (spKRate != null && k9! >= 10.5) hints.push(`${k9!.toFixed(1)} K/9 SP`);
-      else if (spKRate != null && k9! <= 6.5) hints.push(`${k9!.toFixed(1)} K/9 SP`);
+      if (spKRate != null && spKRate >= 0.27) hints.push(`high-K SP (${(spKRate * 100).toFixed(0)}%)`);
+      else if (spKRate != null && spKRate <= 0.18) hints.push(`low-K SP (${(spKRate * 100).toFixed(0)}%)`);
+      if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 8: { // H — pass through baseline; H/PA already captures AVG + BB avoidance
-      return { expected: baseline, modifierHint: '' };
-    }
+    case 8:   // H  — overall hitter friendliness with hand skew + small weather effect.
+    case 23:  // TB — same. HR-track effect is captured for HR-specific
+              //      scoring; using the AVG track here avoids double-counting.
+      return { expected: baseline * parkAdj.multiplier * weatherMult, modifierHint: parkAdj.hint };
 
-    case 18: { // BB — no strong single-game SP modifier worth the complexity
-      return { expected: baseline, modifierHint: '' };
-    }
+    case 18: // BB — park walks factor (pitcher caution vs pitcher park).
+      return { expected: baseline * parkAdj.multiplier, modifierHint: parkAdj.hint };
 
     default:
       return { expected: baseline, modifierHint: '' };
   }
-
-  // suppress unused — bats may be used for future per-hand park factors
-  void bats;
-  void blendRate;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,13 +410,13 @@ function buildWeatherMultiplier(ctx: MatchupContext | null): RatingMultiplier {
   if (!ctx) {
     return { multiplier: 1.0, deltaPct: 0, display: '—', summary: 'No game', available: false };
   }
-  const raw = getWeatherScore(ctx.game, ctx.park);
-  const flag = getWeatherFlag(ctx.game, ctx.park);
+  const raw = getWeatherScore(ctx.game, ctx.game.park);
+  const flag = getWeatherFlag(ctx.game, ctx.game.park);
   const mult = 1 + (raw - 0.5) * 0.24; // 0 → 0.88, 1 → 1.12 (soft clamp below)
   const clamped = clamp(mult, 0.94, 1.06);
   const pct = (clamped - 1) * 100;
 
-  const display = flag.label || (ctx.park?.roof === 'dome' ? 'Dome' : 'Normal');
+  const display = flag.label || (ctx.game.park?.roof === 'dome' ? 'Dome' : 'Normal');
   const summary =
     flag.kind === 'boost' ? 'Offense boost'
     : flag.kind === 'suppress' ? 'Offense suppressed'
@@ -456,12 +518,18 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
   if (!context || !stats || scoredCategories.length === 0) {
     return {
       score: 50,
+      scoreBand: 15,
       netVsNeutral: 0,
       tier: 'neutral',
       categories: [],
       platoon,
       opportunity,
       weather,
+      confidence: {
+        level: 'low',
+        reason: !context ? 'No game today' : !stats ? 'No season data' : 'No scored categories',
+        band: 15,
+      },
     };
   }
 
@@ -517,8 +585,12 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
   const activeWeight = Object.values(weights).reduce((a, b) => a + b, 0);
   const preMultScore = activeWeight > 0 ? composite * 100 : 50;
 
+  // Composite multipliers — only platoon and opportunity. Weather is
+  // applied per-cat (see weatherCatFactor) so the K and BB cats — which
+  // weather doesn't affect — are not penalised, while HR/R/RBI carry
+  // the wind/temperature signal where it actually applies.
   const finalScore = activeWeight > 0
-    ? preMultScore * platoon.multiplier * opportunity.multiplier * weather.multiplier
+    ? preMultScore * platoon.multiplier * opportunity.multiplier
     : preMultScore;
 
   const score = Math.max(0, Math.min(100, Math.round(finalScore)));
@@ -531,13 +603,43 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
     : score >= 30 ? 'poor'
     : 'bad';
 
+  // Confidence band — weighted average of per-cat shrinkage. Each cat's
+  // shrinkage is approximately (1 - effectivePA/200), capped. Aggregated
+  // by the active focus weights so a player with thin samples in chased
+  // cats is flagged less confident than thin samples in punted cats.
+  const PA_FULL_TRUST = 200;
+  const MAX_BATTER_BAND = 15;
+  let bandWeighted = 0;
+  let weightSum = 0;
+  for (const c of contributions) {
+    if (c.weight <= 0) continue;
+    const shrink = clamp(1 - c.effectivePA / PA_FULL_TRUST, 0, 1);
+    bandWeighted += c.weight * shrink;
+    weightSum += c.weight;
+  }
+  const aggregateShrink = weightSum > 0 ? bandWeighted / weightSum : 1;
+  const band = clamp(aggregateShrink * MAX_BATTER_BAND, 0, MAX_BATTER_BAND);
+  const confidenceLevel: 'high' | 'medium' | 'low' =
+    aggregateShrink <= 0.30 ? 'high'
+    : aggregateShrink <= 0.60 ? 'medium'
+    : 'low';
+  const minEffectivePA = contributions.length > 0
+    ? Math.min(...contributions.map(c => c.effectivePA))
+    : 0;
+
   return {
     score,
+    scoreBand: band,
     netVsNeutral,
     tier,
     categories: contributions,
     platoon,
     opportunity,
     weather,
+    confidence: {
+      level: confidenceLevel,
+      reason: `${minEffectivePA.toFixed(0)} min effective PA`,
+      band,
+    },
   };
 }

@@ -185,6 +185,54 @@ export function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
 }
 
 /**
+ * A single pitcher appearance, parsed out of the game-log split shape.
+ * Used for strength-of-schedule weighting in the talent estimator —
+ * each appearance carries the opponent team ID + PA so the regression
+ * can down-weight outings vs weak lineups (and up-weight outings vs
+ * strong ones).
+ */
+export interface PitcherAppearance {
+  /** ISO date — "2026-04-26". */
+  date: string | null;
+  /** Opposing team's MLB ID. */
+  opponentTeamId: number;
+  /** True when the pitcher's team was home. */
+  isHome: boolean;
+  /** Batters faced in this appearance — Savant calls this PA-against. */
+  pa: number;
+  /** Innings pitched in this single appearance. */
+  ip: number;
+  /** True for starts (`gamesStarted ≥ 1`). Relief outings are kept in
+   *  the list but flagged so callers can filter — the SoS estimator
+   *  weighs starts only, since opening-day-to-September relief usage
+   *  isn't representative of the talent we're rating. */
+  isStart: boolean;
+}
+
+/**
+ * Parse a pitcher's game-log splits into typed per-appearance records.
+ * Drops entries missing the opponent team ID (data corruption guard) but
+ * preserves zero-PA cameos so consumers can decide their own filter.
+ */
+export function parsePitcherAppearances(gameLog: RawSplit[]): PitcherAppearance[] {
+  const out: PitcherAppearance[] = [];
+  for (const entry of gameLog) {
+    const oppId = entry.opponent?.id;
+    if (typeof oppId !== 'number') continue;
+    const stat = entry.stat;
+    out.push({
+      date: entry.date ?? null,
+      opponentTeamId: oppId,
+      isHome: !!entry.isHome,
+      pa: stat.battersFaced ?? stat.plateAppearances ?? 0,
+      ip: parseFloat(stat.inningsPitched ?? '0') || 0,
+      isStart: (stat.gamesStarted ?? 0) >= 1,
+    });
+  }
+  return out;
+}
+
+/**
  * Aggregate the last N starts from a pitcher's game log into a single
  * { era, ip } entry. Only entries with GS=1 OR IP>=3 are counted as starts
  * (filters out relief appearances by swingmen).

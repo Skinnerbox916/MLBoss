@@ -45,12 +45,22 @@ export interface RawStat {
   groundOuts?: number;
   airOuts?: number;
   earnedRuns?: number;
+  /** Game-log only: total batters faced (PA) in this single appearance.
+   *  We use this as the per-appearance weight for SoS-adjusted effective
+   *  PA in the talent regression (see `parsePitcherAppearances`). */
+  battersFaced?: number;
 }
 
 export interface RawSplit {
   split?: { code: string; description: string };
   season?: string;
   isHome?: boolean;
+  /** gameLog only — ISO date of the game (e.g. "2026-04-26"). */
+  date?: string;
+  /** gameLog only — team this player played for in this game. */
+  team?: { id: number; name: string };
+  /** gameLog only — opposing team. Used for SoS adjustment. */
+  opponent?: { id: number; name: string };
   stat: RawStat;
 }
 

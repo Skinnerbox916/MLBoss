@@ -7,21 +7,6 @@
 // Schedule / Game Day
 // ---------------------------------------------------------------------------
 
-export type PitcherTier = 'ace' | 'tough' | 'average' | 'weak' | 'bad' | 'unknown';
-
-/**
- * Tiered pitcher quality snapshot used to surface matchup difficulty.
- * `season` is the year the underlying stats came from — may be prior year
- * when the current season sample is too small (see getPitcherQuality).
- */
-export interface PitcherQuality {
-  tier: PitcherTier;
-  era: number | null;
-  whip: number | null;
-  inningsPitched: number;
-  season: number;
-}
-
 export interface ProbablePitcher {
   mlbId: number;
   name: string;
@@ -47,8 +32,6 @@ export interface ProbablePitcher {
   // Platoon splits (OPS allowed to batters of each handedness)
   platoonOpsVsLeft: number | null;
   platoonOpsVsRight: number | null;
-  // Tiered quality (null until enriched by getGameDay)
-  quality: PitcherQuality | null;
   /** xERA from Baseball Savant (null when pitcher has too few BIP for Savant to compute) */
   xera: number | null;
   /** xwOBA-against from Baseball Savant (expected wOBA allowed to batters) */
@@ -70,10 +53,25 @@ export interface ProbablePitcher {
    * Run value per 100 pitches, usage-weighted across the whole arsenal.
    * Savant reports this from the pitcher perspective: LOWER is better.
    * Blended current + prior + league anchor (`blendRateOrNull` with a
-   * 150-PA league prior at 0). Used as a pitch-model proxy inside
-   * `getPitcherRating`.
+   * 150-PA league prior at 0).
+   *
+   * **Display-only / leading indicator.** Read once by the talent layer's
+   * confidence-agreement check (does RV/100 cluster on the same side of
+   * league avg as K% and contact-xwOBA?) but NOT folded into the rating
+   * math. Predictive content is already captured in `kPerPA` and
+   * `hrPerContact`. Adding a consumer that uses this as a talent estimate
+   * is a bug — the talent vector is the only authoritative surface.
    */
   runValuePer100: number | null;
+  /**
+   * Canonical talent vector — the single answer to "how good is this
+   * pitcher in a vacuum?". Populated by `getGameDay` after enrichment.
+   * Null until enriched (and on rookies / unknowns when no data exists).
+   *
+   * Defined in `src/lib/pitching/talent.ts`. Imported via index type to
+   * avoid a circular dependency (pitching/* depends on mlb/types).
+   */
+  talent: import('@/lib/pitching/talent').PitcherTalent | null;
 }
 
 export interface GameWeather {
@@ -118,6 +116,21 @@ export interface MLBGame {
   awayProbablePitcher: ProbablePitcher | null;
   homeLineup: LineupEntry[];
   awayLineup: LineupEntry[];
+}
+
+/**
+ * `MLBGame` plus its resolved `ParkData`. Park enrichment happens in the
+ * `/api/mlb/game-day` API route (and any other orchestrator that calls
+ * `getParkByVenueId`). This is the canonical type the rating engines and
+ * the lineup optimizer consume — they assume `park` has been resolved.
+ *
+ * Routes that call `getGameDay` directly without enriching (admin
+ * health checks etc.) get raw `MLBGame[]`; that's fine because they
+ * don't feed the rating engines. Anything in the rating path takes
+ * `EnrichedGame`.
+ */
+export interface EnrichedGame extends MLBGame {
+  park: ParkData | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +424,13 @@ export interface StatcastPitcher {
   xwobacon: number | null;
   /** Hard-hit rate (EV ≥ 95 mph / BIP) — proxy for bat-speed suppression. */
   hardHitRate: number | null;
+  /** Whiff rate (whiffs / swings) — leading indicator for K-rate. Surfaced
+   *  on the breakdown UI for transparency; NOT regressed into talent
+   *  (talent uses kRate directly). */
+  whiffPct: number | null;
+  /** Barrel rate (barrels / batted ball events) — leading indicator for
+   *  HR-prone vs HR-suppressing arms. UI-only, same reason as whiffPct. */
+  barrelPct: number | null;
   /**
    * Usage-weighted mean fastball velocity across FF/SI/FC. Null when the
    * pitch-arsenal endpoint didn't return tracked fastball data (no pitches
@@ -474,11 +494,32 @@ export interface ParkData {
   lng: number;
   surface: SurfaceType;
   roof: RoofType;
-  // 2024 park factors (100 = league average; FanGraphs wRC+ scale)
-  parkFactor: number;        // overall
-  parkFactorHR: number;      // HR-specific
-  parkFactorL: number;       // vs left-handed batters
-  parkFactorR: number;       // vs right-handed batters
+  // Park factors (100 = league average; Statcast 3-year rolling window).
+  // Source of truth for canonical math: src/lib/mlb/parkAdjustment.ts —
+  // never read these fields directly from feature code.
+  parkFactor: number;        // overall (wOBA index)
+  parkFactorHR: number;      // HR-specific (collapsed across handedness)
+  parkFactorL: number;       // overall vs left-handed batters
+  parkFactorR: number;       // overall vs right-handed batters
+  parkFactorHrL: number;     // HR factor vs LHB (Camden ~126, Citizens Bank ~128, Yankee ~119)
+  parkFactorHrR: number;     // HR factor vs RHB (Dodger ~134, Cincinnati ~121, Yankee ~119)
+  parkFactorBACON: number;   // Batting Average ON Contact (includes HR) — Savant's
+                              // `index_bacon`. Closest published proxy for "park's
+                              // effect on contact-hit success"; NOT BABIP, which
+                              // excludes HR and isn't published as a park factor.
+  parkFactor2B: number;      // doubles factor (Fenway, Coors, Sutter Health)
+  parkFactor3B: number;      // triples factor (Kauffman, Comerica, Oracle)
+  parkFactorBB: number;      // walks factor (collapsed across handedness)
+  parkFactorBBL: number;     // walks factor vs LHB
+  parkFactorBBR: number;     // walks factor vs RHB
+  parkFactorSO: number;      // strikeouts factor (collapsed across handedness)
+  parkFactorSOL: number;     // strikeouts factor vs LHB
+  parkFactorSOR: number;     // strikeouts factor vs RHB
+  parkFactorHardHit: number; // hard-hit rate factor (future quality signal)
+  parkFactorXBACON: number;  // expected batting average on contact (future contact-quality use)
+  windSensitivity: 'high' | 'normal'; // 'high' parks (Wrigley, Oracle, Sutter)
+                                       // get an extra wind multiplier when
+                                       // sustained wind is parallel to home plate.
   tendency: ParkTendency;
   notes: string;             // e.g. 'Thin air boosts all offense', 'Short RF porch favors LHB'
 }

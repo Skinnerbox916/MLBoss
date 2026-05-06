@@ -1,6 +1,6 @@
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { ProbablePitcher } from '@/lib/mlb/types';
-import { normalizeTeamAbbr, lastNameKey, isPitcher } from '@/lib/pitching/display';
+import { normalizeTeamAbbr, isPitcher, isLikelySamePlayer } from '@/lib/pitching/display';
 
 /**
  * Minimal game shape needed for matching a rostered pitcher to a probable
@@ -44,8 +44,7 @@ export function matchProbableStarts<G extends ProbableMatchGame>(
   for (const player of pitchers) {
     if (matchedPlayerKeys.has(player.player_key)) continue;
     const teamAbbr = normalizeTeamAbbr(player.editorial_team_abbr);
-    const lastKey = lastNameKey(player.name);
-    if (!teamAbbr || !lastKey) continue;
+    if (!teamAbbr) continue;
 
     for (const g of games) {
       const homeAbbr = normalizeTeamAbbr(g.homeTeam.abbreviation);
@@ -56,7 +55,10 @@ export function matchProbableStarts<G extends ProbableMatchGame>(
 
       const pp = isHome ? g.homeProbablePitcher : g.awayProbablePitcher;
       if (!pp) continue;
-      if (lastNameKey(pp.name) !== lastKey) continue;
+      // Last-name + first-initial match. Used to be last-name only, which
+      // collided when a team had two same-surname pitchers rostered (the
+      // Lopez / Ureña case). See `isLikelySamePlayer` for the rationale.
+      if (!isLikelySamePlayer(player.name, pp.name)) continue;
 
       results.push({
         player,

@@ -199,11 +199,21 @@ export function computeBatterTalentXwoba(
 export function computePitcherTalentXwobaAllowed(
   current: StatcastPitcher | null | undefined,
   prior: StatcastPitcher | null | undefined,
+  /** Multiplier (0..1) applied to BOTH prior-season cap and league
+   *  prior weight when leading indicators say the prior is contaminated
+   *  (regime change). The two anchors weaken at different rates: the
+   *  prior-season cap takes the full shrink (since it's pitcher-specific
+   *  evidence directly contradicted by the regime probe), while the
+   *  league prior weakens as `sqrt(shrink)` (population norms are a
+   *  more stable anchor — less aggressive collapse). Default 1.0
+   *  preserves legacy behaviour. */
+  regimeShrink: number = 1.0,
 ): TalentResult | null {
   return computeTalent({
     current: current ?? null,
     prior: prior ?? null,
     leagueXwobacon: LEAGUE_XWOBACON_PITCHER,
+    regimeShrink,
   });
 }
 
@@ -226,8 +236,17 @@ function computeTalent(args: {
   current: TalentSource | null;
   prior: TalentSource | null;
   leagueXwobacon: number;
+  /** Multiplier on BOTH prior-season caps and league-prior weights when
+   *  the regime probe detects a regime change. Defaults to 1.0 (legacy).
+   *  Prior-season cap takes the full shrink; league prior takes
+   *  `sqrt(shrink)` so population norms stay as a softer anchor.
+   *  Pitcher-side callers compute the regime score from leading-indicator
+   *  agreement (K%, BB%, whiff%, barrel%, velo). */
+  regimeShrink?: number;
 }): TalentResult | null {
   const { current, prior, leagueXwobacon } = args;
+  const shrink = Math.max(0.1, Math.min(1.0, args.regimeShrink ?? 1.0));
+  const lgShrink = Math.sqrt(shrink);
 
   // If both sources are null, we have literally nothing — let caller
   // fall back to league mean or a tier-based estimate.
@@ -244,8 +263,8 @@ function computeTalent(args: {
 
   const curPa = current?.pa ?? 0;
   const curBip = current?.bip ?? 0;
-  const paCap = priorSeasonPaCap(curPa);
-  const bipCap = priorSeasonBipCap(curBip);
+  const paCap = priorSeasonPaCap(curPa) * shrink;
+  const bipCap = priorSeasonBipCap(curBip) * shrink;
 
   const k = blendRate({
     current: current?.kRate ?? null,
@@ -253,7 +272,7 @@ function computeTalent(args: {
     prior: prior?.kRate ?? null,
     priorN: prior?.pa ?? 0,
     leagueMean: LEAGUE_K_RATE,
-    leaguePriorN: PRIOR_K_PA,
+    leaguePriorN: PRIOR_K_PA * lgShrink,
     priorCap: paCap,
   });
 
@@ -263,7 +282,7 @@ function computeTalent(args: {
     prior: prior?.bbRate ?? null,
     priorN: prior?.pa ?? 0,
     leagueMean: LEAGUE_BB_RATE,
-    leaguePriorN: PRIOR_BB_PA,
+    leaguePriorN: PRIOR_BB_PA * lgShrink,
     priorCap: paCap,
   });
 
@@ -278,7 +297,7 @@ function computeTalent(args: {
     prior: prior?.hardHitRate ?? null,
     priorN: prior?.bip ?? 0,
     leagueMean: LEAGUE_HARD_HIT,
-    leaguePriorN: PRIOR_HARD_HIT_BIP,
+    leaguePriorN: PRIOR_HARD_HIT_BIP * lgShrink,
     priorCap: bipCap,
   });
 
@@ -293,7 +312,7 @@ function computeTalent(args: {
     prior: prior?.xwobacon ?? null,
     priorN: prior?.bip ?? 0,
     leagueMean: hhAnchoredXwobacon,
-    leaguePriorN: PRIOR_XWOBACON_BIP,
+    leaguePriorN: PRIOR_XWOBACON_BIP * lgShrink,
     priorCap: bipCap,
   });
 

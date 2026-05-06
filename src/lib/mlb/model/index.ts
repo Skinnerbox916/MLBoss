@@ -8,16 +8,10 @@ export {
   aggregateLastN,
   parsePitchingLine,
   aggregatePitcherRecentForm,
+  parsePitcherAppearances,
 } from './playerStats';
 
-export type { PitcherSeasonLine } from './playerStats';
-
-export {
-  classifyPitcherTier,
-  MIN_IP_CURRENT,
-  MIN_IP_PRIOR,
-  MIN_BIP_FOR_XERA,
-} from './quality';
+export type { PitcherSeasonLine, PitcherAppearance } from './playerStats';
 
 export {
   applyPitcherStatsLine,

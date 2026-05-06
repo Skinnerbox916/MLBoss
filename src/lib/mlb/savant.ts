@@ -162,6 +162,8 @@ export async function fetchStatcastPitchers(
           bbRate: skills?.bbRate ?? null,
           xwobacon: skills?.xwobacon ?? null,
           hardHitRate: skills?.hardHitRate ?? null,
+          whiffPct: skills?.whiffPct ?? null,
+          barrelPct: skills?.barrelPct ?? null,
           avgFastballVelo: arsenal?.avgFastballVelo ?? null,
           runValuePer100: arsenal?.runValuePer100 ?? null,
         }]);
@@ -252,15 +254,26 @@ export async function fetchStatcastBatters(
 // ---------------------------------------------------------------------------
 
 interface SkillsRow {
-  kRate: number | null;      // decimal (0.22 = 22%)
-  bbRate: number | null;     // decimal
-  xwobacon: number | null;   // decimal (Savant reports as ".374")
+  kRate: number | null;       // decimal (0.22 = 22%)
+  bbRate: number | null;      // decimal
+  xwobacon: number | null;    // decimal (Savant reports as ".374")
   hardHitRate: number | null; // decimal (Savant reports as 40 → 0.40)
+  /** Whiff rate (whiffs / swings). Leading indicator for K-rate, surfaced
+   *  on the breakdown UI for transparency — NOT regressed into talent. */
+  whiffPct: number | null;
+  /** Barrel rate (barrels / batted ball events). Leading indicator for
+   *  HR-prone vs HR-suppressing arms. UI-only. */
+  barrelPct: number | null;
 }
 
 function buildCustomSkillsUrl(type: 'batter' | 'pitcher', season: number): string {
   // `min=1` matches the expected_statistics endpoint so merges align.
-  const selections = ['pa', 'xwobacon', 'k_percent', 'bb_percent', 'hard_hit_percent'].join(',');
+  // whiff_percent + barrel_batted_rate are leading indicators surfaced
+  // for breakdown UI (see PitcherTalent.whiffPct / barrelPct).
+  const selections = [
+    'pa', 'xwobacon', 'k_percent', 'bb_percent', 'hard_hit_percent',
+    'whiff_percent', 'barrel_batted_rate',
+  ].join(',');
   return (
     `${SAVANT_BASE}/leaderboard/custom` +
     `?year=${season}&type=${type}&filter=&min=1&selections=${selections}` +
@@ -281,12 +294,16 @@ function parseSkillsCsv(csv: string): Map<number, SkillsRow> {
     const kPct = toNum(row['k_percent']);
     const bbPct = toNum(row['bb_percent']);
     const hhPct = toNum(row['hard_hit_percent']);
+    const whiffPct = toNum(row['whiff_percent']);
+    const barrelPct = toNum(row['barrel_batted_rate']);
 
     map.set(mlbId, {
       kRate: kPct !== null ? kPct / 100 : null,
       bbRate: bbPct !== null ? bbPct / 100 : null,
       xwobacon: toNum(row['xwobacon']),
       hardHitRate: hhPct !== null ? hhPct / 100 : null,
+      whiffPct: whiffPct !== null ? whiffPct / 100 : null,
+      barrelPct: barrelPct !== null ? barrelPct / 100 : null,
     });
   }
   return map;

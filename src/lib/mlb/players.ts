@@ -24,20 +24,18 @@ import {
 import {
   aggregateLastN,
   aggregatePitcherRecentForm,
-  classifyPitcherTier,
   findByCode,
   findGroup,
-  MIN_BIP_FOR_XERA,
-  MIN_IP_CURRENT,
-  MIN_IP_PRIOR,
   parsePitchingLine,
+  parsePitcherAppearances,
   parseSplitLine,
+  type PitcherAppearance,
   type PitcherSeasonLine,
 } from './model';
 import { fetchPlayerName, resolveMLBId } from './identity';
-import { fetchStatcastBatters, fetchStatcastPitchers } from './savant';
+import { fetchStatcastBatters } from './savant';
 import { blendRateOrNull, computeBatterTalentXwoba } from './talentModel';
-import type { BatterSeasonStats, BatterSplits, PitcherQuality, SplitLine } from './types';
+import type { BatterSeasonStats, BatterSplits, SplitLine } from './types';
 
 // Re-exports kept for back-compat with import sites elsewhere in the repo.
 // New code should import these from their canonical homes.
@@ -131,7 +129,7 @@ export async function getBatterSplits(
 }
 
 // ---------------------------------------------------------------------------
-// Pitcher quality (tier classification)
+// Pitcher line fetchers
 // ---------------------------------------------------------------------------
 
 /**
@@ -147,56 +145,6 @@ async function fetchPitcherSeasonLine(
   const splits = findGroup(raw, 'statSplits');
   const sp = splits.find(s => s.split?.code === 'sp');
   return sp ? parsePitchingLine(sp.stat) : null;
-}
-
-/**
- * Get a pitcher's tiered quality snapshot.
- *
- * Uses Savant xERA as the primary classifier signal when available (>= 10
- * BIP); falls back to actual ERA otherwise. IP gates apply to the Stats API
- * data: current >= 25 IP, prior >= 60 IP. Below both gates we return
- * `tier: 'unknown'` so consumers can degrade gracefully.
- */
-export async function getPitcherQuality(
-  mlbId: number,
-  season: number = new Date().getFullYear(),
-): Promise<PitcherQuality> {
-  const [current, savantMap] = await Promise.all([
-    fetchPitcherSeasonLine(mlbId, season),
-    fetchStatcastPitchers(season),
-  ]);
-
-  const savant = savantMap.get(mlbId) ?? null;
-  const xera = savant && savant.bip >= MIN_BIP_FOR_XERA ? savant.xera : null;
-
-  if (current && current.ip >= MIN_IP_CURRENT) {
-    return {
-      tier: classifyPitcherTier(current.era, current.whip, current.strikeoutsPer9, xera),
-      era: current.era,
-      whip: current.whip,
-      inningsPitched: current.ip,
-      season,
-    };
-  }
-
-  const prior = await fetchPitcherSeasonLine(mlbId, season - 1);
-  if (prior && prior.ip >= MIN_IP_PRIOR) {
-    return {
-      tier: classifyPitcherTier(prior.era, prior.whip, prior.strikeoutsPer9, xera),
-      era: prior.era,
-      whip: prior.whip,
-      inningsPitched: prior.ip,
-      season: season - 1,
-    };
-  }
-
-  return {
-    tier: 'unknown',
-    era: current?.era ?? prior?.era ?? null,
-    whip: current?.whip ?? prior?.whip ?? null,
-    inningsPitched: current?.ip ?? prior?.ip ?? 0,
-    season: (current?.ip ?? 0) > 0 ? season : season - 1,
-  };
 }
 
 /**
@@ -254,6 +202,43 @@ export async function fetchPitcherRecentForm(
   if (!raw) return null;
   const log = findGroup(raw, 'gameLog');
   return aggregatePitcherRecentForm(log, lastN);
+}
+
+/**
+ * Fetch a pitcher's per-appearance gamelog entries with opponent team IDs
+ * and PA counts. Used by the talent layer for strength-of-schedule
+ * weighting — outings vs weak lineups get sample-shrunk so the Bayesian
+ * regression pulls the talent estimate harder toward the prior.
+ *
+ * Returns an empty array on fetch failure (rather than null) — talent
+ * computation degrades to no-SoS gracefully when appearances are
+ * unavailable. Underlying gamelog fetch is cached 1h.
+ */
+export async function getPitcherAppearances(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<PitcherAppearance[]> {
+  const raw = await fetchPitcherGameLog(mlbId, season);
+  if (!raw) return [];
+  const log = findGroup(raw, 'gameLog');
+  return parsePitcherAppearances(log);
+}
+
+/**
+ * Fetch a pitcher's parsed season starter line (or prior fallback).
+ * Exposed so the talent orchestrator can reuse the same source the
+ * legacy `getPitcherQuality` consumed without re-parsing. Returns
+ * { current, prior } — both can be null.
+ */
+export async function getPitcherSeasonLines(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<{ current: PitcherSeasonLine | null; prior: PitcherSeasonLine | null }> {
+  const [current, prior] = await Promise.all([
+    fetchPitcherSeasonLine(mlbId, season),
+    fetchPitcherSeasonLine(mlbId, season - 1),
+  ]);
+  return { current, prior };
 }
 
 // ---------------------------------------------------------------------------

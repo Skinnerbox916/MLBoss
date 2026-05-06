@@ -256,6 +256,41 @@ function finalizeSplit(s: { ops: number | null; avg: number | null; strikeOutRat
   };
 }
 
+/**
+ * Standard 30 MLB team IDs. Hardcoded — the league hasn't expanded since
+ * 1998 and the IDs are documented constants. Saves a `/teams` round-trip
+ * when callers want a complete-league fetch (talent SoS, league-wide
+ * matchup analysis).
+ */
+export const ALL_MLB_TEAM_IDS: readonly number[] = Object.freeze([
+  108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+  133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146,
+  147, 158,
+]);
+
+/**
+ * Fetch every MLB team's regressed offensive profile in parallel. Each
+ * underlying `getTeamOffense` call is independently cached at the
+ * `mlbFetchSplits` layer (24h), so the second invocation in the same
+ * session is effectively free.
+ *
+ * Returns a map keyed by MLB team ID for cheap lookup. Teams that fail
+ * to resolve are simply absent from the map — callers should treat
+ * absence as "no SoS adjustment for this opponent".
+ */
+export async function getAllTeamOffense(
+  season: number = new Date().getFullYear(),
+): Promise<Map<number, TeamOffense>> {
+  const results = await Promise.all(
+    ALL_MLB_TEAM_IDS.map((id) => getTeamOffense(id, season).catch(() => null)),
+  );
+  const map = new Map<number, TeamOffense>();
+  for (const team of results) {
+    if (team) map.set(team.mlbId, team);
+  }
+  return map;
+}
+
 async function fetchTeamSeason(
   mlbTeamId: number,
   season: number,

@@ -1,15 +1,11 @@
-import type { BatterSplits, BatterSeasonStats, SplitLine, MLBGame, ParkData } from './types';
+import type { BatterSplits, BatterSeasonStats, SplitLine, MLBGame, EnrichedGame, ParkData } from './types';
+import type { MatchupContext } from './matchupContext';
 
 // ---------------------------------------------------------------------------
-// Matchup context for a single batter
+// Matchup context — re-exported from the canonical home in matchupContext.ts
 // ---------------------------------------------------------------------------
 
-export interface MatchupContext {
-  game: MLBGame;
-  isHome: boolean;
-  opposingPitcher: MLBGame['homeProbablePitcher']; // nullable
-  park: ParkData | null;
-}
+export type { MatchupContext };
 
 /**
  * MLB Stats API `detailedState` values that mean "no matchup today" — the game
@@ -23,14 +19,22 @@ export function isWipedGame(status: string): boolean {
 }
 
 /**
- * Given all of the day's games and a batter's team, produce the matchup context.
- * Returns null if the team has no game today (or its only game is postponed/
- * cancelled). For doubleheaders, prefers a live game over a wiped one.
+ * Given all of the day's games and a batter's team, produce the matchup
+ * context. Returns null if the team has no game today (or its only game
+ * is postponed/cancelled). For doubleheaders, prefers a live game over
+ * a wiped one.
+ *
+ * The `park` argument is for back-compat with callers that resolve the
+ * park separately. When omitted, we read `game.park` from the
+ * `EnrichedGame` directly. Either way the returned context's
+ * `game.park` is the canonical park field — the legacy `context.park`
+ * shorthand has been retired.
  */
 export function resolveMatchup(
-  games: MLBGame[],
-  park: ParkData | null,
+  games: EnrichedGame[],
+  _park: ParkData | null,
   teamAbbr: string,
+  asBatter: { hand: 'L' | 'R' | 'S' | null; battingOrder: number | null } | null = null,
 ): MatchupContext | null {
   const abbr = teamAbbr.toUpperCase();
   const teamGames = games.filter(
@@ -46,7 +50,13 @@ export function resolveMatchup(
   const isHome = game.homeTeam.abbreviation.toUpperCase() === abbr;
   const opposingPitcher = isHome ? game.awayProbablePitcher : game.homeProbablePitcher;
 
-  return { game, isHome, opposingPitcher, park };
+  return {
+    game,
+    isHome,
+    opposingPitcher,
+    asPitcher: null,
+    asBatter,
+  };
 }
 
 // ---------------------------------------------------------------------------

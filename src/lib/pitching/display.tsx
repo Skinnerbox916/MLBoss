@@ -2,9 +2,12 @@ import React from 'react';
 import { FiSun, FiCloud, FiCloudRain } from 'react-icons/fi';
 import type { IconType } from 'react-icons';
 import type { RosterEntry, FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
-import type { ProbablePitcher, ParkData, GameWeather, PitcherTier, MLBGame } from '@/lib/mlb/types';
+import type { ProbablePitcher, ParkData, GameWeather, EnrichedGame } from '@/lib/mlb/types';
+import type { PitcherTier } from '@/lib/pitching/rating';
 import type { TeamOffense } from '@/lib/mlb/teams';
-import type { PitcherRating } from '@/lib/pitching/scoring';
+import type { PitcherStreamingRating } from '@/lib/pitching/scoring';
+import { talentExpectedEra } from '@/lib/pitching/talent';
+import { getParkAdjustment } from '@/lib/mlb/parkAdjustment';
 
 // ---------------------------------------------------------------------------
 // Shared context interface for scored pitcher rows
@@ -16,7 +19,7 @@ export interface ScoredPitcherCtx {
   isHome: boolean;
   park: ParkData | null;
   weather: GameWeather;
-  game: MLBGame;
+  game: EnrichedGame;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,7 +33,6 @@ export function tierColor(tier: PitcherTier): string {
     case 'average': return 'text-foreground';
     case 'weak': return 'text-accent';
     case 'bad': return 'text-error';
-    default: return 'text-muted-foreground';
   }
 }
 
@@ -111,9 +113,55 @@ function normalizeName(name: string): string {
     .trim();
 }
 
-export function lastNameKey(name: string): string {
+// `lastNameKey` and `firstInitial` are intentionally NOT exported —
+// every name-comparison consumer must go through `isLikelySamePlayer`.
+// Exposing the last-name key as a public helper is what enabled the
+// pre-2026-05 last-name-only matchers (the Lopez / Ureña duplicate-
+// streamer collision). Keep these private.
+function lastNameKey(name: string): string {
   const parts = normalizeName(name).split(/\s+/).filter(Boolean);
   return parts[parts.length - 1] ?? '';
+}
+
+function firstInitial(name: string): string {
+  const parts = normalizeName(name).split(/\s+/).filter(Boolean);
+  return parts[0]?.[0] ?? '';
+}
+
+/**
+ * Decide whether two name strings plausibly identify the same player.
+ *
+ * Last-name-only matching used to be enough — the doc note in
+ * streaming-page.md said "team + last name is essentially unique on any
+ * given day." It isn't: the Athletics carrying both Jacob and Otto López
+ * (and previously two Ureñas on the same team) caused us to attach the
+ * probable starter's projection to BOTH players, so two streamers showed
+ * up for one game.
+ *
+ * Tighter rule: require either an exact full-name match, or last-name
+ * match + first-initial agreement. That handles "J. López" ↔ "Jacob
+ * Lopez" without re-introducing the same-team-same-surname collision.
+ *
+ * Used both for free-agent → probable-starter matching (streaming page)
+ * and for rostered-pitcher → probable-starter matching (today /
+ * dashboard). If we ever start syncing Yahoo player_id ↔ MLB id, this
+ * should switch to ID-based matching and become unnecessary.
+ */
+export function isLikelySamePlayer(faName: string, ppName: string): boolean {
+  const faNorm = normalizeName(faName);
+  const ppNorm = normalizeName(ppName);
+  if (!faNorm || !ppNorm) return false;
+  if (faNorm === ppNorm) return true;
+
+  const faLast = lastNameKey(faName);
+  const ppLast = lastNameKey(ppName);
+  if (!faLast || !ppLast || faLast !== ppLast) return false;
+
+  const faInitial = firstInitial(faName);
+  const ppInitial = firstInitial(ppName);
+  if (!faInitial || !ppInitial) return false;
+
+  return faInitial === ppInitial;
 }
 
 // Minimal shape expected from EnrichedGame — keeps this module decoupled
@@ -132,8 +180,6 @@ export function matchFreeAgentToGame<G extends EnrichedGameLike>(
   games: G[],
 ): { game: G; pp: ProbablePitcher; isHome: boolean } | null {
   const abbr = normalizeTeamAbbr(fa.editorial_team_abbr);
-  const faLast = lastNameKey(fa.name);
-  const faFull = normalizeName(fa.name);
 
   for (const g of games) {
     const homeAbbr = normalizeTeamAbbr(g.homeTeam.abbreviation);
@@ -145,10 +191,7 @@ export function matchFreeAgentToGame<G extends EnrichedGameLike>(
     const pp = isHome ? g.homeProbablePitcher : g.awayProbablePitcher;
     if (!pp) continue;
 
-    const ppLast = lastNameKey(pp.name);
-    const ppFull = normalizeName(pp.name);
-
-    if (faLast && ppLast && (faLast === ppLast || faFull === ppFull || faFull.includes(ppLast) || ppFull.includes(faLast))) {
+    if (isLikelySamePlayer(fa.name, pp.name)) {
       return { game: g, pp, isHome };
     }
   }
@@ -190,6 +233,54 @@ export function dayOffsetStr(offset: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offset);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Verbal cues — short labels for the collapsed row, with pitcher-perspective
+// tone (so a hitter park reads as `error` because it hurts the pitcher).
+// Both StreamingBoard and TodayPitchers consume these so the two pages
+// tell the same matchup story in the same vocabulary.
+// ---------------------------------------------------------------------------
+
+export type CueTone = 'success' | 'error' | 'muted';
+export interface VerbalCue {
+  label: string;
+  tone: CueTone;
+}
+
+/** Verbal cue for the park's lean from the pitcher's perspective. The
+ *  per-stat detail (parkSO/parkBB/parkHR) lives expanded in the Context
+ *  section; at-a-glance the user just wants "is this stadium going to
+ *  bite my guy?". Thresholds align with parkAdjustment.ts's composite
+ *  bands so the verbal label and the multiplier agree. */
+export function parkCue(park: ParkData | null): VerbalCue {
+  if (!park) return { label: '', tone: 'muted' };
+  const pf = park.parkFactor;
+  const pfHr = park.parkFactorHR;
+  if (pf >= 108 || pfHr >= 115) return { label: 'hitter park', tone: 'error' };
+  if (pf >= 104 || pfHr >= 108) return { label: 'lean hitter',  tone: 'error' };
+  if (pf <= 92  || pfHr <= 85)  return { label: 'pitcher park', tone: 'success' };
+  if (pf <= 96  || pfHr <= 92)  return { label: 'lean pitcher', tone: 'success' };
+  return { label: 'neutral park', tone: 'muted' };
+}
+
+/** Verbal cue for the opposing lineup's strength against the pitcher's
+ *  hand. Thresholds align with batterRating.ts's `oppOpsFactor` bands. */
+export function lineupCue(oppOps: number | null): VerbalCue {
+  if (oppOps === null) return { label: '', tone: 'muted' };
+  if (oppOps >= 0.770) return { label: 'tough lineup', tone: 'error' };
+  if (oppOps >= 0.745) return { label: 'lean tough',   tone: 'error' };
+  if (oppOps <= 0.685) return { label: 'soft lineup',  tone: 'success' };
+  if (oppOps <= 0.700) return { label: 'lean soft',    tone: 'success' };
+  return { label: 'avg lineup', tone: 'muted' };
+}
+
+/** Tailwind text-color class for a CueTone. Single source so colors
+ *  match wherever a verbal cue surfaces. */
+export function cueToneClass(t: CueTone): string {
+  return t === 'success' ? 'text-success'
+    : t === 'error' ? 'text-error'
+    : 'text-muted-foreground';
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +326,7 @@ export function verdictLabel(score: number): Verdict {
  * stays scannable. Returns `[]` when the pitcher has no notable red flags.
  */
 export function buildRiskSummary(
-  rating: PitcherRating,
+  rating: PitcherStreamingRating,
   pp: ProbablePitcher,
   opp: TeamOffense | null,
   park: ParkData | null,
@@ -243,8 +334,13 @@ export function buildRiskSummary(
 ): string[] {
   const risks: string[] = [];
 
-  if (rating.credibility.multiplier < 0.75) {
-    risks.push(rating.credibility.reason);
+  // Surface thin-sample ratings as a risk signal — these are the pitchers
+  // where talent input is thin (rookies, returning IL stints) or the
+  // available signals disagree (xERA says ace, RV/100 says weak). The
+  // talent-layer regression already pulled the estimate toward the prior;
+  // this just makes the user aware that the projection is leaning on it.
+  if (rating.confidence.level === 'low') {
+    risks.push(rating.confidence.reason);
   }
 
   if (pp.inningsPerStart !== null && pp.inningsPerStart < 5.0) {
@@ -260,12 +356,24 @@ export function buildRiskSummary(
   }
 
   // Opposing-starter pitching duel — flag when our guy is going against
-  // an ace-tier arm. Uses the same xwOBA-a thresholds as the tier model.
+  // an ace-tier arm. Talent-derived: a low expected ERA from the talent
+  // vector means the opposing SP profiles as ace/tough independent of
+  // the legacy classifier (which was the source of the Montero-style
+  // false ACE-badge).
+  //
+  // xERA thresholds are chosen to align with `tierFromScore`'s ace/tough
+  // boundaries (78 / 62 on the 0-100 score):
+  //   - 2.85 xERA ≈ 0.264 xwOBA-allowed ≈ ace-tier talent (Sale/Skubal)
+  //   - 3.60 xERA ≈ 0.294 xwOBA-allowed ≈ tough-tier talent (high-end SP)
+  // Using the canonical `xwobaToXera` from forecast.ts here keeps the
+  // opposing-SP descriptor and the SP's own self-tier on a single ruler.
   const oppPp = ctx?.oppPp ?? null;
-  if (oppPp) {
-    const tier = oppPp.quality?.tier;
-    if (tier === 'ace' || tier === 'tough') {
-      risks.push(`vs ${tier === 'ace' ? 'ace' : 'tough'} ${oppPp.name.split(' ').slice(-1)[0]}`);
+  if (oppPp?.talent) {
+    const expEra = talentExpectedEra(oppPp.talent);
+    if (expEra <= 2.85) {
+      risks.push(`vs ace ${oppPp.name.split(' ').slice(-1)[0]}`);
+    } else if (expEra <= 3.60) {
+      risks.push(`vs tough ${oppPp.name.split(' ').slice(-1)[0]}`);
     }
   }
 
@@ -279,9 +387,14 @@ export function buildRiskSummary(
     risks.push(`velo ${rating.velocity.display}`);
   }
 
-  const parkHR = park?.parkFactorHR ?? park?.parkFactor ?? null;
-  if (parkHR !== null && parkHR >= 110) {
-    risks.push(`hitter park ${parkHR}`);
+  // Park risk via the canonical primitive — same source of truth the
+  // rating engine uses, so the risk text and the rating multiplier
+  // agree on what counts as a hitter park.
+  const parkAdj = getParkAdjustment({ park });
+  if (parkAdj.available && parkAdj.multiplier <= 0.95) {
+    // Pitcher composite multiplier ≤ 0.95 means the offense side is
+    // boosted ≥ 5%. Surface the primitive's own hint when present.
+    risks.push(parkAdj.hint ? parkAdj.hint.toLowerCase() : 'hitter park');
   }
 
   if (rating.platoon.available && rating.platoon.deltaPct <= -3) {

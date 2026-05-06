@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { Heading } from '@/components/typography';
 
 interface PanelProps {
   /** Optional section heading rendered in the panel header row. */
@@ -43,7 +44,7 @@ export default function Panel({
         <div className={cn('flex items-center justify-between', helper ? 'mb-1' : 'mb-3')}>
           {title !== undefined ? (
             typeof title === 'string'
-              ? <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+              ? <Heading as="h2">{title}</Heading>
               : title
           ) : <span />}
           {action}

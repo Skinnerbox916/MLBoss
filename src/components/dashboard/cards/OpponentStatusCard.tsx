@@ -5,6 +5,7 @@ import { FiAlertTriangle } from 'react-icons/fi';
 import { GiThrowingBall } from 'react-icons/gi';
 import DashboardCard from '@/components/dashboard/DashboardCard';
 import Badge from '@/components/ui/Badge';
+import { Text } from '@/components/typography';
 import { useFantasy } from '../FantasyProvider';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useRoster } from '@/lib/hooks/useRoster';
@@ -67,7 +68,7 @@ export default function OpponentStatusCard() {
       isLoading={isLoading}
     >
       {!opponent ? (
-        <p className="text-sm text-muted-foreground">No matchup data available</p>
+        <Text variant="small">No matchup data available</Text>
       ) : (
         <div className="space-y-4">
           <div>

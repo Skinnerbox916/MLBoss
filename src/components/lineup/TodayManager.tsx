@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Tabs from '@/components/ui/Tabs';
 import MatchupPulse from '@/components/shared/MatchupPulse';
+import { Heading } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import LineupManager from './LineupManager';
 import TodayPitchers from './TodayPitchers';
@@ -30,7 +31,7 @@ export default function TodayManager() {
     <div className="p-6 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">Today</h1>
+          <Heading as="h1">Today</Heading>
           <p className="text-xs text-muted-foreground mt-0.5">
             Set your lineup and sit/start your pitchers for today&apos;s games
           </p>

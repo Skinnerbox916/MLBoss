@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { deleteKeyAction, readKeyValueAction } from './actions';
+import { Text } from '@/components/typography';
 
 export interface CacheRow {
   shortKey: string;
@@ -283,7 +284,7 @@ function ValueModal({ shortKey, onClose }: { shortKey: string; onClose: () => vo
 
         <div className="flex-1 overflow-auto p-4">
           {state.phase === 'loading' && (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <Text variant="small">Loading…</Text>
           )}
           {state.phase === 'error' && (
             <p className="text-sm text-error">{state.error}</p>

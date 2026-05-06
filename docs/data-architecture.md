@@ -32,8 +32,7 @@ src/lib/mlb/
   │   ├── playerStats.ts  — fetch* functions returning raw shapes
   │   └── index.ts        — barrel re-export
   ├── model/          — pure functions over raw shapes
-  │   ├── playerStats.ts      — parsers + aggregators (parseSplitLine, aggregateLastN, etc.)
-  │   ├── quality.ts          — classifyPitcherTier + tier constants
+  │   ├── playerStats.ts      — parsers + aggregators (parseSplitLine, aggregateLastN, parsePitcherAppearances, etc.)
   │   ├── pitcherEnrichment.ts — applyPitcherStatsLine, applySavantSignals, etc.
   │   └── index.ts            — barrel re-export
   ├── players.ts      — orchestrator: identity + source + model + savant
@@ -43,7 +42,12 @@ src/lib/mlb/
   ├── talentModel.ts  — Bayesian talent component model (pure)
   └── types.ts        — canonical entity types
 src/lib/roster/       — model layer for roster decisions
-src/lib/pitching/     — model layer for pitcher decisions
+src/lib/pitching/     — three-layer pitcher evaluation engine
+  ├── talent.ts       — Layer 1: context-free PitcherTalent vector (per-PA outcomes, velocity, regime-shift-aware prior, confidence)
+  ├── forecast.ts     — Layer 2: GameForecast (talent + opp/park/weather → expectedPerPA, expectedPerGame, P(QS), P(W))
+  ├── rating.ts       — Layer 3: PitcherRating (forecast → 0-100 score, score-derived tier, focus-weighted contributions)
+  ├── scoring.ts      — public API consumed by UI (composes forecast + rating; named to match the original site of the legacy shim)
+  └── display.tsx     — UI helpers (tier color, weather icon, pill summary, etc.)
 src/lib/lineup/       — compose layer for lineup optimization
 src/lib/hooks/        — client-side compose layer (SWR + page-shaped views)
 ```
@@ -219,18 +223,20 @@ Each scoring concept must have exactly one canonical implementation. When we hav
 | Concept | Canonical location |
 |---------|-------------------|
 | Bayesian rate blender | `blendRate` (returns `BlendOutput`) and `blendRateOrNull` (returns `number | null` for Savant secondaries) in [src/lib/mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) |
-| Component talent xwOBA | `computeBatterTalentXwoba` / `computePitcherTalentXwobaAllowed` (talentModel.ts) |
+| Component talent xwOBA (low-level) | `computeBatterTalentXwoba` / `computePitcherTalentXwobaAllowed` (talentModel.ts) |
 | Per-category baseline | `blendedBaselineForCategory` in [src/lib/mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) |
-| Pitcher talent score | `pitcherTalentScore` in [src/lib/pitching/quality.ts](../src/lib/pitching/quality.ts) |
+| Pitcher talent (canonical, context-free) | `computePitcherTalent` in [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
+| Pitcher game forecast (talent + context) | `buildGameForecast` in [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts) |
+| Pitcher rating (0-100, tier derived from score) | `getPitcherRating` in [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts) |
 | Batter rating | `getBatterRating` in [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts) |
-| Pitcher streaming rating | `getPitcherRating` in [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
+| Streaming-page composite (UI-shaped wrapper around forecast + rating) | `getPitcherRating` in [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
 
 Adding a second function that does any of the above — even "just slightly different for this one page" — is forbidden. Add a parameter, return a richer shape, or add a wrapper over the canonical function.
 
 Historical violations and their resolution:
 
 - ~~`blendSavant` in src/lib/mlb/savant.ts duplicates `blendRate`~~ — **resolved** by introducing `blendRateOrNull` and migrating callers (Phase 4b).
-- ~~`resolveTalent` in `pitching/scoring.ts` duplicates `pitcherTalentScore`~~ — **resolved** in Phase 4c by promoting `pitcherTalentScore` to be the canonical RV/100 → xwOBA → tier → neutral resolver. `resolveTalent` is now a thin file-local projection that exists only so the streaming module's existing `ResolvedTalent` shape keeps compiling — it adds no behaviour.
+- ~~`classifyPitcherTier` (rule-based) and `pitcherTalentScore` (RV/100-based) gave the same pitcher inconsistent verdicts~~ — **resolved** in Phase 4d by collapsing both into a single three-layer pipeline: `PitcherTalent` (talent.ts) → `GameForecast` (forecast.ts) → `PitcherRating` (rating.ts). Tiers now derive from rating score via a single `tierFromScore` mapping. See [pitcher-evaluation.md](pitcher-evaluation.md).
 
 ## Yahoo fantasy layer
 
@@ -344,6 +350,6 @@ For per-stat conventions (which fields are regressed vs raw, which constants are
 - **`PlayerStatLine` is the page-facing shape; the internal scoring engines still operate on `BatterSeasonStats`.** The polymorphic `asBatterStats` shim inside `getBatterRating` and `roster/scoring.ts` transparently adapts either input via `toBatterSeasonStats(line)`. The plan called for deleting `toBatterSeasonStats` entirely once Phase 4a shipped, but that would have required rewriting the per-category baseline pipeline and the analysis-layer `getPlatoonAdjustedTalent` helper without changing behaviour. We kept the adapter as an internal-only migration shim instead and treated "no consumer code references the legacy shape" as the practical exit criterion.
 - **`PlayerStatLine` blocks are independently nullable.** A freshly-called-up rookie has `current` only, an IL'd vet has `prior` only, and a pre-debut promotion has neither. UI code that reads `line.current?.ops` should fall back to `line.prior?.ops` so IL players still render a row instead of disappearing.
 - **`blendRateOrNull` is the successor to the legacy `blendSavant`.** It mirrors the "all-empty returns null" semantics that Savant secondaries (xERA, RV/100, wOBA-on-contact) need. Pass `leagueMean: 0, leaguePriorN: 0` when no league anchor exists, or a real league mean + a positive `leaguePriorN` when the consumer wants regression toward the population.
-- **The pitcher-talent resolver is now in one place.** `pitcherTalentScore` (`src/lib/pitching/quality.ts`) owns the RV/100 → xwOBA-a → tier → neutral order. The streaming module's file-local `resolveTalent` is a no-op shim — don't re-implement RV/100 logic there or anywhere else.
+- **The pitcher-evaluation pipeline is in one place.** Phase 4d collapsed the previous fork (rule-based `classifyPitcherTier` + RV/100-based `pitcherTalentScore` + file-local `resolveTalent` shim) into a single three-layer pipeline: `PitcherTalent` (`src/lib/pitching/talent.ts`) → `GameForecast` (`src/lib/pitching/forecast.ts`) → `PitcherRating` (`src/lib/pitching/rating.ts`). Tier reads derive from rating score via `tierFromScore`. Don't add a parallel "tier classifier" or "talent score" helper anywhere else — extend the canonical pipeline instead.
 - **Don't import `model/` from `source/` or vice versa.** This rule isn't enforced by a lint rule; it's enforced by code review. If you find yourself reaching across the line, the helper probably belongs in `compose/` (the orchestrator file).
 - **`withCacheGated` predicates are silent on success and noisy on failure.** When a coverage check fails, the helper logs `[cache-gated] rejected …` and returns the result without writing. If you see this log fire repeatedly for the same key, the upstream API is degraded — don't loosen the predicate to "make it cache" without diagnosing why coverage is bad.

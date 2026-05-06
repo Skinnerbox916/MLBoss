@@ -168,12 +168,16 @@ body {
     line-height: 1.2;
   }
 
-  h1 { font-size: clamp(2rem, 5vw, 3rem); }      /* ~32-48px */
-  h2 { font-size: clamp(1.75rem, 4vw, 2.5rem); } /* ~28-40px */
-  h3 { font-size: clamp(1.5rem, 3vw, 2rem); }    /* ~24-32px */
-  h4 { font-size: clamp(1.25rem, 2.5vw, 1.75rem); } /* ~20-28px */
-  h5 { font-size: 1.125rem; }                     /* 18px */
-  h6 { font-size: 1rem; }                         /* 16px */
+  /* Scale tuned for Pacifico (display font reads ~20% larger than a comparable
+   * sans-serif at the same px). h1 stays prominent for page titles; h2-h3 are
+   * sized for Panel/Card section heads where Pacifico would otherwise dominate
+   * the surface. See docs/design-system.md typography table. */
+  h1 { font-size: clamp(2rem, 5vw, 3rem); }           /* ~32-48px – page titles */
+  h2 { font-size: clamp(1.25rem, 2vw, 1.625rem); }    /* ~20-26px – panel / section heads */
+  h3 { font-size: clamp(1.0625rem, 1.5vw, 1.375rem); }/* ~17-22px – card titles */
+  h4 { font-size: clamp(1rem, 1.25vw, 1.125rem); }    /* ~16-18px – sub-headings */
+  h5 { font-size: 1rem; }                              /* 16px – minor labels */
+  h6 { font-size: 0.875rem; }                          /* 14px – smallest */
 
   p, li, ul, ol, blockquote {
     font-family: var(--font-body), system-ui, sans-serif;

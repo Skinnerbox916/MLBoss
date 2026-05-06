@@ -1,10 +1,11 @@
-import { getSession } from '@/lib/session';
+import { getSession } from '@/lib/auth';
 import APIHealthPanel from './APIHealthPanel';
 import RosterDebugPanel from './RosterDebugPanel';
 import IdentityMetricsPanel from './IdentityMetricsPanel';
 import LogoutButton from './LogoutButton';
 import { getCurrentMLBGameKey, analyzeUserFantasyLeagues, isTokenValid, refreshUserTokens, type LeagueAnalysis, type LeagueAnalysisEntry, type LeagueAnalysisSummary } from '@/lib/fantasy';
 import AppLayout from '@/components/layout/AppLayout';
+import { Heading, Text } from '@/components/typography';
 
 interface MLBSeason {
   game_key: string;
@@ -69,9 +70,7 @@ export default async function AdminDebugPage() {
           {/* ── Session & Leagues ──────────────────────────────── */}
           <div className="bg-surface rounded-lg border border-border p-4">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold text-foreground">
-                Session &amp; Leagues
-              </h2>
+              <Heading as="h2">Session &amp; Leagues</Heading>
               <LogoutButton />
             </div>
 
@@ -115,7 +114,7 @@ export default async function AdminDebugPage() {
                 {fantasyError ? (
                   <ErrorBanner title="Fantasy Data Error" message={fantasyError} />
                 ) : !mlbLeagues || mlbLeagues.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No {seasonLabel} MLB leagues found.</p>
+                  <Text variant="small">No {seasonLabel} MLB leagues found.</Text>
                 ) : (
                   <table className="w-full text-sm border border-border rounded">
                     <thead className="bg-surface-muted">

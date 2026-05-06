@@ -9,6 +9,7 @@ import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useTeamStats } from '@/lib/hooks/useTeamStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { parseIPToOuts } from '@/lib/utils';
+import { Text } from '@/components/typography';
 import { formatStatDelta } from '@/lib/formatStat';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 
@@ -143,14 +144,14 @@ export default function SeasonComparisonCard() {
   return (
     <DashboardCard title="Season Stats" icon={FiBarChart} size="lg" isLoading={isLoading}>
       {!hasData ? (
-        <p className="text-sm text-muted-foreground">
+        <Text variant="small">
           {opponentTeamKey ? 'Season stats not available' : 'No matchup data available'}
-        </p>
+        </Text>
       ) : (
         <div className="space-y-4">
-          <p className="text-xs text-muted-foreground">
+          <Text variant="caption">
             vs. <span className="font-medium text-foreground">{opponent?.name ?? 'Opponent'}</span> — season to date
-          </p>
+          </Text>
 
           <Tabs
             variant="underline"

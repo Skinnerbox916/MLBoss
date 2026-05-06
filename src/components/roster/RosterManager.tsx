@@ -6,6 +6,7 @@ import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
 import Tabs from '@/components/ui/Tabs';
+import { Heading, Text } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterStats } from '@/lib/hooks/useRosterStats';
@@ -14,9 +15,7 @@ import { useAvailableBatters } from '@/lib/hooks/useAvailableBatters';
 import { useAvailablePitchers } from '@/lib/hooks/useAvailablePitchers';
 import { useFreeAgentStats } from '@/lib/hooks/useFreeAgentStats';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
-import { useSeasonCategoryRanks } from '@/lib/hooks/useSeasonCategoryRanks';
 import { usePlayerMarketSignals } from '@/lib/hooks/usePlayerMarketSignals';
-import RankStrip from '@/components/shared/RankStrip';
 import type { RosterEntry, FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 import { formatStatValue } from '@/lib/formatStat';
 import type { BatterSeasonStats, PlayerStatLine } from '@/lib/mlb/types';
@@ -196,7 +195,7 @@ function DepthChart({
       title={
         <div className="flex items-center gap-2">
           <Icon icon={FiLayers} size={14} className="text-accent" />
-          <h2 className="text-sm font-semibold text-foreground">Positional Depth</h2>
+          <Heading as="h2">Positional Depth</Heading>
         </div>
       }
     >
@@ -706,9 +705,9 @@ function SwapSuggestions({ suggestions }: { suggestions: RankedSwap[] }) {
   if (suggestions.length === 0) {
     return (
       <Panel title="Suggested Swaps">
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           No net-positive swaps found. Your roster is balanced for the current category focus.
-        </p>
+        </Text>
       </Panel>
     );
   }
@@ -879,7 +878,6 @@ export default function RosterManager() {
   const { batters: availableBatters, isLoading: battersLoading } = useAvailableBatters(leagueKey, true);
   const { players: availablePitchers, isLoading: pitchersLoading } = useAvailablePitchers(leagueKey);
   const { getPlayerStats: getFAStats } = useFreeAgentStats(availableBatters);
-  const { ranks, isLoading: ranksLoading } = useSeasonCategoryRanks(leagueKey, teamKey);
 
   const [tab, setTab] = useState<RosterTab>('batters');
   const [focusMap, setFocusMap] = useState<Record<number, FocusState>>({});
@@ -963,16 +961,6 @@ export default function RosterManager() {
     [rosterBatters],
   );
   const { signals: rosterMarketSignals } = usePlayerMarketSignals(rosterPlayerKeys);
-
-  const batterRanks = useMemo(
-    () => ranks.filter(r => categories.find(c => c.stat_id === r.statId)?.is_batter_stat),
-    [ranks, categories],
-  );
-
-  const pitcherRanks = useMemo(
-    () => ranks.filter(r => categories.find(c => c.stat_id === r.statId)?.is_pitcher_stat),
-    [ranks, categories],
-  );
 
   const startingSlots = useMemo(
     () => parseStartingSlots(leaguePositions),
@@ -1098,7 +1086,7 @@ export default function RosterManager() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-foreground">Roster Optimizer</h1>
+        <Heading as="h1">Roster Optimizer</Heading>
         <p className="text-xs text-muted-foreground mt-0.5">
           Long-term construction moves. Batters get a full depth-chart optimizer; pitchers live here too — use Streaming for daily pickups.
         </p>
@@ -1113,12 +1101,6 @@ export default function RosterManager() {
           { id: 'batters', label: 'Batters', meta: `${rosterBatters.length}` },
           { id: 'pitchers', label: 'Pitchers', meta: `${rosterPitchers.length}` },
         ]}
-      />
-
-      <RankStrip
-        side={tab === 'batters' ? 'batting' : 'pitching'}
-        ranks={tab === 'batters' ? batterRanks : pitcherRanks}
-        isLoading={ranksLoading}
       />
 
       {tab === 'batters' ? (
@@ -1352,10 +1334,10 @@ function PitchersTab({
       <Panel
         helper="Long-term pitcher moves live here. For daily pickups against today/tomorrow's matchups, use the Streaming page."
       >
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           Full depth-chart + swap suggestions for pitchers is on the roadmap. Today this tab surfaces
           the rostered and available pitchers so you can decide on structural long-term adds.
-        </p>
+        </Text>
       </Panel>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

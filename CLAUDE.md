@@ -23,6 +23,8 @@ No test framework is configured.
 
 **Dev server ownership:** Any `next dev` process running in this repo was started by Claude. At the start of each session, assume responsibility for it. If the user reports a 500 or the server is in a bad state, kill all Next.js processes by PID and restart — do not ask the user to do it. Use `pgrep -a -f next` to find PIDs, kill them explicitly, then `npm run dev` in the background. Verify it comes up on port 3000 before moving on.
 
+**Never `rm -rf .next` while a dev server is running.** Turbopack reads manifest files out of `.next/` on every request; deleting them under a live process makes every request 500 with `ENOENT` on `.next/server/app/page/app-build-manifest.json` (and similar). `npx tsc --noEmit` does **not** require clearing `.next/` — only do so for stale errors that explicitly reference `.next/types/`, and only after killing the dev server first. The dev server's stdout/stderr is at `/tmp/mlboss-dev.log` (or read it via `/proc/<pid>/fd/{1,2}`) — check there before assuming a code-level bug.
+
 **Cloudflare tunnel ownership:** The tunnel (`cloudflared`) must also be running for the app to be reachable via HTTPS. At the start of each session, check with `pgrep -f cloudflared`. If it's not running, start it with `cloudflared tunnel run mlboss` in the background and wait for "Registered" in the output before moving on. This runs in WSL — it does not survive WSL restarts unless user linger is enabled (see `docs/setup.md`).
 
 **After every `npm run build`:** Kill the server and restart it with `npm run dev`. The build command leaves stale Next.js processes that cause 500s when the tunnel routes to the wrong one.
@@ -31,8 +33,8 @@ No test framework is configured.
 
 ### Authentication & Sessions
 - Custom Yahoo OAuth 2.0 flow: login (`/api/auth/login`) -> callback (`/api/auth/callback/yahoo`) -> logout (`/api/auth/logout`)
-- Sessions use `iron-session` with encrypted cookies (`src/lib/session.ts`)
-- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/lineup`, `/streaming`, `/roster`, `/league`, `/api/fantasy`, `/api/test-stats`
+- Sessions use `iron-session` with encrypted cookies (`src/lib/auth/session.ts`)
+- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/lineup`, `/streaming`, `/roster`, `/league`, `/api/fantasy`, `/api/admin/test-stats`
 - Token auto-refresh handled by `YahooFantasyAPI` (`src/lib/yahoo-fantasy-api.ts`)
 
 ### Data Layer
@@ -42,7 +44,7 @@ No test framework is configured.
 - **Every cache key must start with a tier prefix** — build it via `${CACHE_CATEGORIES.{TIER}.prefix}:{resource}:{id}`. The tier you pick must match the data's volatility (rubric in `docs/data-architecture.md` "Tier discipline"). `cacheResult` warns on non-tier-prefixed keys; treat the warning as a bug
 - Multi-fanout fetchers (anything that does `Promise.all` over a list of IDs) must use `withCacheGated` with a coverage predicate so a partial outage isn't pinned for the full TTL
 - Yahoo Fantasy API wrapper: `src/lib/yahoo-fantasy-api.ts` (raw client, ESLint-ignored until fully typed)
-- Yahoo OAuth client: `src/lib/yahoo-oauth.ts`
+- Yahoo OAuth client: `src/lib/auth/yahoo-oauth.ts` (barrel re-exports via `@/lib/auth`)
 - Stats use `stat_id` as canonical identifier (see `src/constants/statCategories.ts`, `docs/stats.md`)
 
 ### Fantasy Domain Layer (`src/lib/fantasy/`)
@@ -67,7 +69,7 @@ Five primary routes, organized by the time horizon of the decisions they support
   - Pitchers tab: `TodayPitchers` (`src/components/lineup/TodayPitchers.tsx`) for rostered pitchers + today's game context
   - Shared `MatchupPulse` (`side="both"`) above the tabs so category leverage informs both decisions.
 - `/streaming` — **This-week pitcher pickups.** `StreamingManager` + `StreamingBoard` with a `DateStrip` covering D+1 through D+5 (MLB probables hydrate 3-5 days out). Shared `MatchupPulse` (`side="pitching"`) at the top.
-- `/roster` — **Long-term roster construction.** `RosterManager` with segment tabs `[Batters | Pitchers]`. `RankStrip` (season-to-date league ranks from `useSeasonCategoryRanks`, sourced from the same standings the league page uses) at the top of each tab. Batters tab runs the full depth-chart + swap optimizer; the pitchers tab lists rostered + available pitchers (full pitcher optimizer is follow-up work).
+- `/roster` — **Long-term roster construction.** `RosterManager` with segment tabs `[Batters | Pitchers]`. Page leads with `CategoryFocusBar` (manual chase/punt), then `DepthChart`, then `SwapSuggestions`, then the per-player tables. There is intentionally no marquee rank summary — every signal on the page is forward-looking talent + roster shape, and a YTD rank strip would contradict the suggestions; go to `/league` for league-wide rankings. Batters tab runs the full depth-chart + swap optimizer; the pitchers tab lists rostered + available pitchers (full pitcher optimizer is follow-up work).
 - `/league` — **Reference.** Standings, stat rankings, league-wide context.
 
 Both the Today and Streaming pages share the lineup component library (`src/components/lineup/`) via a `LineupMode` type (`'batting' | 'pitching'`).

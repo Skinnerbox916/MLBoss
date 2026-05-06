@@ -2,6 +2,7 @@
 
 import { FiActivity } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
+import { Text } from '@/components/typography';
 import { useFantasy } from '../FantasyProvider';
 import { useTransactions } from '@/lib/hooks/useTransactions';
 import { useStandings } from '@/lib/hooks/useStandings';
@@ -115,7 +116,7 @@ export default function RecentActivityCard() {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">No recent activity</p>
+        <Text variant="small">No recent activity</Text>
       )}
     </DashboardCard>
   );

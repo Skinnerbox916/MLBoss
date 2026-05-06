@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import Panel from '@/components/ui/Panel';
+import { Text } from '@/components/typography';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { formatStatValue } from '@/lib/formatStat';
@@ -107,7 +108,7 @@ export default function MatchupPulse({
   if (!userMatchup) {
     return (
       <Panel>
-        <p className="text-sm text-muted-foreground">No active matchup this week</p>
+        <Text variant="small">No active matchup this week</Text>
       </Panel>
     );
   }

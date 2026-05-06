@@ -143,11 +143,6 @@ Two patterns exist for showing your stats vs opponent — pick by layout context
 1. **DivergingRow** (`src/components/ui/DivergingRow.tsx`) — center-origin bar chart. Preferred for vertical lists (dashboard cards).
 2. **MatchupPulse** (`src/components/shared/MatchupPulse.tsx`) — horizontal strip of per-category tiles with red/green tint. Preferred above action-first pages like `/lineup` and `/streaming`. Accepts `side: 'batting' | 'pitching' | 'both'`.
 
-### Category Rank Over Time
-**RankStrip** (`src/components/shared/RankStrip.tsx`) — horizontal strip of per-category tiles showing league rank + delta-to-leader aggregated over a rolling window. Shares visual DNA with `MatchupPulse` but answers "where am I in the league?" instead of "am I winning this week?"
-
-Used on `/roster` (last 3 completed weeks) to drive punt/chase decisions on long-term roster construction. Feed it from the `useRecentCategoryRanks(leagueKey, teamKey, weeks)` hook.
-
 ### Data Tables
 Standings, stat rankings, and roster tables all build `<table>` markup with these conventions:
 
@@ -172,7 +167,7 @@ No shared table component exists yet — follow these conventions when building 
 - **Don't create new card wrappers for the dashboard.** Use `DashboardCard`.
 - **Don't wrap non-dashboard sections in hand-rolled `bg-surface rounded-lg shadow p-4`.** Use `Panel`.
 - **Don't hand-roll tab styles.** Use `Tabs` (segment for mode switches, underline for peer views).
-- **Don't reinvent `MatchupPulse` / `RankStrip` / `CategoryFocusBar` per page.** They live in `src/components/shared/` and get extended via props.
+- **Don't reinvent `MatchupPulse` / `CategoryFocusBar` per page.** They live in `src/components/shared/` and get extended via props.
 - **Don't build a new comparison visualization** when DivergingRow or MatchupPulse already handles it.
 - **Don't add a new color system.** Use the semantic colors: `primary`, `accent`, `success`, `error`, `muted-foreground`. See `docs/design-system.md`.
 - **Don't create new loading states.** Use `Skeleton` or `DashboardCard`'s built-in `isLoading`.

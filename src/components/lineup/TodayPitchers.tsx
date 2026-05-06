@@ -5,6 +5,7 @@ import { FiWind, FiChevronDown, FiAlertTriangle } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
+import { Text } from '@/components/typography';
 import CategoryFocusBar from '@/components/shared/CategoryFocusBar';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
@@ -12,13 +13,17 @@ import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useMatchupAnalysis } from '@/lib/hooks/useMatchupAnalysis';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import { useRoster } from '@/lib/hooks/useRoster';
+import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
 import { useTeamOffense } from '@/lib/hooks/useTeamOffense';
+import { optimizePitcherWeek } from '@/lib/lineup/optimizePitcherWeek';
 import {
   tierColor, weatherIcon, hasWeatherData, renderPitcherStatLine,
-  normalizeTeamAbbr, lastNameKey, isPitcher,
+  normalizeTeamAbbr, isPitcher, isLikelySamePlayer,
+  parkCue, lineupCue, cueToneClass,
   type ScoredPitcherCtx,
 } from '@/lib/pitching/display';
+import { scorePitcher, tierLabel } from '@/lib/pitching/scoring';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { Focus } from '@/lib/mlb/batterRating';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
@@ -58,29 +63,24 @@ function StarterRowCard({
   const c = s;
   const initial = s.rosterPlayer.name.charAt(0).toUpperCase();
   const opp = teamOffense[c.opponentMlbId];
+  // Compute the same rating ScoreBreakdownPanel will show, so the tier
+  // badge above the row matches the score the user sees on expand. Tier
+  // is derived from the canonical 0-100 score via tierFromScore — no
+  // separate classifier, no ACE-vs-FAIR mismatch.
+  const rating = scorePitcher({
+    pp: c.pp, oppOffense: opp ?? null, park: c.park, weather: c.weather,
+    isHome: c.isHome, game: c.game, scoredCategories, focusMap,
+  });
   const oppSplit = c.pp.throws === 'L' ? opp?.vsLeft : opp?.vsRight;
   const oppOps = oppSplit?.ops ?? opp?.ops ?? null;
-  const oppKRate = oppSplit?.strikeOutRate ?? opp?.strikeOutRate ?? null;
-  const oppOpsColor =
-    oppOps === null ? 'text-foreground' :
-    oppOps <= 0.680 ? 'text-success font-semibold' :
-    oppOps <= 0.720 ? 'text-success' :
-    oppOps >= 0.800 ? 'text-error font-semibold' :
-    oppOps >= 0.770 ? 'text-error' :
-    'text-foreground';
-  const parkFactor = c.park?.parkFactor ?? null;
-  const parkHR = c.park?.parkFactorHR ?? null;
-  const displayPf = parkHR !== null && parkFactor !== null
-    ? (Math.abs(parkHR - 100) > Math.abs(parkFactor - 100) ? parkHR : parkFactor)
-    : (parkFactor ?? parkHR);
-  const pfIsHR = displayPf !== null && parkHR !== null && displayPf === parkHR && parkHR !== parkFactor;
-  const pfColor =
-    displayPf === null ? 'bg-surface-muted text-muted-foreground' :
-    displayPf >= 110 ? 'bg-error/15 text-error font-semibold' :
-    displayPf >= 104 ? 'bg-error/10 text-error' :
-    displayPf <= 90 ? 'bg-success/15 text-success font-semibold' :
-    displayPf <= 96 ? 'bg-success/10 text-success' :
-    'bg-surface-muted text-muted-foreground';
+  const park = parkCue(c.park);
+  const lineup = lineupCue(oppOps);
+  const lineupTitle = oppOps !== null
+    ? `Opp OPS vs ${c.pp.throws}: ${oppOps.toFixed(3).replace(/^0\./, '.')}`
+    : undefined;
+  const parkTitle = c.park
+    ? `Overall PF ${c.park.parkFactor} · HR PF ${c.park.parkFactorHR}`
+    : undefined;
 
   const slot = s.rosterPlayer.selected_position;
   const isBenched = slot === 'BN';
@@ -119,8 +119,8 @@ function StarterRowCard({
             <span className={`text-[11px] font-bold ${c.pp.throws === 'L' ? 'text-accent' : 'text-primary'}`}>
               ({c.pp.throws}HP)
             </span>
-            <span className={`text-caption font-bold ${tierColor(c.pp.quality?.tier ?? 'unknown')}`}>
-              {c.pp.quality?.tier ?? 'unknown'}
+            <span className={`text-caption font-bold ${tierColor(rating.tier)}`}>
+              {tierLabel(rating.tier)}
             </span>
             <span className="text-[11px] text-muted-foreground">
               {s.rosterPlayer.editorial_team_abbr} · {s.rosterPlayer.display_position}
@@ -136,33 +136,25 @@ function StarterRowCard({
             )}
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap text-[11px]">
+          <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
             <span className="text-muted-foreground">
               {c.isHome ? 'vs' : '@'}{' '}
               <span className="font-semibold text-foreground">{c.opponent}</span>
             </span>
-            {oppOps !== null && (
+            {park.label && (
               <>
-                <span className="text-border">|</span>
-                <span className="text-muted-foreground">
-                  Opp (vs{c.pp.throws}) <span className={oppOpsColor}>{oppOps.toFixed(3).replace(/^0\./, '.')}</span>
-                  {oppKRate !== null && (oppKRate >= 0.240 || oppKRate <= 0.185) && (
-                    <span className={`ml-1 ${oppKRate >= 0.240 ? 'text-success' : 'text-error'}`}>
-                      {(oppKRate * 100).toFixed(1)}% K
-                    </span>
-                  )}
-                </span>
+                <span className="text-border" aria-hidden>·</span>
+                <span className={cueToneClass(park.tone)} title={parkTitle}>{park.label}</span>
               </>
             )}
-            <span className="text-border">|</span>
-            <span
-              className={`px-1.5 py-0.5 rounded text-caption ${pfColor}`}
-              title={parkFactor !== null && parkHR !== null ? `Overall PF ${parkFactor} · HR PF ${parkHR}` : undefined}
-            >
-              {pfIsHR ? 'HR' : 'PF'} {displayPf ?? '—'}
-            </span>
+            {lineup.label && (
+              <>
+                <span className="text-border" aria-hidden>·</span>
+                <span className={cueToneClass(lineup.tone)} title={lineupTitle}>{lineup.label}</span>
+              </>
+            )}
             {hasWeatherData(c.weather) && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 ml-1">
                 {(() => {
                   const Wx = weatherIcon(c.weather.condition);
                   return Wx ? <Icon icon={Wx} size={12} className="text-muted-foreground" /> : null;
@@ -243,8 +235,12 @@ interface TodayPitchersProps {
 
 export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
   const { leagueKey } = useFantasyContext();
-  const { roster, isLoading: rosterLoading } = useRoster(teamKey, date);
+  const { roster, isLoading: rosterLoading, mutate: mutateRoster } = useRoster(teamKey, date);
+  const { positions: rosterPositions } = useRosterPositions(leagueKey);
   const { games, isLoading: gamesLoading } = useGameDay(date);
+
+  const [weekRunning, setWeekRunning] = useState(false);
+  const [weekStatus, setWeekStatus] = useState<string | null>(null);
 
   // Pitcher-side focus mirrors the streaming page: defaults from
   // `analyzeMatchup`, user can override per-pill or reset. Plumbing this
@@ -303,9 +299,7 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
         const pp = isHome ? g.homeProbablePitcher : g.awayProbablePitcher;
         if (!pp) continue;
 
-        const ppLast = lastNameKey(pp.name);
-        const rosterLast = lastNameKey(pitcher.name);
-        if (!ppLast || ppLast !== rosterLast) continue;
+        if (!isLikelySamePlayer(pitcher.name, pp.name)) continue;
 
         const opponentTeam = isHome ? g.awayTeam : g.homeTeam;
         results.push({
@@ -333,6 +327,34 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
+  const handleOptimizePitcherWeek = useCallback(async () => {
+    if (!teamKey) return;
+    const today = new Date().toISOString().slice(0, 10);
+    setWeekRunning(true);
+    setWeekStatus('Starting…');
+    try {
+      const result = await optimizePitcherWeek(
+        today,
+        { teamKey, rosterPositions },
+        (dateStr, i, total) => {
+          setWeekStatus(`Optimizing ${dateStr} (${i + 1}/${total})…`);
+        },
+      );
+      const saved = result.days.filter(d => d.saved).length;
+      const noop = result.days.filter(d => !d.saved && !d.error).length;
+      const parts: string[] = [];
+      if (saved > 0) parts.push(`${saved} saved`);
+      if (noop > 0) parts.push(`${noop} already optimal`);
+      if (result.failed > 0) parts.push(`${result.failed} failed`);
+      setWeekStatus(parts.join(' · ') || 'No changes needed');
+      mutateRoster();
+    } catch (e) {
+      setWeekStatus(`Failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+    } finally {
+      setWeekRunning(false);
+    }
+  }, [teamKey, rosterPositions, mutateRoster]);
+
   const isLoading = rosterLoading || gamesLoading;
 
   return (
@@ -353,9 +375,28 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
       <Panel
         title="Starting Today"
         action={
-          <span className="text-xs text-muted-foreground">
-            {starters.length} starter{starters.length !== 1 ? 's' : ''}
-          </span>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleOptimizePitcherWeek}
+                disabled={weekRunning}
+                className="px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed whitespace-nowrap"
+                title="Ensure all probable starters are active for every remaining day this fantasy week (Mon–Sun)"
+              >
+                {weekRunning ? 'Optimizing…' : 'Optimize Week'}
+              </button>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {starters.length} starter{starters.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            {weekStatus && (
+              <Text variant="caption">{weekStatus}</Text>
+            )}
+            <p className="text-[10px] text-muted-foreground italic mt-1">
+              Probable pitchers confirmed ~2–4 days out by MLB
+            </p>
+          </div>
         }
       >
         {offenseLoading && (

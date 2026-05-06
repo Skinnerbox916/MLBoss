@@ -125,19 +125,27 @@ const monoFont = JetBrains_Mono({
 ```
 
 ### Typography Scale
-Base typography is automatically applied to HTML elements:
+Base typography is automatically applied to HTML elements. The scale is tuned for **Pacifico**, a decorative script font that visually reads ~20% larger than a comparable sans-serif at the same px — `h2`/`h3` are deliberately compact so card and panel titles don't dominate their surfaces.
 
-| Element | Font | Size | Properties |
-|---------|------|------|------------|
-| `h1` | Pacifico | `clamp(2rem, 5vw, 3rem)` | Responsive 32-48px |
-| `h2` | Pacifico | `clamp(1.75rem, 4vw, 2.5rem)` | Responsive 28-40px |
-| `h3` | Pacifico | `clamp(1.5rem, 3vw, 2rem)` | Responsive 24-32px |
-| `h4` | Pacifico | `clamp(1.25rem, 2.5vw, 1.75rem)` | Responsive 20-28px |
-| `h5` | Pacifico | `1.125rem` | 18px |
-| `h6` | Pacifico | `1rem` | 16px |
-| `p, li` | Quicksand | `1rem` | 16px, line-height 1.6 |
+| Element | Font | Size | Role |
+|---------|------|------|------|
+| `h1` | Pacifico | `clamp(2rem, 5vw, 3rem)` | Page titles (32-48px) |
+| `h2` | Pacifico | `clamp(1.25rem, 2vw, 1.625rem)` | Panel / section heads (20-26px) |
+| `h3` | Pacifico | `clamp(1.0625rem, 1.5vw, 1.375rem)` | Card titles (17-22px) |
+| `h4` | Pacifico | `clamp(1rem, 1.25vw, 1.125rem)` | Sub-headings (16-18px) |
+| `h5` | Pacifico | `1rem` | Minor labels (16px) |
+| `h6` | Pacifico | `0.875rem` | Smallest heading (14px) |
+| `p, li` | Quicksand | `1rem` | Body text (16px, line-height 1.6) |
 | `small` | Quicksand | `0.875rem` | 14px |
 | `code, pre` | JetBrains Mono | `0.875rem` | 14px with background |
+
+**Where each level lands in the UI:**
+- `h1` → page titles like "Today", "Streaming", "Roster" (one per page)
+- `h2` → `Panel` titles ("Matchup Categories – Week 6", "All Batters")
+- `h3` → `DashboardCard` titles ("Lineup Issues", "Roster Health")
+- `h4`-`h6` → sub-sections inside cards/panels
+
+If a heading visually feels wrong, fix it here in the base layer (and the mirrored `sizeClass` map in `Heading.tsx`) rather than overriding sizes per component. The whole point of this table is one source of truth.
 
 ### Typography Utilities
 Custom CSS utilities for font control:
@@ -202,8 +210,12 @@ import { Text } from '@/components/typography';
 
 ### Typography Best Practices
 
+#### Component Discipline (Enforced)
+- **Always** use `<Heading>` and `<Text>` from `@/components/typography`. Raw `<h1>`–`<h6>` elements are blocked by ESLint (`react/forbid-elements`); raw `<p>` with ad-hoc `text-xs/sm/base text-muted-foreground` should be replaced with `<Text variant="caption|small|body">` so visual tweaks happen in one place.
+- The base layer in `globals.css` already styles `<h1>`–`<h6>` and `<p>` correctly, so `<Heading as="h1">Title</Heading>` requires no className overrides for the default look. Reach for the `size` prop or className only when overriding the spec for a specific layout reason (e.g. dense card titles).
+
 #### Heading Hierarchy
-- Use semantic HTML (`h1`-`h6`) for proper document structure
+- Use semantic HTML (`h1`-`h6`) via the `as` prop for proper document structure
 - Separate visual styling from semantic meaning using the `size` prop
 - Limit to one `h1` per page
 - Don't skip heading levels
@@ -350,7 +362,6 @@ import Tabs from '@/components/ui/Tabs';
 These aren't containers but are shared, reusable display surfaces. Prefer them before inventing new ones:
 
 - **`MatchupPulse`** (`src/components/shared/MatchupPulse.tsx`) — horizontal strip of per-category tiles showing current-week head-to-head. Props: `side: 'batting' | 'pitching' | 'both'`.
-- **`RankStrip`** (`src/components/shared/RankStrip.tsx`) — horizontal strip of per-category tiles showing league rank and delta to leader over a rolling window.
 - **`CategoryFocusBar`** (`src/components/shared/CategoryFocusBar.tsx`) — multi-state pill group for chase/punt/neutral per category.
 - **`DivergingRow`** (`src/components/ui/DivergingRow.tsx`) — center-origin bar showing who's winning a category.
 
@@ -362,7 +373,7 @@ These aren't containers but are shared, reusable display surfaces. Prefer them b
 - **No inline `bg-surface rounded-lg shadow ...`.** Always `Panel`.
 - **No per-file tab styles.** Always `Tabs`.
 - **No two visual styles for the same intent.** If you need a new look, update this rubric first and then update every usage.
-- **No per-page reinventions** of `MatchupPulse`, `RankStrip`, or `CategoryFocusBar` — they live in `src/components/shared/` and get extended via props.
+- **No per-page reinventions** of `MatchupPulse` or `CategoryFocusBar` — they live in `src/components/shared/` and get extended via props.
 
 ## Component Patterns
 

@@ -9,7 +9,3 @@ export interface DashboardCardMeta {
   component: ComponentType;
   order?: number;
 }
-
-export interface DashboardLayout {
-  cards: DashboardCardMeta[];
-} 

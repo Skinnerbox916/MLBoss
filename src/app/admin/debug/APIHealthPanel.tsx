@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Heading } from '@/components/typography';
 
 interface CheckResult {
   ok: boolean;
@@ -56,7 +57,7 @@ export default function APIHealthPanel() {
     <div className="bg-surface rounded-lg border border-border p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">API Health</h2>
+          <Heading as="h2">API Health</Heading>
           <p className="text-xs text-muted-foreground mt-0.5">
             Probes all external data sources the app depends on
           </p>

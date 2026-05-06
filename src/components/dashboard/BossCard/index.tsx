@@ -12,6 +12,7 @@ import { analyzeMatchup } from '@/lib/matchup/analysis';
 import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
 import { getBossBrief } from '@/lib/dashboard/bossBrief';
 import Skeleton from '@/components/ui/Skeleton';
+import { Text } from '@/components/typography';
 import Corner from './Corner';
 import LeverageBar from './LeverageBar';
 import CategoryRail from './CategoryRail';
@@ -133,7 +134,7 @@ export default function BossCard() {
   if (!userMatchup || !userTeam || !opponent) {
     return (
       <section className="relative bg-surface rounded-xl shadow-sm border-y-2 border-accent/30 px-6 py-8 mb-6 text-center">
-        <p className="text-sm text-muted-foreground">No active matchup this week.</p>
+        <Text variant="small">No active matchup this week.</Text>
       </section>
     );
   }

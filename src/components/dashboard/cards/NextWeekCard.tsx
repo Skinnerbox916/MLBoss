@@ -10,6 +10,7 @@ import { useStandings } from '@/lib/hooks/useStandings';
 import { useTeamStats } from '@/lib/hooks/useTeamStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { parseIPToOuts } from '@/lib/utils';
+import { Text } from '@/components/typography';
 import { formatStatDelta } from '@/lib/formatStat';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 
@@ -114,9 +115,9 @@ export default function NextWeekCard() {
   return (
     <DashboardCard title={`Next Week${nextWeek ? ` — Week ${nextWeek}` : ''}`} icon={FiCalendar} size="lg" isLoading={isLoading}>
       {!userMatchup ? (
-        <p className="text-sm text-muted-foreground">
+        <Text variant="small">
           {nextWeek ? 'No matchup data for next week' : 'Season week info unavailable'}
-        </p>
+        </Text>
       ) : (
         <div className="space-y-3">
           {/* Opponent header */}

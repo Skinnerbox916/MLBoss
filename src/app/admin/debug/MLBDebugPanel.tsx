@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Heading } from '@/components/typography';
 
 interface DebugResponse {
   request?: unknown;
@@ -44,9 +45,7 @@ export default function MLBDebugPanel() {
 
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
-      <h2 className="text-lg font-semibold text-foreground mb-3">
-        MLB Stats API Debug Probe
-      </h2>
+      <Heading as="h2" className="mb-3">MLB Stats API Debug Probe</Heading>
       <p className="text-sm text-muted-foreground mb-3">
         Runs the full player-splits pipeline end-to-end and returns raw output from each stage. Use this to verify name resolution, splits fetching, career-vs-pitcher lookups, and game-day schedule enrichment.
       </p>

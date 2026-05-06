@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import CopyButton from './CopyButton';
+import { Heading } from '@/components/typography';
 
 interface RosterPlayer {
   player_key: string;
@@ -116,9 +117,7 @@ export default function RosterDebugPanel() {
 
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
-      <h2 className="text-lg font-semibold text-foreground mb-3">
-        Roster &amp; Lineup Debug
-      </h2>
+      <Heading as="h2" className="mb-3">Roster &amp; Lineup Debug</Heading>
 
       <div className="flex items-end gap-3 mb-4">
         <div>
@@ -150,9 +149,9 @@ export default function RosterDebugPanel() {
 
       {batters && (
         <>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+          <div className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Batters ({batters.length})
-          </h3>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm border border-border rounded">
               <thead className="bg-surface-muted">
@@ -232,9 +231,9 @@ export default function RosterDebugPanel() {
 
       {rawStructure && rawStructure.length > 0 && (
         <div className="mt-6">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+          <div className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Raw Yahoo Player Structure (first {rawStructure.length} players)
-          </h3>
+          </div>
           <p className="text-xs text-muted-foreground mb-3">
             Looking for <code className="bg-surface-muted px-1 rounded">starting_status</code> in
             the sibling objects. Each player&apos;s array elements are shown below.

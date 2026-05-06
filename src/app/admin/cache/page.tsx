@@ -5,6 +5,7 @@ import {
   type CacheTier,
 } from '@/lib/fantasy';
 import AppLayout from '@/components/layout/AppLayout';
+import { Heading } from '@/components/typography';
 import CacheKeyTable, { type CacheRow } from './CacheKeyTable';
 import ConfirmButton from './ConfirmButton';
 import PatternInvalidator from './PatternInvalidator';
@@ -269,7 +270,7 @@ function Header({ rows, totalSize }: { rows: number; totalSize: number }) {
   return (
     <div className="bg-surface rounded-lg border border-border p-4 flex items-center justify-between">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Cache</h2>
+        <Heading as="h1">Cache</Heading>
         <p className="text-xs text-muted-foreground mt-0.5">
           {rows} keys · {formatSize(totalSize)} total
         </p>
@@ -297,7 +298,7 @@ function MemoryAndKeyspace({
 }) {
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Redis health</h3>
+      <Heading as="h2" className="mb-3">Redis health</Heading>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
         <Stat
           label="DB size"
@@ -369,7 +370,7 @@ function TierGrid({ counts }: { counts: Record<CacheTier, number> }) {
   const gridCols = visibleTiers.length === 4 ? 'md:grid-cols-4' : 'md:grid-cols-3';
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Tiers</h3>
+      <Heading as="h2" className="mb-3">Tiers</Heading>
       <div className={`grid grid-cols-1 ${gridCols} gap-3`}>
         {visibleTiers.map(tier => {
           const style = TIER_STYLE[tier];
@@ -408,7 +409,7 @@ function TierGrid({ counts }: { counts: Record<CacheTier, number> }) {
 function PatternSection() {
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
-      <h3 className="text-sm font-semibold text-foreground mb-1">Invalidate by pattern</h3>
+      <Heading as="h2" className="mb-1">Invalidate by pattern</Heading>
       <p className="text-[11px] text-muted-foreground mb-3">
         Targeted invalidation for power users — e.g. <code className="font-mono">static:savant:</code> clears every Savant leaderboard, <code className="font-mono">dynamic:roster:458.l.12345.t.4</code> clears one team&apos;s roster cache. The leading <code className="font-mono">cache:</code> is added automatically.
       </p>
@@ -428,7 +429,7 @@ function StatsSection({
     <div className="bg-surface rounded-lg border border-border p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Hit / miss stats</h3>
+          <Heading as="h2">Hit / miss stats</Heading>
           <p className="text-[11px] text-muted-foreground mt-0.5">
             In-process counters, reset on server restart. {totalRequests.toLocaleString()} requests since last reset.
           </p>
@@ -511,7 +512,7 @@ function StatsSection({
 function KeyListing({ rows }: { rows: CacheRow[] }) {
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Cached keys</h3>
+      <Heading as="h2" className="mb-3">Cached keys</Heading>
       <CacheKeyTable rows={rows} />
     </div>
   );

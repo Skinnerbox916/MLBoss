@@ -5,6 +5,7 @@ import { FiChevronUp, FiChevronDown } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Panel from '@/components/ui/Panel';
 import Tabs from '@/components/ui/Tabs';
+import { Heading } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useStandings } from '@/lib/hooks/useStandings';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
@@ -313,7 +314,7 @@ export default function LeagueManager() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-foreground">League Overview</h1>
+        <Heading as="h1">League Overview</Heading>
         <p className="text-xs text-muted-foreground mt-0.5">
           Standings and stat rankings across your league
         </p>

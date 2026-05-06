@@ -68,17 +68,17 @@ docker start mlboss-redis
 # Start development server
 npm run dev
 
-# Check Redis connection
-npm run test-redis
+# Check Redis connection (requires auth — visit in browser while logged in)
+# GET /api/admin/health
 ```
 
 ## Where to Find Things
 
-- **OAuth logic**: `/src/lib/yahoo-oauth.ts`
+- **OAuth logic**: `/src/lib/auth/yahoo-oauth.ts` (re-exported from `@/lib/auth`)
 - **Fantasy API**: `/src/lib/yahoo-fantasy-api.ts`
 - **Fantasy data layer**: `/src/lib/fantasy/`
 - **API routes**: `/src/app/api/`
-- **Session config**: `/src/lib/session.ts`
+- **Session config**: `/src/lib/auth/session.ts` (re-exported from `@/lib/auth`)
 - **Redis client**: `/src/lib/redis.ts`
 - **UI Components**: 
   - Icon system: `/src/components/Icon.tsx` (wrapper for react-icons)

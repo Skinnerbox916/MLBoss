@@ -1,4 +1,5 @@
 import { getIdentityResolutionMetrics } from '@/lib/mlb/identity';
+import { Heading, Text } from '@/components/typography';
 
 const REASON_LABELS: Record<string, string> = {
   hit: 'Hits',
@@ -25,20 +26,18 @@ export default function IdentityMetricsPanel() {
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold text-foreground">
-          Identity Resolution
-        </h2>
+        <Heading as="h2">Identity Resolution</Heading>
         <span className="text-xs text-muted-foreground">
           process-local · resets on restart
         </span>
       </div>
 
       {metrics.total === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <Text variant="small">
           No Yahoo to MLB resolutions performed yet this process. Browse to a
           page that fetches roster stats (e.g. <code className="font-mono text-xs">/roster</code>)
           and reload this page to populate the panel.
-        </p>
+        </Text>
       ) : (
         <>
           <div className="grid grid-cols-3 gap-4 mb-4">
@@ -49,9 +48,9 @@ export default function IdentityMetricsPanel() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                 Outcomes by reason
-              </h3>
+              </div>
               <table className="w-full text-sm">
                 <tbody>
                   {Object.entries(metrics.byReason).map(([reason, count]) => (
@@ -69,11 +68,11 @@ export default function IdentityMetricsPanel() {
             </div>
 
             <div>
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
                 Recent misses
-              </h3>
+              </div>
               {metrics.recentMisses.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No recent misses recorded.</p>
+                <Text variant="small">No recent misses recorded.</Text>
               ) : (
                 <table className="w-full text-sm">
                   <thead>

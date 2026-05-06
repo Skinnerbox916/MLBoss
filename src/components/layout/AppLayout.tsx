@@ -9,6 +9,7 @@ import { GiBaseballGlove, GiThrowingBall } from 'react-icons/gi';
 import { FiHome, FiUsers, FiSettings, FiList, FiChevronLeft, FiChevronRight, FiUser, FiLogOut } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import { cn } from '@/lib/utils';
+import { Text } from '@/components/typography';
 
 interface NavItem {
   name: string;
@@ -209,7 +210,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </div>
               <div>
                 <p className="text-sm font-medium text-foreground">Yahoo User</p>
-                <p className="text-xs text-muted-foreground">Account</p>
+                <Text variant="caption">Account</Text>
               </div>
             </div>
           </div>

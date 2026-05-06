@@ -18,6 +18,8 @@ Data layer:
 - **scoring-conventions.md** — Stat levels (raw / rate / talent / matchup-adjusted), calibration knobs, one-source-of-truth rule.
 - **stats.md** — Canonical `stat_id` model, stat enrichment, and disambiguation patterns.
 - **recommendation-system.md** — Matchup-state layer: `analyzeMatchup` as single source of truth, focus suggestions, Boss Brief, leverage bar.
+- **unified-rating-model.md** — Canonical reference for both pitcher AND batter rating engines: shared substrate (talent primitives, parkAdjustment, weather, focus map), unified `Rating` shape, `MatchupContext`, edge-case helpers, calibration anchors.
+- **pitcher-evaluation.md** — Pitcher-side three-layer engine (PitcherTalent → GameForecast → PitcherRating), regime-shift probe, confidence model. Companion to unified-rating-model.md.
 
 ---
 

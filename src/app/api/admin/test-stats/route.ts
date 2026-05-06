@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/session';
+import { getSession } from '@/lib/auth';
 import { getStatCategories, getStatCategoryMap, enrichStats } from '@/lib/fantasy';
 
 export async function GET(request: Request) {
@@ -48,4 +48,4 @@ export async function GET(request: Request) {
       { status: 500 }
     );
   }
-} 
+}

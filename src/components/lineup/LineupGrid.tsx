@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { RosterPositionSlot } from '@/lib/hooks/useRosterPositions';
 import { optimizeLineup } from '@/lib/lineup/optimize';
+import { Text } from '@/components/typography';
 import type { LineupMode } from './types';
 
 function isPitcher(p: RosterEntry): boolean {
@@ -379,11 +380,11 @@ export default function LineupGrid({
   return (
     <div className="space-y-4">
       {editable && (
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           {selectedPlayer
             ? `Click a highlighted slot to move ${selectedPlayer.name}`
             : 'Click a player to move them'}
-        </p>
+        </Text>
       )}
 
       {groups.map(({ label, group }) => {

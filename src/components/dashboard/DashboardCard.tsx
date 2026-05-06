@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { type IconType } from 'react-icons';
 import Icon from '@/components/Icon';
 import Skeleton from '@/components/ui/Skeleton';
+import { Heading } from '@/components/typography';
 
 export type CardSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -36,9 +37,7 @@ export default function DashboardCard({
       <div className="bg-surface rounded-lg shadow p-6 h-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-foreground">
-            {title}
-          </h3>
+          <Heading as="h3">{title}</Heading>
           {icon && (
             <Icon
               icon={icon}

@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import { Heading } from '@/components/typography';
 
 interface CornerProps {
   /** Team name. Rendered in display font. */
@@ -78,9 +79,12 @@ export default function Corner({
 
       {/* Name + sub-line */}
       <div className={`min-w-0 flex flex-col ${isRight ? 'items-end' : 'items-start'}`}>
-        <h2 className="font-display text-xl sm:text-2xl text-primary leading-tight truncate max-w-[14ch] sm:max-w-[20ch]">
+        <Heading
+          as="h2"
+          className="text-xl sm:text-2xl text-primary truncate max-w-[14ch] sm:max-w-[20ch]"
+        >
           {teamName}
-        </h2>
+        </Heading>
         <span
           className={`mt-1 inline-block h-px w-12 bg-accent/60 ${isRight ? 'self-end' : 'self-start'}`}
           aria-hidden="true"

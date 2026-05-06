@@ -2,6 +2,7 @@
 
 import { FiShoppingCart } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
+import { Text } from '@/components/typography';
 import { useFantasy } from '../FantasyProvider';
 import { useTransactions } from '@/lib/hooks/useTransactions';
 import { useAvailableBatters } from '@/lib/hooks/useAvailableBatters';
@@ -60,7 +61,7 @@ export default function WaiversCard() {
             Top Available
           </div>
           {batters.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No available batters</p>
+            <Text variant="caption">No available batters</Text>
           ) : (
             batters.slice(0, 6).map(player => (
               <div key={player.player_key} className="flex items-center justify-between py-0.5">

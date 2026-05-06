@@ -12,6 +12,7 @@ import { getBatterRating, type BatterRating, type Focus } from '@/lib/mlb/batter
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { usePlayerSplits } from '@/lib/hooks/usePlayerSplits';
 import PlayerSplitsPanel from './PlayerSplitsPanel';
+import { Text } from '@/components/typography';
 
 import { getRowStatus } from './types';
 
@@ -112,7 +113,8 @@ function MatchupLine({ context }: { context: MatchupContext | null }) {
     );
   }
 
-  const { game, isHome, opposingPitcher, park } = context;
+  const { game, isHome, opposingPitcher } = context;
+  const park = game.park;
   const opponentTeam = isHome ? game.awayTeam.abbreviation : game.homeTeam.abbreviation;
   const locationPrefix = isHome ? 'vs' : '@';
   const weather = getWeatherFlag(game, park);
@@ -291,11 +293,11 @@ export default function PlayerRow({
           />
         ) : (
           <div className="p-3 bg-surface-muted/30 border-t border-border-muted">
-            <p className="text-xs text-muted-foreground">
+            <Text variant="caption">
               {status === 'injured'
                 ? 'Player is on IL — splits not shown'
                 : 'No game scheduled today — splits unavailable'}
-            </p>
+            </Text>
           </div>
         )
       )}

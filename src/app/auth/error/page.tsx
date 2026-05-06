@@ -3,6 +3,7 @@
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { Heading, Text } from '@/components/typography';
 
 function AuthErrorContent() {
   const searchParams = useSearchParams();
@@ -88,9 +89,9 @@ function AuthErrorContent() {
               </svg>
             </div>
           </div>
-          <h2 className="mt-4 text-2xl font-bold tracking-tight text-foreground">
+          <Heading as="h1" className="mt-4">
             {errorDetails.title}
-          </h2>
+          </Heading>
         </div>
 
         {/* Error Card */}
@@ -101,9 +102,9 @@ function AuthErrorContent() {
               <p className="text-sm text-muted-foreground mb-3">
                 {errorDetails.message}
               </p>
-              <p className="text-xs text-muted-foreground">
+              <Text variant="caption">
                 {errorDetails.suggestion}
-              </p>
+              </Text>
             </div>
 
             {/* Error Code */}
@@ -139,9 +140,9 @@ function AuthErrorContent() {
 
         {/* Support Info */}
         <div className="text-center">
-          <p className="text-xs text-muted-foreground">
+          <Text variant="caption">
             If you continue to experience issues, please contact support
-          </p>
+          </Text>
         </div>
       </div>
     </div>

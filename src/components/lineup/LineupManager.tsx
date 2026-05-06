@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import Panel from '@/components/ui/Panel';
+import { Heading, Text } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
@@ -221,7 +222,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         {weekRunning ? 'Optimizing…' : 'Optimize Week'}
       </button>
       {weekStatus && (
-        <p className="text-xs text-muted-foreground">{weekStatus}</p>
+        <Text variant="caption">{weekStatus}</Text>
       )}
     </div>
   ) : null;
@@ -237,7 +238,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       ) : (
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+            <Heading as="h1">{title}</Heading>
             <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
           </div>
           <div className="flex flex-wrap items-start gap-3">

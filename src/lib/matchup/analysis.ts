@@ -21,6 +21,14 @@
  * row). See `hasMatchupSignal` for the exact rule — the most important
  * non-obvious case is Monday morning, where every counting cat reads
  * `0=0` because no games have finished yet.
+ *
+ * `suggestedFocus` is direction-aware: a category you're losing or tied
+ * in is `chase`, a category you're winning that isn't locked is `neutral`
+ * (hold), and either extreme (locked win OR out-of-reach loss) is `punt`.
+ * The focus engine intentionally does NOT use a magnitude band for
+ * "contested" — we lean on the corrected margin (when projection data
+ * is available via `withSwing`) to decide direction, and the projection
+ * already incorporates rest-of-week confidence.
  */
 
 import type { MatchupRow } from '@/components/shared/matchupRows';
@@ -50,12 +58,28 @@ function clamp(value: number, lo: number, hi: number): number {
 export type SuggestedFocus = 'chase' | 'neutral' | 'punt';
 
 export interface AnalyzedMatchupRow extends MatchupRow {
-  /** Margin in [-1, +1] from the user's perspective. Positive = winning. */
+  /** Margin in [-1, +1] from the user's perspective. Positive = winning.
+   *  When the analysis is corrected with projections, this is the
+   *  projected end-of-week margin; otherwise it's the YTD margin. */
   margin: number;
   /** Priority weight in [0, 1]. 1 = toss-up, 0 = locked. */
   priority: number;
   /** Mapped onto the existing chase/neutral/punt vocabulary. */
   suggestedFocus: SuggestedFocus;
+  /** Margin from YTD-only rows, populated by `withSwing` when both raw
+   *  and corrected analyses are available. Undefined when this analysis
+   *  ran on a single set of rows (e.g. dashboard descriptive surfaces). */
+  rawMargin?: number;
+  /** `margin - rawMargin`. Positive swing = projection improves the
+   *  user's standing; negative swing = projection erodes it. Undefined
+   *  unless both margins are available. */
+  swing?: number;
+  /** YTD-only stat values as strings (matching `myVal`/`oppVal` format).
+   *  Populated by `withSwing` so consumers can render
+   *  "current → projected" displays. Undefined unless both analyses
+   *  were combined. */
+  rawMyVal?: string;
+  rawOppVal?: string;
 }
 
 export interface MatchupAnalysis {
@@ -70,7 +94,6 @@ export interface MatchupAnalysis {
 }
 
 const LOCKED_THRESHOLD = 0.7;
-const CONTESTED_THRESHOLD = 0.4;
 
 /**
  * Does this row carry enough signal to drive a recommendation?
@@ -80,9 +103,9 @@ const CONTESTED_THRESHOLD = 0.4;
  * both sides are exactly zero as no-signal. This is the Monday-morning
  * pattern: Yahoo returns "0" for every counting stat (so `hasData=true`,
  * `margin=0`) before any games have completed. Without this guard every
- * counting cat would land in `chase` (since `|0| < CONTESTED_THRESHOLD`),
- * making the rate cats — which are correctly missing — look like they
- * were "demoted" by the engine.
+ * counting cat would land in `chase` (since `margin === 0` triggers the
+ * losing/tied branch), making the rate cats — which are correctly missing
+ * — look like they were "demoted" by the engine.
  */
 function hasMatchupSignal(row: MatchupRow): boolean {
   if (!row.hasData) return false;
@@ -92,15 +115,26 @@ function hasMatchupSignal(row: MatchupRow): boolean {
   return !(my === 0 && opp === 0);
 }
 
-function suggestFocus(margin: number, hasSignal: boolean, weekProgress: number): SuggestedFocus {
+/**
+ * Direction-aware focus suggestion.
+ *
+ * The vocabulary stays `chase | neutral | punt`, but the boundaries are
+ * sign-aware:
+ *  - `|margin| ≥ LOCKED`  → punt (locked win OR out-of-reach loss — both
+ *    extremes mean "don't sacrifice lineup optimization for this cat")
+ *  - `margin ≤ 0`         → chase (you're losing or tied — these are the
+ *    pickup / lineup-tilt targets)
+ *  - `0 < margin < LOCKED` → neutral (winning but not locked — "hold")
+ *
+ * The previous direction-blind logic flagged any `|margin| < 0.4` band as
+ * chase, which produced "chase everything" on the streaming page when many
+ * corrected margins clustered near zero. Direction matters: a slim lead
+ * doesn't need a stream pickup, while a slim deficit does.
+ */
+function suggestFocus(margin: number, hasSignal: boolean): SuggestedFocus {
   if (!hasSignal) return 'neutral';
-  const abs = Math.abs(margin);
-  if (abs >= LOCKED_THRESHOLD) return 'punt';
-  // Tighten the chase threshold early in the week so we don't flag everything
-  // as contested. Tuesday: ~0.15; Friday: ~0.29; Sunday: 0.40. When the whole
-  // board is unsettled, only the genuinely closest categories should chase.
-  const chaseThreshold = CONTESTED_THRESHOLD * (0.2 + 0.8 * weekProgress);
-  if (abs < chaseThreshold) return 'chase';
+  if (Math.abs(margin) >= LOCKED_THRESHOLD) return 'punt';
+  if (margin <= 0) return 'chase';
   return 'neutral';
 }
 
@@ -156,7 +190,7 @@ export function analyzeMatchup(
       ...row,
       margin,
       priority: hasSignal ? 1 - Math.abs(margin) : 1,
-      suggestedFocus: suggestFocus(margin, hasSignal, weekProgress),
+      suggestedFocus: suggestFocus(margin, hasSignal),
     };
   });
 
@@ -172,4 +206,37 @@ export function analyzeMatchup(
   const lockedCount = live.filter(r => Math.abs(r.margin) >= LOCKED_THRESHOLD).length;
 
   return { rows: decorated, leverage, contestedCount, lockedCount };
+}
+
+/**
+ * Decorate a corrected analysis with the parallel raw analysis's per-cat
+ * margin so consumers can show "currently losing but projected to win"
+ * style explanations and so swing magnitude is available for UI grading.
+ *
+ * The focus suggestion on the corrected analysis already reflects the
+ * projected end-of-week direction (`chase` for projected losses, `hold`
+ * for projected leads); swing is purely additive context. If you want to
+ * recompute focus from raw and corrected together, do it in the consumer —
+ * the canonical engine treats corrected margin as the source of truth.
+ *
+ * Pitcher rows pass through `composeCorrectedRows` unchanged, so their
+ * `swing` will be 0 — no extra logic needed in the consumer.
+ */
+export function withSwing(
+  corrected: MatchupAnalysis,
+  raw: MatchupAnalysis,
+): MatchupAnalysis {
+  const rawByStatId = new Map(raw.rows.map(r => [r.statId, r]));
+  const rows: AnalyzedMatchupRow[] = corrected.rows.map(row => {
+    const rawRow = rawByStatId.get(row.statId);
+    if (!rawRow) return row;
+    return {
+      ...row,
+      rawMargin: rawRow.margin,
+      swing: row.margin - rawRow.margin,
+      rawMyVal: rawRow.myVal,
+      rawOppVal: rawRow.oppVal,
+    };
+  });
+  return { ...corrected, rows };
 }

@@ -9,7 +9,7 @@ import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
 import { useRosterStats } from '@/lib/hooks/useRosterStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
-import { useMatchupAnalysis } from '@/lib/hooks/useMatchupAnalysis';
+import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
@@ -80,7 +80,12 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // outputs a `chase | neutral | punt` suggestion per stat — those become
   // the focusMap defaults that `getBatterRating` consumes below. The user
   // can still override and reset. See `docs/recommendation-system.md`.
-  const { analysis: matchupAnalysis } = useMatchupAnalysis(leagueKey, teamKey);
+  //
+  // We use the corrected (YTD + rest-of-week projection) analysis here so
+  // the focus bar agrees with the streaming page's batter tab — both pages
+  // ask "which categories will be contested by Sunday given my actual
+  // roster?" and the projection answers that better than YTD alone.
+  const { analysis: matchupAnalysis } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
 
   const batterStatIds = useMemo(() => {
     const set = new Set<number>();

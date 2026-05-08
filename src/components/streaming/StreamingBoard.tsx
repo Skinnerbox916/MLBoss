@@ -1,86 +1,190 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { FiWind, FiChevronDown } from 'react-icons/fi';
+import { FiChevronDown } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
-import CompareTray, { type CompareTraySlot } from '@/components/shared/CompareTray';
-import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
-import type { ProbablePitcher, ParkData, GameWeather, EnrichedGame } from '@/lib/mlb/types';
 import type { TeamOffense } from '@/lib/mlb/teams';
-import {
-  scorePitcher, tierLabel,
-  type PillInput, type PitcherStreamingRating,
-} from '@/lib/pitching/scoring';
-import {
-  tierColor, weatherIcon, hasWeatherData,
-  matchFreeAgentToGame,
-  categoryFit, categoryFitClasses,
-  verdictLabel, buildRiskSummary,
-  parkCue, lineupCue, cueToneClass,
-} from '@/lib/pitching/display';
+import { tierFromScore } from '@/lib/pitching/rating';
+import { tierLabel } from '@/lib/pitching/scoring';
+import { categoryFit, categoryFitClasses, tierColor } from '@/lib/pitching/display';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { Focus } from '@/lib/mlb/batterRating';
+import type { WeekPitcherScore } from '@/lib/hooks/useWeekPitcherScores';
+import type { PerStartProjection } from '@/lib/projection/pitcherTeam';
+import type { WeekDay } from '@/lib/dashboard/weekRange';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface StreamCandidate {
-  player: FreeAgentPlayer;
-  pp: ProbablePitcher;
-  opponent: string;
-  opponentMlbId: number;
-  isHome: boolean;
-  park: ParkData | null;
-  weather: GameWeather;
-  game: EnrichedGame;
-  /** Full pitcher rating — categories + multipliers. Drives the row score,
-   *  category-fit strip, and the expanded evidence panel. */
-  rating: PitcherStreamingRating;
-  /** Up to two short risk phrases surfaced under the row. */
-  riskSummary: string[];
+  score: WeekPitcherScore;
+  /** Probable starts in the pickup window (filtered to hasStart === true). */
+  starts: PerStartProjection[];
 }
+
+type ViewMode = 'week' | 'byday';
 
 interface StreamingBoardProps {
-  date: string;
-  games: EnrichedGame[];
-  freeAgents: FreeAgentPlayer[];
-  gamesLoading: boolean;
-  faLoading: boolean;
-  faError: boolean;
+  weekScores: WeekPitcherScore[];
+  /** Pickup-playable window — used by the by-day grouping. */
+  days: WeekDay[];
   teamOffense: Record<number, TeamOffense>;
-  offenseLoading: boolean;
-  /** Optional helper text rendered under the header (e.g. data-thin day warnings). */
-  helper?: string;
-  /** League-scored pitcher categories — drives the per-category rating. */
+  loading: boolean;
   scoredPitcherCategories?: EnrichedLeagueStatCategory[];
-  /** Chase/punt focus per stat_id. */
   focusMap?: Record<number, Focus>;
+  /** Optional helper text rendered under the panel header. */
+  helper?: string;
 }
 
 // ---------------------------------------------------------------------------
-// Row subcomponents
+// Build candidates from week scores
 // ---------------------------------------------------------------------------
 
-function CategoryStrip({ rating, compact = false }: { rating: PitcherStreamingRating; compact?: boolean }) {
-  if (rating.categories.length === 0) return null;
+function buildCandidates(weekScores: WeekPitcherScore[]): StreamCandidate[] {
+  const out: StreamCandidate[] = [];
+  for (const score of weekScores) {
+    const starts = score.projection.perStart.filter(s => s.hasStart && s.rating);
+    if (starts.length === 0) continue;
+    out.push({ score, starts });
+  }
+  out.sort((a, b) => b.score.projection.weeklyScore - a.score.projection.weeklyScore);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Verdict label
+// ---------------------------------------------------------------------------
+
+interface Verdict {
+  label: string;
+  tone: 'success' | 'accent' | 'error';
+}
+
+/** Map a per-start score (0-100) to the same Strong/Fair/Avoid verdict
+ *  used in week view. The week-view divides weeklyScore by start count
+ *  before classifying — this is the per-start band directly. */
+function perStartVerdict(score: number): Verdict {
+  if (score >= 70) return { label: 'Strong', tone: 'success' };
+  if (score >= 50) return { label: 'Fair', tone: 'accent' };
+  return { label: 'Avoid', tone: 'error' };
+}
+
+// ---------------------------------------------------------------------------
+// Aggregated category strip — averages per-cat fit across the row's starts
+// ---------------------------------------------------------------------------
+
+function aggregateCategoryFit(starts: PerStartProjection[]): Array<{
+  statId: number;
+  label: string;
+  avgSubScore: number;
+  weight: number;
+}> {
+  if (starts.length === 0) return [];
+  const acc = new Map<number, { label: string; sumSub: number; sumWeight: number; n: number }>();
+  for (const s of starts) {
+    if (!s.rating) continue;
+    for (const cat of s.rating.categories) {
+      const prior = acc.get(cat.statId);
+      if (prior) {
+        prior.sumSub += cat.normalized;
+        prior.sumWeight += cat.weight;
+        prior.n += 1;
+      } else {
+        acc.set(cat.statId, {
+          label: cat.label,
+          sumSub: cat.normalized,
+          sumWeight: cat.weight,
+          n: 1,
+        });
+      }
+    }
+  }
+  return Array.from(acc.entries()).map(([statId, v]) => ({
+    statId,
+    label: v.label,
+    avgSubScore: v.n > 0 ? v.sumSub / v.n : 0,
+    weight: v.n > 0 ? v.sumWeight / v.n : 0,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Day pill — compact start descriptor (DAY · vs/@ OPP · score)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact chip representing one probable start. Color-coded by score.
+ * In by-day view, the pill for the section's active date is highlighted
+ * with the primary ring so it's obvious which start is being inspected
+ * vs. "also pitches another day."
+ */
+function DayPill({
+  start,
+  isActiveDay = false,
+}: {
+  start: PerStartProjection;
+  isActiveDay?: boolean;
+}) {
+  const score = start.rating?.score;
+  const baseTone =
+    score === undefined ? 'bg-surface-muted text-muted-foreground'
+    : score >= 70 ? 'bg-success/15 text-success'
+    : score >= 50 ? 'bg-surface-muted text-foreground'
+    : 'bg-error/10 text-error';
+  const ring = isActiveDay ? 'ring-2 ring-primary/60' : 'border border-border';
+  const opp = start.opponent ?? '?';
+  const arrow = start.isHome ? 'vs' : '@';
   return (
-    <div className={`inline-flex items-center ${compact ? 'gap-0.5' : 'gap-1'} flex-wrap`}>
-      {rating.categories.map(cat => {
-        const fit = categoryFit(cat.subScore, cat.weight);
-        const score = Math.round(cat.subScore * 100);
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${baseTone} ${ring}`}
+      title={start.weatherFlag ? `${start.dayLabel} ${arrow} ${opp} · ${start.weatherFlag}` : `${start.dayLabel} ${arrow} ${opp}`}
+    >
+      <span className="text-[10px] font-bold uppercase tracking-wider">{start.dayLabel}</span>
+      <span className="text-[11px] text-muted-foreground">{arrow}</span>
+      <span className="text-[11px] font-semibold">{opp}</span>
+      {score !== undefined && (
+        <span className="text-[11px] font-bold tabular-nums">{Math.round(score)}</span>
+      )}
+    </span>
+  );
+}
+
+function DayPills({
+  starts,
+  activeDate,
+}: {
+  starts: PerStartProjection[];
+  activeDate?: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {starts.map(s => (
+        <DayPill key={s.date} start={s} isActiveDay={activeDate === s.date} />
+      ))}
+    </div>
+  );
+}
+
+function CategoryStrip({ starts }: { starts: PerStartProjection[] }) {
+  const cats = useMemo(() => aggregateCategoryFit(starts), [starts]);
+  if (cats.length === 0) return null;
+  return (
+    <div className="inline-flex items-center gap-1 flex-wrap">
+      {cats.map(cat => {
+        const fit = categoryFit(cat.avgSubScore, cat.weight);
+        const score = Math.round(cat.avgSubScore * 100);
         return (
           <span
             key={cat.statId}
-            className={`inline-flex items-center ${compact ? 'px-1 py-0' : 'px-1.5 py-0.5'} rounded border text-caption font-semibold ${categoryFitClasses(fit)}`}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded border text-caption font-semibold ${categoryFitClasses(fit)}`}
             title={fit === 'punted'
-              ? `${cat.label} punted — ${cat.detail}`
-              : `${cat.label} ${score}/100 · ${cat.detail}`}
+              ? `${cat.label} punted`
+              : `${cat.label} avg ${score}/100 across ${starts.length} start${starts.length === 1 ? '' : 's'}`}
           >
-            {cat.goal}
+            {cat.label}
           </span>
         );
       })}
@@ -88,93 +192,163 @@ function CategoryStrip({ rating, compact = false }: { rating: PitcherStreamingRa
   );
 }
 
-function VerdictStack({ rating, size = 'md' }: { rating: PitcherStreamingRating; size?: 'sm' | 'md' }) {
-  const v = verdictLabel(rating.score);
+function VerdictStack({ score, label, tone }: { score: number; label: string; tone: Verdict['tone'] }) {
   const toneClass =
-    v.color === 'success' ? 'text-success' :
-    v.color === 'error' ? 'text-error' :
+    tone === 'success' ? 'text-success' :
+    tone === 'error' ? 'text-error' :
     'text-accent';
-  // Show ± uncertainty band when it's ≥ 5 score points. Tightens the
-  // user's mental model for thin-sample ratings without overwhelming
-  // confident scores. Wide bands (≥ 10) render in error tone to flag.
-  const bandPts = Math.round(rating.scoreBand * 100);
   return (
     <div className="text-right leading-tight">
-      <div className={`${size === 'md' ? 'text-lg' : 'text-base'} font-bold tabular-nums ${toneClass}`}>
-        {Math.round(rating.score * 100)}
-        {bandPts >= 5 && (
-          <span className={`text-caption font-medium ml-0.5 ${bandPts >= 10 ? 'text-error/70' : 'text-muted-foreground'}`}>
-            ±{bandPts}
-          </span>
-        )}
-      </div>
+      <div className={`text-lg font-bold tabular-nums ${toneClass}`}>{Math.round(score)}</div>
       <div className={`text-caption font-semibold uppercase tracking-wide ${toneClass}`}>
-        {v.label}
+        {label}
       </div>
     </div>
   );
 }
 
-function ContextLine({
-  c, teamOffense,
-}: {
-  c: StreamCandidate;
+// ---------------------------------------------------------------------------
+// Row
+// ---------------------------------------------------------------------------
+
+interface RowProps {
+  candidate: StreamCandidate;
+  rank: number;
+  isExpanded: boolean;
+  onToggleExpand: (key: string) => void;
   teamOffense: Record<number, TeamOffense>;
-}) {
-  const opp = teamOffense[c.opponentMlbId];
-  const oppSplit = c.pp.throws === 'L' ? opp?.vsLeft : opp?.vsRight;
-  const oppOps = oppSplit?.ops ?? opp?.ops ?? null;
+  scoredPitcherCategories?: EnrichedLeagueStatCategory[];
+  focusMap?: Record<number, Focus>;
+  /** When set, the row is being rendered inside a by-day section. The
+   *  score column shows that day's per-start score (not the week sum)
+   *  and the matching day pill is highlighted. */
+  activeDate?: string;
+}
 
-  const opponentPhrase = `${c.isHome ? 'vs' : '@'} ${c.opponent}`;
-  const park = parkCue(c.park);
-  const lineup = lineupCue(oppOps);
+function Row({
+  candidate, rank, isExpanded, onToggleExpand,
+  teamOffense, scoredPitcherCategories, focusMap, activeDate,
+}: RowProps) {
+  const c = candidate;
+  const startCount = c.starts.length;
+  const activeStart = activeDate ? c.starts.find(s => s.date === activeDate) : undefined;
 
-  const windOut = c.weather.windDirection?.toLowerCase().includes('out') ?? false;
-  const windBad = windOut && (c.weather.windSpeed ?? 0) >= 10;
+  // Score + verdict + tier — by-day view uses the active day's per-start
+  // score; week view uses the per-start average for tier color but
+  // displays the summed weekly score.
+  const weeklyScore = c.score.projection.weeklyScore;
+  const headlineScore =
+    activeStart?.rating?.score ?? (startCount > 0 ? weeklyScore / startCount : 0);
+  const displayScore = activeStart?.rating?.score ?? weeklyScore;
+  const verdict = perStartVerdict(headlineScore);
+  const rowTint =
+    headlineScore >= 70 ? 'bg-success/5'
+    : headlineScore < 50 ? 'bg-error/5'
+    : '';
 
-  // The opp OPS detail (e.g. ".700") is preserved in the title attr on
-  // the lineup phrase so power users can hover for the raw number; the
-  // visible label is verbal.
-  const lineupTitle = oppOps !== null
-    ? `Opp OPS vs ${c.pp.throws}: ${oppOps.toFixed(3).replace(/^0\./, '.')}`
-    : undefined;
-  const parkTitle = c.park
-    ? `Overall PF ${c.park.parkFactor} · HR PF ${c.park.parkFactorHR}`
-    : undefined;
+  // The pitcher's throwing hand and tier come from the headline start
+  // (highest-scoring start when in week view; the active day's start
+  // when in by-day view).
+  const refStart = activeStart ?? c.starts.reduce((best, s) =>
+    (s.rating?.score ?? 0) > (best.rating?.score ?? 0) ? s : best,
+    c.starts[0],
+  );
 
   return (
-    <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-      <span className="text-muted-foreground">
-        {opponentPhrase.split(' ')[0]}{' '}
-        <span className="font-semibold text-foreground">{opponentPhrase.split(' ')[1]}</span>
-      </span>
-      {park.label && (
-        <>
-          <span className="text-border" aria-hidden>·</span>
-          <span className={cueToneClass(park.tone)} title={parkTitle}>{park.label}</span>
-        </>
-      )}
-      {lineup.label && (
-        <>
-          <span className="text-border" aria-hidden>·</span>
-          <span className={cueToneClass(lineup.tone)} title={lineupTitle}>{lineup.label}</span>
-        </>
-      )}
-      {hasWeatherData(c.weather) && (
-        <div className="flex items-center gap-1 ml-1">
-          {(() => {
-            const Wx = weatherIcon(c.weather.condition);
-            return Wx ? <Icon icon={Wx} size={12} className="text-muted-foreground" /> : null;
-          })()}
-          {c.weather.temperature != null && (
-            <span className="text-muted-foreground">{c.weather.temperature}°</span>
-          )}
-          {c.weather.windSpeed != null && c.weather.windSpeed > 0 && (
-            <span className={`flex items-center gap-0.5 ${windBad ? 'text-error' : 'text-muted-foreground'}`}>
-              <Icon icon={FiWind} size={10} />
-              {c.weather.windSpeed}
+    <div className={`rounded-lg overflow-hidden ${rowTint}`}>
+      <button
+        type="button"
+        onClick={() => onToggleExpand(c.score.player.player_key)}
+        className="w-full flex items-start gap-3 px-3 py-2 text-left hover:bg-surface-muted/40 transition-colors"
+      >
+        <div className="w-5 text-center text-xs font-bold text-muted-foreground mt-2.5 shrink-0">
+          {rank}
+        </div>
+
+        {c.score.player.image_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={c.score.player.image_url}
+            alt={c.score.player.name}
+            className="w-9 h-9 rounded-full border border-border object-cover shrink-0 mt-0.5"
+            onError={e => {
+              e.currentTarget.style.display = 'none';
+              e.currentTarget.nextElementSibling?.classList.remove('hidden');
+            }}
+          />
+        ) : null}
+        <div className={`w-9 h-9 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold ${c.score.player.image_url ? 'hidden' : ''}`}>
+          {c.score.player.name.charAt(0).toUpperCase()}
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm font-semibold text-foreground truncate">{c.score.player.name}</span>
+            {refStart.ppRef?.throws && (
+              <span className={`text-[11px] font-bold ${refStart.ppRef.throws === 'L' ? 'text-accent' : 'text-primary'}`}>
+                ({refStart.ppRef.throws}HP)
+              </span>
+            )}
+            <span className={`text-caption font-bold ${tierColor(tierFromScore(headlineScore))}`}>
+              {tierLabel(tierFromScore(headlineScore))}
             </span>
-          )}
+            <span className="text-[11px] text-muted-foreground">
+              {c.score.player.editorial_team_abbr} · {c.score.player.display_position}
+            </span>
+            {startCount >= 2 && !activeDate && (
+              <Badge color="success">{startCount} starts</Badge>
+            )}
+            {c.score.player.ownership_type === 'waivers' && (
+              <Badge color="accent">WW</Badge>
+            )}
+          </div>
+
+          <DayPills starts={c.starts} activeDate={activeDate} />
+          <CategoryStrip starts={c.starts} />
+        </div>
+
+        <div className="shrink-0 flex items-start gap-2 mt-0.5">
+          <VerdictStack score={displayScore} label={verdict.label} tone={verdict.tone} />
+          <Icon
+            icon={FiChevronDown}
+            size={16}
+            className={`text-muted-foreground transition-transform mt-1.5 ${isExpanded ? 'rotate-180' : ''}`}
+          />
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="space-y-1.5 px-2 pb-2">
+          {c.starts.map(start => {
+            if (!start.gameRef || !start.ppRef) return null;
+            const ctx = {
+              pp: start.ppRef,
+              opponentMlbId: start.opponentMlbId ?? 0,
+              isHome: !!start.isHome,
+              park: start.gameRef.park ?? null,
+              weather: start.gameRef.weather,
+              game: start.gameRef,
+            };
+            return (
+              <div key={start.date} className="bg-surface-muted/20 rounded-md">
+                <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border/40">
+                  <span className="font-semibold text-foreground">{start.dayLabel}</span>{' '}
+                  {start.isHome ? 'vs' : '@'} {start.opponent ?? '?'}
+                  {start.rating && (
+                    <span className="ml-2">
+                      Score: <span className="font-semibold text-foreground">{Math.round(start.rating.score)}</span>
+                    </span>
+                  )}
+                </div>
+                <ScoreBreakdownPanel
+                  c={ctx}
+                  teamOffense={teamOffense}
+                  scoredCategories={scoredPitcherCategories}
+                  focusMap={focusMap}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -182,31 +356,38 @@ function ContextLine({
 }
 
 // ---------------------------------------------------------------------------
-// Compare tray adapter — converts StreamCandidate[] → CompareTraySlot[]
+// View toggle
 // ---------------------------------------------------------------------------
 
-function streamSlotsFromCandidates(candidates: StreamCandidate[]): CompareTraySlot[] {
-  return candidates.map(c => {
-    const v = verdictLabel(c.rating.score);
-    return {
-      key: c.player.player_key,
-      name: c.player.name,
-      contextLine: `${c.player.editorial_team_abbr} · ${c.isHome ? 'vs' : '@'} ${c.opponent}`,
-      score: c.rating.score * 100,
-      scoreBand: c.rating.scoreBand * 100,
-      tierLabel: v.label,
-      tone: v.color,
-      categories: c.rating.categories.map(cat => ({
-        statId: cat.statId,
-        label: cat.goal,
-        score: cat.subScore * 100,
-        weight: cat.weight,
-        fit: categoryFit(cat.subScore, cat.weight),
-        detail: cat.detail,
-      })),
-      risk: c.riskSummary,
-    };
-  });
+function ViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: ViewMode;
+  onChange: (v: ViewMode) => void;
+}) {
+  const Btn = ({ mode, label }: { mode: ViewMode; label: string }) => {
+    const active = value === mode;
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(mode)}
+        className={`px-2 py-0.5 rounded text-caption font-semibold transition-colors ${
+          active
+            ? 'bg-primary text-white'
+            : 'text-muted-foreground hover:text-foreground'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-md bg-surface-muted/60 p-0.5 border border-border">
+      <Btn mode="week" label="Week" />
+      <Btn mode="byday" label="By Day" />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -214,82 +395,43 @@ function streamSlotsFromCandidates(candidates: StreamCandidate[]): CompareTraySl
 // ---------------------------------------------------------------------------
 
 export default function StreamingBoard({
-  date, games, freeAgents, gamesLoading, faLoading, faError,
-  teamOffense, offenseLoading, helper,
-  scoredPitcherCategories, focusMap,
+  weekScores,
+  days,
+  teamOffense,
+  loading,
+  scoredPitcherCategories,
+  focusMap,
+  helper,
 }: StreamingBoardProps) {
-  const candidates = useMemo(() => {
-    if (games.length === 0 || freeAgents.length === 0) return [];
-    const results: StreamCandidate[] = [];
-
-    for (const fa of freeAgents) {
-      // Hide all waiver-pool pitchers — Yahoo won't process the add until
-      // they clear, so they're not actually streamable. We don't have a
-      // per-player clear date from Yahoo's player-listing endpoint, so we
-      // can't conditionally surface them on dates after the clear. If we
-      // ever wire up the transactions endpoint to recover clear dates, this
-      // can become a `waiver_date > date` check instead.
-      if (fa.ownership_type === 'waivers') continue;
-
-      const match = matchFreeAgentToGame(fa, games);
-      if (!match) continue;
-
-      const { game, pp, isHome } = match;
-      const opponentTeam = isHome ? game.awayTeam : game.homeTeam;
-      const oppOffense = teamOffense[opponentTeam.mlbId] ?? null;
-
-      const pillInput: PillInput = {
-        pp,
-        oppOffense,
-        park: game.park ?? null,
-        weather: game.weather,
-        isHome,
-        game,
-        scoredCategories: scoredPitcherCategories,
-        focusMap,
-      };
-      const rating = scorePitcher(pillInput);
-      const oppPp = isHome ? game.awayProbablePitcher : game.homeProbablePitcher;
-      const ownStaffEra = (isHome ? game.homeTeam.staffEra : game.awayTeam.staffEra) ?? null;
-      const riskSummary = buildRiskSummary(rating, pp, oppOffense, game.park ?? null, { oppPp, ownStaffEra });
-
-      results.push({
-        player: fa,
-        pp,
-        opponent: opponentTeam.abbreviation,
-        opponentMlbId: opponentTeam.mlbId,
-        isHome,
-        park: game.park ?? null,
-        weather: game.weather,
-        game,
-        rating,
-        riskSummary,
-      });
-    }
-
-    results.sort((a, b) => b.rating.score - a.rating.score);
-    return results;
-  }, [games, freeAgents, teamOffense, scoredPitcherCategories, focusMap]);
-
-  const isLoading = gamesLoading || faLoading;
+  const candidates = useMemo(() => buildCandidates(weekScores), [weekScores]);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [compareSet, setCompareSet] = useState<Set<string>>(() => new Set());
+  const [viewMode, setViewMode] = useState<ViewMode>('week');
 
-  const compared = useMemo(
-    () => candidates.filter(c => compareSet.has(c.player.player_key)),
-    [candidates, compareSet],
-  );
+  const toggleExpand = (key: string) => {
+    setExpandedKey(prev => (prev === key ? null : key));
+  };
 
-  function toggleCompare(playerKey: string) {
-    setCompareSet(prev => {
-      const next = new Set(prev);
-      if (next.has(playerKey)) next.delete(playerKey);
-      else next.add(playerKey);
-      return next;
-    });
-  }
+  // By-day groups: candidates that have a start on each day, sorted by
+  // that day's per-start score. Two-start pitchers naturally appear in
+  // both their start dates' sections.
+  const dayGroups = useMemo(() => {
+    if (viewMode !== 'byday') return [];
+    return days
+      .map(day => {
+        const dayCandidates = candidates
+          .filter(c => c.starts.some(s => s.date === day.date))
+          .slice()
+          .sort((a, b) => {
+            const aScore = a.starts.find(s => s.date === day.date)?.rating?.score ?? 0;
+            const bScore = b.starts.find(s => s.date === day.date)?.rating?.score ?? 0;
+            return bScore - aScore;
+          });
+        return { day, candidates: dayCandidates };
+      })
+      .filter(g => g.candidates.length > 0);
+  }, [viewMode, days, candidates]);
 
-  if (isLoading) {
+  if (loading) {
     return (
       <Panel>
         <div className="h-4 bg-border-muted rounded w-48 mb-3 animate-pulse" />
@@ -306,130 +448,67 @@ export default function StreamingBoard({
     );
   }
 
+  const title = viewMode === 'week' ? 'Streaming Board — Week' : 'Streaming Board — By Day';
+  const summaryText = viewMode === 'week'
+    ? `${candidates.length} starter${candidates.length !== 1 ? 's' : ''}`
+    : `${dayGroups.length} day${dayGroups.length !== 1 ? 's' : ''} · ${candidates.length} unique starters`;
+
   return (
     <Panel
-      title={`Streaming Board — ${date}`}
+      title={title}
       action={
-        <span className="text-xs text-muted-foreground">
-          {candidates.length} starter{candidates.length !== 1 ? 's' : ''}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">{summaryText}</span>
+          <ViewModeToggle value={viewMode} onChange={setViewMode} />
+        </div>
       }
       helper={helper}
     >
-      {offenseLoading && (
-        <p className="text-xs text-muted-foreground mb-2 animate-pulse">Loading team offense data...</p>
-      )}
-
-      <CompareTray
-        slots={streamSlotsFromCandidates(compared)}
-        onToggle={toggleCompare}
-        onClear={() => setCompareSet(new Set())}
-      />
-
-      {faError ? (
-        <p className="text-sm text-error text-center py-4">Failed to load free agents</p>
-      ) : candidates.length === 0 ? (
+      {candidates.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-4">
-          {freeAgents.length === 0
-            ? 'No free agent data available'
-            : 'No free agent pitchers with probable starts found'}
+          No free agent pitchers with probable starts in the pickup window.
         </p>
-      ) : (
+      ) : viewMode === 'week' ? (
         <div className="space-y-1">
-          {candidates.map((c, i) => {
-            const isExpanded = expandedKey === c.player.player_key;
-            const isCompared = compareSet.has(c.player.player_key);
-            return (
-              <div key={c.player.player_key} className={`rounded-lg overflow-hidden ${isCompared ? 'ring-1 ring-primary/40' : ''} ${c.rating.score >= 0.70 ? 'bg-success/5' : c.rating.score < 0.50 ? 'bg-error/5' : ''}`}>
-                <div className="flex items-stretch">
-                  <label
-                    className="flex items-center justify-center w-8 shrink-0 cursor-pointer hover:bg-primary/10 transition-colors"
-                    title={isCompared ? 'Remove from compare' : 'Add to compare'}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isCompared}
-                      onChange={() => toggleCompare(c.player.player_key)}
-                      className="h-3.5 w-3.5 accent-primary cursor-pointer"
-                      aria-label={`Compare ${c.player.name}`}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedKey(isExpanded ? null : c.player.player_key)}
-                    className="flex-1 min-w-0 flex items-start gap-3 px-3 py-2 text-left hover:bg-surface-muted/40 transition-colors"
-                  >
-                    <div className="w-5 text-center text-xs font-bold text-muted-foreground mt-2.5 shrink-0">
-                      {i + 1}
-                    </div>
-
-                    {c.player.image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={c.player.image_url}
-                        alt={c.player.name}
-                        className="w-9 h-9 rounded-full border border-border object-cover shrink-0 mt-0.5"
-                        onError={e => {
-                          e.currentTarget.style.display = 'none';
-                          e.currentTarget.nextElementSibling?.classList.remove('hidden');
-                        }}
-                      />
-                    ) : null}
-                    <div className={`w-9 h-9 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold ${c.player.image_url ? 'hidden' : ''}`}>
-                      {c.player.name.charAt(0).toUpperCase()}
-                    </div>
-
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-sm font-semibold text-foreground truncate">{c.player.name}</span>
-                        <span className={`text-[11px] font-bold ${c.pp.throws === 'L' ? 'text-accent' : 'text-primary'}`}>
-                          ({c.pp.throws}HP)
-                        </span>
-                        <span className={`text-caption font-bold ${tierColor(c.rating.tier)}`}>
-                          {tierLabel(c.rating.tier)}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {c.player.editorial_team_abbr} · {c.player.display_position}
-                        </span>
-                        {c.player.ownership_type === 'waivers' && (
-                          <Badge color="accent">WW</Badge>
-                        )}
-                      </div>
-
-                      <ContextLine c={c} teamOffense={teamOffense} />
-
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <CategoryStrip rating={c.rating} />
-                        {c.riskSummary.length > 0 && (
-                          <span className="text-caption text-muted-foreground italic">
-                            risk: {c.riskSummary.join(' · ')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="shrink-0 flex items-start gap-2 mt-0.5">
-                      <VerdictStack rating={c.rating} />
-                      <Icon
-                        icon={FiChevronDown}
-                        size={16}
-                        className={`text-muted-foreground transition-transform mt-1.5 ${isExpanded ? 'rotate-180' : ''}`}
-                      />
-                    </div>
-                  </button>
-                </div>
-
-                {isExpanded && (
-                  <ScoreBreakdownPanel
-                    c={c}
+          {candidates.map((c, i) => (
+            <Row
+              key={c.score.player.player_key}
+              candidate={c}
+              rank={i + 1}
+              isExpanded={expandedKey === c.score.player.player_key}
+              onToggleExpand={toggleExpand}
+              teamOffense={teamOffense}
+              scoredPitcherCategories={scoredPitcherCategories}
+              focusMap={focusMap}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {dayGroups.map(({ day, candidates: dayCands }) => (
+            <section key={day.date}>
+              <h3 className="text-caption font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-2">
+                <span className="text-foreground">{day.dayLabel}</span>
+                <span className="text-muted-foreground/70">·</span>
+                <span>{dayCands.length} starter{dayCands.length !== 1 ? 's' : ''}</span>
+              </h3>
+              <div className="space-y-1">
+                {dayCands.map((c, i) => (
+                  <Row
+                    key={`${day.date}-${c.score.player.player_key}`}
+                    candidate={c}
+                    rank={i + 1}
+                    isExpanded={expandedKey === `${day.date}-${c.score.player.player_key}`}
+                    onToggleExpand={k => setExpandedKey(prev => (prev === k ? null : k))}
                     teamOffense={teamOffense}
-                    scoredCategories={scoredPitcherCategories}
+                    scoredPitcherCategories={scoredPitcherCategories}
                     focusMap={focusMap}
+                    activeDate={day.date}
                   />
-                )}
+                ))}
               </div>
-            );
-          })}
+            </section>
+          ))}
         </div>
       )}
     </Panel>

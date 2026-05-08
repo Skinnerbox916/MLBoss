@@ -1,8 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import MatchupPulse from '@/components/shared/MatchupPulse';
-import CategoryFocusBar from '@/components/shared/CategoryFocusBar';
 import Tabs from '@/components/ui/Tabs';
 import { Heading } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
@@ -13,17 +11,17 @@ import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useTeamOffense } from '@/lib/hooks/useTeamOffense';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
-import { useMatchupAnalysis } from '@/lib/hooks/useMatchupAnalysis';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
+import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import { useWeekBatterScores } from '@/lib/hooks/useWeekBatterScores';
+import { useWeekPitcherScores } from '@/lib/hooks/useWeekPitcherScores';
 import { useSlotAwareStreaming } from '@/lib/hooks/useSlotAwareStreaming';
-import { dayOffsetStr } from '@/lib/pitching/display';
+import { getStreamingGridDays } from '@/lib/dashboard/weekRange';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
-import DateStrip from './DateStrip';
 import StreamingBoard from './StreamingBoard';
 import BatterStreamingBoard from './BatterStreamingBoard';
-import StrategySummary from './StrategySummary';
+import GamePlanPanel from './GamePlanPanel';
 
 type StreamTab = 'pitchers' | 'batters';
 
@@ -59,27 +57,30 @@ export default function StreamingManager() {
 
   // ----- Shared inputs (used by either tab) -----------------------------
   const { categories: leagueCategories } = useLeagueCategories(leagueKey);
+  const { matchups, week } = useScoreboard(leagueKey);
+  const opponentName = useMemo(() => {
+    if (!teamKey) return undefined;
+    const userMatchup = matchups.find(m => m.teams.some(t => t.team_key === teamKey));
+    return userMatchup?.teams.find(t => t.team_key !== teamKey)?.name;
+  }, [matchups, teamKey]);
+  const isPickingForNextWeek = useMemo(() => new Date().getDay() === 0, []);
+
+  // Single corrected matchup analysis powers both tabs (batter + pitcher
+  // counting cats). Two consumers, one fetch — SWR de-dupes.
+  const {
+    analysis: matchupAnalysis,
+    isCorrected,
+    isLoading: matchupLoading,
+    myProjection,
+  } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
 
   // ----- Pitcher tab inputs --------------------------------------------
-  const [pitcherOffset, setPitcherOffset] = useState(1);
-  const pitcherDate = dayOffsetStr(pitcherOffset);
-  const { games: pitcherGames, isLoading: pitcherGamesLoading } = useGameDay(pitcherDate);
-  const { players: pitcherFAs, isLoading: pitcherFaLoading, isError: pitcherFaError } = useAvailablePitchers(leagueKey);
-  const pitcherOpposingTeamIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const g of pitcherGames) {
-      ids.add(g.homeTeam.mlbId);
-      ids.add(g.awayTeam.mlbId);
-    }
-    return Array.from(ids);
-  }, [pitcherGames]);
-  const { teams: teamOffense, isLoading: offenseLoading } = useTeamOffense(pitcherOpposingTeamIds);
+  const { players: pitcherFAs, isLoading: pitcherFaLoading } = useAvailablePitchers(leagueKey);
 
   const scoredPitcherCategories = useMemo(
     () => leagueCategories.filter(c => c.is_pitcher_stat),
     [leagueCategories],
   );
-  const { analysis: pitcherMatchupAnalysis } = useMatchupAnalysis(leagueKey, teamKey);
   const pitcherStatIds = useMemo(() => {
     const set = new Set<number>();
     for (const c of scoredPitcherCategories) set.add(c.stat_id);
@@ -92,7 +93,28 @@ export default function StreamingManager() {
     toggle: togglePitcherFocus,
     reset: resetPitcherFocus,
     hasOverrides: pitcherFocusOverrides,
-  } = useSuggestedFocus(pitcherMatchupAnalysis, pitcherPredicate);
+  } = useSuggestedFocus(matchupAnalysis, pitcherPredicate);
+
+  // Tomorrow's slate drives the team-offense ID list — covers ~30 teams
+  // when all play, and the SWR cache shares with `useWeekPitcherScores`'s
+  // internal D+1 fetch. Pitchers whose multi-day starts hit teams not on
+  // tomorrow's slate just lose their opp-side adjustment (forecast
+  // degrades gracefully to neutral). Acceptable trade for the simpler
+  // wiring; revisit if the gap matters.
+  const tomorrowDate = useMemo(() => getStreamingGridDays()[0]?.date, []);
+  const { games: tomorrowGames } = useGameDay(tomorrowDate);
+  const opposingTeamIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const g of tomorrowGames) {
+      ids.add(g.homeTeam.mlbId);
+      ids.add(g.awayTeam.mlbId);
+    }
+    return Array.from(ids);
+  }, [tomorrowGames]);
+  const { teams: teamOffense } = useTeamOffense(opposingTeamIds);
+
+  const { scored: pitcherWeekScores, days: pitcherPickupDays, isLoading: pitcherScoresLoading } =
+    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, pitcherFocusMap, teamOffense);
 
   // ----- Batter tab inputs ---------------------------------------------
   const { batters: batterFAs, isLoading: batterFaLoading } = useAvailableBatters(leagueKey, true);
@@ -102,12 +124,6 @@ export default function StreamingManager() {
     () => leagueCategories.filter(c => c.is_batter_stat),
     [leagueCategories],
   );
-  const {
-    analysis: batterMatchupAnalysis,
-    isCorrected,
-    isLoading: batterMatchupLoading,
-    myProjection,
-  } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
   const batterStatIds = useMemo(() => {
     const set = new Set<number>();
     for (const c of scoredBatterCategories) set.add(c.stat_id);
@@ -120,7 +136,7 @@ export default function StreamingManager() {
     toggle: toggleBatterFocus,
     reset: resetBatterFocus,
     hasOverrides: batterFocusOverrides,
-  } = useSuggestedFocus(batterMatchupAnalysis, batterPredicate);
+  } = useSuggestedFocus(matchupAnalysis, batterPredicate);
 
   // FA filter: 5% ownership floor, IL bypass. Lifted out of
   // BatterStreamingBoard so the same filtered list feeds both the FA
@@ -132,14 +148,12 @@ export default function StreamingManager() {
 
   // Per-FA week scoring (PA-weighted ratings, focus-honored). Lifted up
   // here so its output also feeds the slot-aware engine alongside being
-  // rendered in BatterStreamingBoard.
-  const { scored: batterFAScores, days: batterDays, isLoading: batterScoresLoading } =
+  // rendered in BatterStreamingBoard. The `days` returned here are the
+  // pickup-playable window — D+1 through Sunday on Mon-Sat, full next
+  // Mon-Sun on Sunday — so today is automatically excluded from value
+  // calculations.
+  const { scored: batterFAScores, days: pickupDays, isLoading: batterScoresLoading } =
     useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterFocusMap);
-
-  const remainingDays = useMemo(
-    () => batterDays.filter(d => d.isRemaining),
-    [batterDays],
-  );
 
   // Slot-aware streaming value: per-day assignStarters with and without
   // each FA. Captures position competition, multi-step rebalancing, and
@@ -149,13 +163,12 @@ export default function StreamingManager() {
     myProjection,
     myRoster,
     leaguePositions,
-    remainingDays,
+    pickupDays,
   );
 
-  const pitcherHelper =
-    pitcherOffset >= 4
-      ? 'MLB confirms probable pitchers roughly 3 days out — later dates may be incomplete.'
-      : undefined;
+  const pitcherHelper = isPickingForNextWeek
+    ? 'Sunday picks land on next week\'s matchup — week-aggregate scores reflect Mon-Sun coverage.'
+    : 'Multi-day window: rankings reward two-start pitchers when matchups favor it. MLB probables thin out past D+3.';
 
   if (ctxError) {
     return (
@@ -191,65 +204,54 @@ export default function StreamingManager() {
 
       {tab === 'pitchers' ? (
         <>
-          <DateStrip selectedOffset={pitcherOffset} onSelect={setPitcherOffset} />
-
-          {scoredPitcherCategories.length > 0 && (
-            <CategoryFocusBar
-              categories={scoredPitcherCategories}
-              focusMap={pitcherFocusMap}
-              onToggle={togglePitcherFocus}
-              title="Pitching Focus"
-              helper="Suggested by MLBoss · click to override"
-              onReset={resetPitcherFocus}
-              hasOverrides={pitcherFocusOverrides}
-              suggestedFocusMap={pitcherSuggestedFocusMap}
-            />
-          )}
-
-          <MatchupPulse leagueKey={leagueKey} teamKey={teamKey} side="pitching" />
+          <GamePlanPanel
+            analysis={matchupAnalysis}
+            isCorrected={isCorrected}
+            isLoading={matchupLoading}
+            side="pitching"
+            week={typeof week === 'number' ? week : undefined}
+            opponentName={opponentName}
+            isPickingForNextWeek={isPickingForNextWeek}
+            focusMap={pitcherFocusMap}
+            onToggle={togglePitcherFocus}
+            suggestedFocusMap={pitcherSuggestedFocusMap}
+            onReset={resetPitcherFocus}
+            hasOverrides={pitcherFocusOverrides}
+          />
 
           <StreamingBoard
-            date={pitcherDate}
-            games={pitcherGames}
-            freeAgents={pitcherFAs}
-            gamesLoading={pitcherGamesLoading}
-            faLoading={ctxLoading || pitcherFaLoading}
-            faError={pitcherFaError}
+            weekScores={pitcherWeekScores}
+            days={pitcherPickupDays}
             teamOffense={teamOffense}
-            offenseLoading={offenseLoading}
-            helper={pitcherHelper}
+            loading={ctxLoading || pitcherFaLoading || pitcherScoresLoading}
             scoredPitcherCategories={scoredPitcherCategories}
             focusMap={pitcherFocusMap}
+            helper={pitcherHelper}
           />
         </>
       ) : (
         <>
-          <StrategySummary
-            analysis={batterMatchupAnalysis}
+          <GamePlanPanel
+            analysis={matchupAnalysis}
             isCorrected={isCorrected}
-            isLoading={batterMatchupLoading}
+            isLoading={matchupLoading}
+            side="batting"
+            week={typeof week === 'number' ? week : undefined}
+            opponentName={opponentName}
+            actionableDays={pickupDays.length}
+            isPickingForNextWeek={isPickingForNextWeek}
             dailyBaselines={slotAware.dailyBaselines}
+            focusMap={batterFocusMap}
+            onToggle={toggleBatterFocus}
+            suggestedFocusMap={batterSuggestedFocusMap}
+            onReset={resetBatterFocus}
+            hasOverrides={batterFocusOverrides}
           />
-
-          {scoredBatterCategories.length > 0 && (
-            <CategoryFocusBar
-              categories={scoredBatterCategories}
-              focusMap={batterFocusMap}
-              onToggle={toggleBatterFocus}
-              title="Batting Focus"
-              helper="Suggested by MLBoss (corrected margin) · click to override"
-              onReset={resetBatterFocus}
-              hasOverrides={batterFocusOverrides}
-              suggestedFocusMap={batterSuggestedFocusMap}
-            />
-          )}
-
-          <MatchupPulse leagueKey={leagueKey} teamKey={teamKey} side="batting" />
 
           <BatterStreamingBoard
             faScores={batterFAScores}
             slotAwareValues={slotAware.byPlayerKey}
-            days={remainingDays}
+            days={pickupDays}
             focusMap={batterFocusMap}
             faLoading={ctxLoading || batterFaLoading || batterScoresLoading}
           />

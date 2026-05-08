@@ -29,7 +29,7 @@ import type { EnrichedGame, BatterSeasonStats } from '@/lib/mlb/types';
  * Response shape (JSON-friendly — Maps serialised as records):
  *   {
  *     teamKey, weekStart, weekEnd, daysElapsed,
- *     byCategory: { [statId]: { expectedCount, expectedPA } },
+ *     byCategory: { [statId]: { expectedCount, expectedDenom } },
  *     perPlayer: [{ mlbId, name, teamAbbr, weeklyScore, weeklyPA,
  *                   expectedGames, byCategory: {...}, perDay: [...] }],
  *     contributorCount,
@@ -153,17 +153,17 @@ export async function GET(request: Request) {
     const projection = projectBatterTeam(activeBatters, deps);
 
     // Map → record for JSON.
-    const byCategoryRecord: Record<number, { expectedCount: number; expectedPA: number }> = {};
+    const byCategoryRecord: Record<number, { expectedCount: number; expectedDenom: number }> = {};
     for (const [statId, cat] of projection.byCategory) {
       byCategoryRecord[statId] = {
         expectedCount: cat.expectedCount,
-        expectedPA: cat.expectedPA,
+        expectedDenom: cat.expectedDenom,
       };
     }
     const perPlayer = projection.perPlayer.map(p => {
-      const byCat: Record<number, { expectedCount: number; expectedPA: number }> = {};
+      const byCat: Record<number, { expectedCount: number; expectedDenom: number }> = {};
       for (const [statId, cat] of p.byCategory) {
-        byCat[statId] = { expectedCount: cat.expectedCount, expectedPA: cat.expectedPA };
+        byCat[statId] = { expectedCount: cat.expectedCount, expectedDenom: cat.expectedDenom };
       }
       return {
         mlbId: p.mlbId,

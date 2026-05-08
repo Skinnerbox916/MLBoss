@@ -86,22 +86,16 @@ export function renderPitcherStatLine(pp: ProbablePitcher): React.ReactNode {
 
 // ---------------------------------------------------------------------------
 // Team abbreviation normalization & name matching
+//
+// `normalizeTeamAbbr` is the canonical Yahoo↔MLB↔ESPN normalizer; the
+// alias table lives in `@/lib/mlb/teamAbbr` so every cross-source matcher
+// (FA→probable, rostered pitcher→probable, MLB↔ESPN scoreboard splice)
+// reads the same map. Re-exported here for back-compat — many callers
+// already import from `pitching/display`.
 // ---------------------------------------------------------------------------
 
-const TEAM_ABBR_ALIASES: Record<string, string> = {
-  AZ: 'ARI', ARI: 'ARI',
-  CHW: 'CWS', CWS: 'CWS',
-  WAS: 'WSH', WSH: 'WSH',
-  KCR: 'KC', KC: 'KC',
-  SDP: 'SD', SD: 'SD',
-  SFG: 'SF', SF: 'SF',
-  TBR: 'TB', TB: 'TB',
-};
-
-export function normalizeTeamAbbr(abbr: string): string {
-  const upper = (abbr ?? '').toUpperCase();
-  return TEAM_ABBR_ALIASES[upper] ?? upper;
-}
+export { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
+import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 
 function normalizeName(name: string): string {
   return name

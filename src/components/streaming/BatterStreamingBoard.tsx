@@ -148,7 +148,7 @@ function BatterRow({
     return Array.from(projection.byCategory.entries())
       .map(([statId, cat]) => ({
         statId,
-        magnitude: statId === 3 ? cat.expectedPA / 30 : cat.expectedCount,
+        magnitude: statId === 3 ? cat.expectedDenom / 30 : cat.expectedCount,
       }))
       .filter(c => c.magnitude > 0)
       .sort((a, b) => b.magnitude - a.magnitude)
@@ -274,13 +274,13 @@ function CatBadge({
   focus,
 }: {
   statId: number;
-  cat: { expectedCount: number; expectedPA: number };
+  cat: { expectedCount: number; expectedDenom: number };
   focus?: Focus;
 }) {
   const label = STAT_LABEL[statId] ?? `#${statId}`;
   const value =
     statId === 3
-      ? (cat.expectedPA > 0 ? cat.expectedCount / cat.expectedPA : 0).toFixed(3).replace(/^0\./, '.')
+      ? (cat.expectedDenom > 0 ? cat.expectedCount / cat.expectedDenom : 0).toFixed(3).replace(/^0\./, '.')
       : cat.expectedCount.toFixed(1);
   const focusClass =
     focus === 'chase' ? 'border-success/40 text-success'

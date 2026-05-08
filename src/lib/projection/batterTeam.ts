@@ -130,9 +130,10 @@ export interface PerCategoryProjection {
   /** Sum across (player, day) of `expected_rate × expected_PA` for counting
    *  cats; for AVG, the expected hits count `expected_AVG × expected_AB`. */
   expectedCount: number;
-  /** Aggregated expected PA across the projection window. For AVG this
-   *  is the AB sum (PA × 0.91), used as the rate denominator. */
-  expectedPA: number;
+  /** Aggregated denominator across the projection window. For batter AVG
+   *  this is the AB sum (PA × 0.91); for pitcher rate cats it would be
+   *  the IP sum. Used by the corrected-rows rate blender. */
+  expectedDenom: number;
 }
 
 export interface PlayerProjection {
@@ -280,12 +281,12 @@ export function projectBatterPlayer(
       const prior = byCategory.get(cat.statId);
       if (prior) {
         prior.expectedCount += dayCount;
-        prior.expectedPA += dayAB;
+        prior.expectedDenom += dayAB;
       } else {
         byCategory.set(cat.statId, {
           statId: cat.statId,
           expectedCount: dayCount,
-          expectedPA: dayAB,
+          expectedDenom: dayAB,
         });
       }
     }
@@ -347,7 +348,7 @@ export function projectBatterTeam(
       const prior = teamByCat.get(statId);
       if (prior) {
         prior.expectedCount += cat.expectedCount;
-        prior.expectedPA += cat.expectedPA;
+        prior.expectedDenom += cat.expectedDenom;
       } else {
         teamByCat.set(statId, { ...cat });
       }

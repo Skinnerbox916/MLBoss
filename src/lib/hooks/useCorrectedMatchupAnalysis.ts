@@ -4,31 +4,45 @@ import { useMemo } from 'react';
 import { useScoreboard } from './useScoreboard';
 import { useLeagueCategories } from './useLeagueCategories';
 import { useBatterTeamProjection, type BatterTeamProjectionResponse } from './useBatterTeamProjection';
+import { usePitcherTeamProjection, type PitcherTeamProjectionResponse } from './usePitcherTeamProjection';
 import { buildMatchupRows } from '@/components/shared/matchupRows';
-import { analyzeMatchup, type MatchupAnalysis } from '@/lib/matchup/analysis';
+import { analyzeMatchup, withSwing, type MatchupAnalysis } from '@/lib/matchup/analysis';
 import { composeCorrectedRows } from '@/lib/matchup/correctedRows';
 import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
+import type { ProjectedCategory } from './useBatterTeamProjection';
 
 /**
- * Same shape as `useMatchupAnalysis` but augmented with forward batter-cat
- * projection on both sides. Pitcher-cat margins remain on YTD only —
- * pitcher-team projection is a separate engine (see plan doc).
+ * Same shape as `useMatchupAnalysis` but augmented with forward
+ * projections on both sides. Batter cats correct via
+ * `useBatterTeamProjection`; counting pitcher cats (K, W, QS, IP)
+ * correct via `usePitcherTeamProjection`. Pitcher ratio cats
+ * (ERA, WHIP) pass through YTD — see `composeCorrectedRows` and the
+ * design discussion for rationale.
  *
- * Three SWR fetches under the hood: scoreboard (60s refresh), categories
- * (semi-dynamic), and two batter-team projections (5-min refresh each).
- * Returns YTD-only analysis on the first paint, then re-renders with the
- * corrected analysis once projections resolve. The `isCorrected` flag tells
- * consumers whether the projection has actually contributed.
+ * Five SWR fetches under the hood: scoreboard (60s refresh), categories
+ * (semi-dynamic), and four team projections (my+opp × batter+pitcher,
+ * 5-min refresh each). Returns YTD-only analysis on the first paint,
+ * then re-renders with the corrected analysis once projections resolve.
+ * The `isCorrected` flag tells consumers whether either-side projection
+ * has actually contributed.
+ *
+ * Each row on the returned analysis carries both `margin` (corrected
+ * end-of-week projection) and `rawMargin` (YTD only) plus `swing`
+ * (`margin - rawMargin`). `suggestedFocus` is direction-aware on the
+ * corrected margin: a category projected to lose is `chase`, projected
+ * to win not-locked is `neutral` (hold), and either extreme is `punt`.
  */
 export interface CorrectedMatchupAnalysis {
   analysis: MatchupAnalysis;
-  /** True once both my-team and opponent-team projections have resolved
-   *  and contributed at least one cat to the corrected rows. False during
-   *  the YTD-only first paint. */
+  /** True once at least one projection (batter or pitcher) has resolved
+   *  and contributed cats to the corrected rows. False during the
+   *  YTD-only first paint. */
   isCorrected: boolean;
   isLoading: boolean;
   myProjection: BatterTeamProjectionResponse | undefined;
   oppProjection: BatterTeamProjectionResponse | undefined;
+  myPitcherProjection: PitcherTeamProjectionResponse | undefined;
+  oppPitcherProjection: PitcherTeamProjectionResponse | undefined;
 }
 
 export function useCorrectedMatchupAnalysis(
@@ -46,6 +60,8 @@ export function useCorrectedMatchupAnalysis(
 
   const { projection: myProjection, isLoading: myProjLoading } = useBatterTeamProjection(teamKey, leagueKey);
   const { projection: oppProjection, isLoading: oppProjLoading } = useBatterTeamProjection(opponentTeamKey, leagueKey);
+  const { projection: myPitcherProjection, isLoading: myPitchProjLoading } = usePitcherTeamProjection(teamKey, leagueKey);
+  const { projection: oppPitcherProjection, isLoading: oppPitchProjLoading } = usePitcherTeamProjection(opponentTeamKey, leagueKey);
 
   const result = useMemo<CorrectedMatchupAnalysis>(() => {
     if (!teamKey) {
@@ -55,6 +71,8 @@ export function useCorrectedMatchupAnalysis(
         isLoading: scoreLoading || catsLoading,
         myProjection,
         oppProjection,
+        myPitcherProjection,
+        oppPitcherProjection,
       };
     }
 
@@ -68,6 +86,8 @@ export function useCorrectedMatchupAnalysis(
         isLoading: scoreLoading || catsLoading,
         myProjection,
         oppProjection,
+        myPitcherProjection,
+        oppPitcherProjection,
       };
     }
 
@@ -79,34 +99,48 @@ export function useCorrectedMatchupAnalysis(
     const finished = days.filter(d => !d.isRemaining).length;
     const daysElapsed = finished + 0.5;
 
-    // Compose corrected rows when both projections have resolved. Until
-    // then, use the base YTD rows so the page stays useful during the
-    // ~1-2s projection fetch latency.
-    let rows = baseRows;
+    // Merge batter + pitcher projection maps so composeCorrectedRows
+    // sees one stat_id → ProjectedCategory record per side.
+    const myMerged: Record<number, ProjectedCategory> = {
+      ...(myProjection?.byCategory ?? {}),
+      ...(myPitcherProjection?.byCategory ?? {}),
+    };
+    const oppMerged: Record<number, ProjectedCategory> = {
+      ...(oppProjection?.byCategory ?? {}),
+      ...(oppPitcherProjection?.byCategory ?? {}),
+    };
+    const hasAnyProjection = Object.keys(myMerged).length > 0 || Object.keys(oppMerged).length > 0;
+
+    const rawAnalysis = analyzeMatchup(baseRows, { daysElapsed });
     let isCorrected = false;
-    if (
-      myProjection?.byCategory &&
-      oppProjection?.byCategory &&
-      (Object.keys(myProjection.byCategory).length > 0 ||
-        Object.keys(oppProjection.byCategory).length > 0)
-    ) {
-      rows = composeCorrectedRows({
+    let analysis: MatchupAnalysis = rawAnalysis;
+    if (hasAnyProjection) {
+      const correctedRows = composeCorrectedRows({
         baseRows,
-        myProjection: myProjection.byCategory,
-        oppProjection: oppProjection.byCategory,
+        myProjection: myMerged,
+        oppProjection: oppMerged,
         daysElapsed: finished, // integer days for the AB-estimation fallback
       });
+      const correctedAnalysis = analyzeMatchup(correctedRows, { daysElapsed });
+      analysis = withSwing(correctedAnalysis, rawAnalysis);
       isCorrected = true;
     }
 
     return {
-      analysis: analyzeMatchup(rows, { daysElapsed }),
+      analysis,
       isCorrected,
-      isLoading: scoreLoading || catsLoading || myProjLoading || oppProjLoading,
+      isLoading: scoreLoading || catsLoading || myProjLoading || oppProjLoading || myPitchProjLoading || oppPitchProjLoading,
       myProjection,
       oppProjection,
+      myPitcherProjection,
+      oppPitcherProjection,
     };
-  }, [matchups, teamKey, categories, myProjection, oppProjection, scoreLoading, catsLoading, myProjLoading, oppProjLoading]);
+  }, [
+    matchups, teamKey, categories,
+    myProjection, oppProjection, myPitcherProjection, oppPitcherProjection,
+    scoreLoading, catsLoading,
+    myProjLoading, oppProjLoading, myPitchProjLoading, oppPitchProjLoading,
+  ]);
 
   return result;
 }

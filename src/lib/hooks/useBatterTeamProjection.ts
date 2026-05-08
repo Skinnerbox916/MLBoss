@@ -1,10 +1,12 @@
 import useSWR from 'swr';
 import { fetcher } from './fetcher';
 
-/** Per-cat counting / AB sum across the team's projected week. */
+/** Per-cat counting + denominator sum across the team's projected week.
+ *  For batter AVG the denominator is AB; for pitcher rate cats it would
+ *  be IP. Counting cats ignore `expectedDenom`. */
 export interface ProjectedCategory {
   expectedCount: number;
-  expectedPA: number;
+  expectedDenom: number;
 }
 
 export interface ProjectedPerDay {

@@ -300,7 +300,15 @@ async function fetchTeamStaffEra(
 // name from ESPN. Names are then resolved to MLB IDs via `resolveMLBId`,
 // after which the standard enrichment pipeline (line + Savant + platoon +
 // recent form + talent) runs unchanged.
+//
+// MLB and ESPN disagree on Arizona's abbreviation (`AZ` vs `ARI`); without
+// canonicalization the matchup-key lookup silently misses every D-backs
+// game. The shared alias table in `@/lib/mlb/teamAbbr` covers that and
+// every other historically-divergent franchise so this engine and the
+// FA→probable matcher in `pitching/display.tsx` can never drift.
 // ---------------------------------------------------------------------------
+
+import { normalizeTeamAbbr as canonicalScheduleAbbr } from './teamAbbr';
 
 /**
  * Build a `Map<homeAbbr|awayAbbr, { home, away }>` from an ESPN scoreboard
@@ -319,7 +327,7 @@ function indexEspnPitchers(
     const away = comp.competitors?.find(c => c.homeAway === 'away');
     if (!home || !away) continue;
     const [homeName, awayName] = extractPitchersFromEvent(event);
-    const key = `${(home.team.abbreviation || '').toUpperCase()}|${(away.team.abbreviation || '').toUpperCase()}`;
+    const key = `${canonicalScheduleAbbr(home.team.abbreviation)}|${canonicalScheduleAbbr(away.team.abbreviation)}`;
     map.set(key, { home: homeName, away: awayName });
   }
   return map;
@@ -408,7 +416,7 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
   // name, ensuring full-week coverage.
   const espnByMatchup = indexEspnPitchers(espn);
   for (const game of games) {
-    const key = `${game.homeTeam.abbreviation.toUpperCase()}|${game.awayTeam.abbreviation.toUpperCase()}`;
+    const key = `${canonicalScheduleAbbr(game.homeTeam.abbreviation)}|${canonicalScheduleAbbr(game.awayTeam.abbreviation)}`;
     const espnNames = espnByMatchup.get(key);
     if (espnNames) {
       game.homeProbablePitcher = espnNames.home ? stubPitcher(espnNames.home) : null;

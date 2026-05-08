@@ -48,6 +48,10 @@ src/lib/pitching/     — three-layer pitcher evaluation engine
   ├── rating.ts       — Layer 3: PitcherRating (forecast → 0-100 score, score-derived tier, focus-weighted contributions)
   ├── scoring.ts      — public API consumed by UI (composes forecast + rating; named to match the original site of the legacy shim)
   └── display.tsx     — UI helpers (tier color, weather icon, pill summary, etc.)
+src/lib/projection/   — forward projection engines (batter + pitcher)
+  ├── batterTeam.ts   — projectBatterPlayer / projectBatterTeam (per-PA × PA aggregation across the matchup week)
+  ├── pitcherTeam.ts  — projectPitcherPlayer / projectPitcherTeam (per-start aggregation; shares PerCategoryProjection shape)
+  └── slotAware.ts    — batter-only: per-day assignStarters with/without each FA → streaming value
 src/lib/lineup/       — compose layer for lineup optimization
 src/lib/hooks/        — client-side compose layer (SWR + page-shaped views)
 ```
@@ -229,7 +233,11 @@ Each scoring concept must have exactly one canonical implementation. When we hav
 | Pitcher game forecast (talent + context) | `buildGameForecast` in [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts) |
 | Pitcher rating (0-100, tier derived from score) | `getPitcherRating` in [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts) |
 | Batter rating | `getBatterRating` in [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts) |
-| Streaming-page composite (UI-shaped wrapper around forecast + rating) | `getPitcherRating` in [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
+| Streaming-page composite (UI-shaped wrapper around forecast + rating) | `scorePitcher` in [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
+| Forward batter projection (per-player + team aggregator) | `projectBatterPlayer` / `projectBatterTeam` in [src/lib/projection/batterTeam.ts](../src/lib/projection/batterTeam.ts) |
+| Forward pitcher projection (per-pitcher + team aggregator) | `projectPitcherPlayer` / `projectPitcherTeam` in [src/lib/projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) |
+| Corrected matchup margin (YTD + projection, both sides) | `useCorrectedMatchupAnalysis` in [src/lib/hooks/useCorrectedMatchupAnalysis.ts](../src/lib/hooks/useCorrectedMatchupAnalysis.ts) (folds batter + pitcher counting cats; ratio pitcher cats stay YTD by design) |
+| Team-abbreviation canonicalization (Yahoo / MLB / ESPN) | `normalizeTeamAbbr` in [src/lib/mlb/teamAbbr.ts](../src/lib/mlb/teamAbbr.ts) — single alias table for every cross-source matcher |
 
 Adding a second function that does any of the above — even "just slightly different for this one page" — is forbidden. Add a parameter, return a richer shape, or add a wrapper over the canonical function.
 
@@ -237,6 +245,64 @@ Historical violations and their resolution:
 
 - ~~`blendSavant` in src/lib/mlb/savant.ts duplicates `blendRate`~~ — **resolved** by introducing `blendRateOrNull` and migrating callers (Phase 4b).
 - ~~`classifyPitcherTier` (rule-based) and `pitcherTalentScore` (RV/100-based) gave the same pitcher inconsistent verdicts~~ — **resolved** in Phase 4d by collapsing both into a single three-layer pipeline: `PitcherTalent` (talent.ts) → `GameForecast` (forecast.ts) → `PitcherRating` (rating.ts). Tiers now derive from rating score via a single `tierFromScore` mapping. See [pitcher-evaluation.md](pitcher-evaluation.md).
+
+## Forward projection engines
+
+`src/lib/projection/` is the home of the forward-looking aggregation primitives. The shape is symmetric across batter and pitcher sides: a per-player primitive (one player × the day window) on top of which a team aggregator and a per-FA week-scoring hook are thin wrappers. Both sides emit the same `PerCategoryProjection` row shape (`{ statId, expectedCount, expectedDenom }`) so `composeCorrectedRows` and `useCorrectedMatchupAnalysis` consume both without branching.
+
+```
+                     ┌──────────────────────────┐
+                     │ Per-day primitives        │  Layer 2/3 (talent + rating)
+                     │ getBatterRating /         │
+                     │ buildGameForecast +       │
+                     │ getPitcherRating          │
+                     └──────────────┬───────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+┌────────────────┐         ┌────────────────┐         ┌────────────────┐
+│ Per-player     │         │ Team aggregate │         │ Per-FA week    │
+│ projection     │         │ (sum over      │         │ scoring        │
+│ (one × N days) │         │  active roster)│         │ (FA pool ×     │
+│                │         │                │         │  pickup window)│
+└────────────────┘         └────────────────┘         └────────────────┘
+
+Batter side:
+  projectBatterPlayer  →  projectBatterTeam   →  useWeekBatterScores
+                          (via /api/projection/batter-team
+                           + useBatterTeamProjection)
+
+Pitcher side:
+  projectPitcherPlayer →  projectPitcherTeam  →  useWeekPitcherScores
+                          (via /api/projection/pitcher-team
+                           + usePitcherTeamProjection)
+```
+
+Two reuse rules enforced by the shape:
+
+1. **One per-player primitive per side.** All three consumers (team aggregate, opponent aggregate, per-FA week ranking) call the same `projectBatterPlayer` / `projectPitcherPlayer`. Don't write a parallel "but for the streaming board" version — extend the primitive or wrap it.
+2. **One row shape across batter and pitcher.** `PerCategoryProjection` carries a denominator-agnostic `expectedDenom` (AB for batter AVG, IP for pitcher ratio cats). The corrected-rows pipeline ignores ratio pitcher cats per design — see [streaming-page.md](streaming-page.md#ratio-cats-are-ytd-only) — but the field is there for future use.
+
+Pickup window primitives live in `src/lib/dashboard/weekRange.ts`:
+
+```typescript
+getMatchupWeekDays()      // Mon-Sun for the current matchup; isRemaining flag per day
+getStreamingGridDays()    // Always 7 days starting tomorrow (or full next week on Sunday); stable hook order
+getPickupPlayableDays()   // Subset of grid actually usable by a pickup made now
+```
+
+Why the same shape both sides: the streaming page mounts both a batter and a pitcher tab, and the corrected matchup margin needs to fold both projections into one row set. Maintaining type symmetry means the Game Plan card, the corrected analysis, and the streaming boards can all consume either projection without a per-side branch.
+
+### Projection API routes
+
+| Endpoint | Hook | Purpose | TTL |
+|----------|------|---------|-----|
+| `GET /api/projection/batter-team?teamKey=&leagueKey=` | `useBatterTeamProjection` | Forward batter-cat projection for a team across the matchup week's remaining days | 5 min |
+| `GET /api/projection/pitcher-team?teamKey=&leagueKey=` | `usePitcherTeamProjection` | Forward pitcher-cat projection for a team (counting cats: K, W, QS, IP) | 5 min |
+
+Both routes filter their input roster (active batters / non-IL pitchers), fan out per-day games via `getGameDay`, and run the corresponding `projectXxxTeam` engine. The pitcher-team route does name-based matching against probable starters in the day's slate and bails on pitchers whose probable doesn't appear (relievers naturally fall out — they don't probable-start).
+
+`useCorrectedMatchupAnalysis` runs four projections in parallel (my+opp × batter+pitcher), merges the per-cat projection records into one map per side, and hands them to `composeCorrectedRows`. The output `MatchupAnalysis` has corrected counting cats on both sides; ratio pitcher cats pass through YTD.
 
 ## Yahoo fantasy layer
 

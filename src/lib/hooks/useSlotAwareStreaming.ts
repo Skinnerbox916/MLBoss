@@ -24,7 +24,7 @@ import type { WeekBatterScore } from './useWeekBatterScores';
  *   - FA per-day scores come from the FA aggregator (`useWeekBatterScores`).
  *   - Slot template comes from `useRosterPositions`.
  *
- * Returns the slot-aware ranking + per-day baselines for the StrategySummary.
+ * Returns the slot-aware ranking + per-day baselines for GamePlanPanel.
  */
 export function useSlotAwareStreaming(
   faScores: WeekBatterScore[],

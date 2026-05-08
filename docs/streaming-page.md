@@ -1,54 +1,85 @@
 # Streaming Page Architecture
 
-The `/streaming` page is MLBoss's dedicated pitcher-pickup tool. It is **not** a daily lineup surface — daily pitcher sit/start lives on the Today page (`/lineup`, Pitchers tab). Streaming is about rotating through the ~6 moves-per-week budget on the 1-2 bench pitcher slots that rotate, with visibility multiple days ahead.
+The `/streaming` page is MLBoss's dedicated pickup tool — pitchers and batters in tabs. It is **not** a daily lineup surface; daily pitcher sit/start lives on the Today page (`/lineup`, Pitchers tab). Streaming is about rotating through the ~6 moves-per-week budget on the 1-2 bench slots that rotate, with visibility multiple days ahead.
 
-➜ Architecture: [unified-rating-model.md](unified-rating-model.md) (canonical) | Data layer: [data-architecture.md](data-architecture.md) | MLB API: [mlb-api-reference.md](mlb-api-reference.md) | Today page: split between `src/components/lineup/TodayPitchers.tsx` and `src/components/lineup/TodayManager.tsx`
+➜ Architecture: [unified-rating-model.md](unified-rating-model.md) (canonical) | Data layer: [data-architecture.md](data-architecture.md) | Recommendation engine: [recommendation-system.md](recommendation-system.md) | MLB API: [mlb-api-reference.md](mlb-api-reference.md) | Today page: split between `src/components/lineup/TodayPitchers.tsx` and `src/components/lineup/TodayManager.tsx`
 
 ## Entry Point
 
-`src/components/streaming/StreamingManager.tsx` orchestrates the page. It renders:
+`src/components/streaming/StreamingManager.tsx` orchestrates the page. Two tabs:
 
-1. A `MatchupPulse` with `side="pitching"` so pickup decisions know which pitching categories you need to help this week.
-2. A `DateStrip` that selects the target date — D+1 (default) through D+5. See [Multi-day probables](#multi-day-probables).
-3. The `StreamingBoard` in `src/components/streaming/StreamingBoard.tsx`, which fuses Yahoo FA pitchers with MLB probable starters for the selected date.
+- **Pitchers** — multi-day probable starts ranked by week-aggregate projected output. The two-start bias falls out of the math: a 2-start streamer sums two per-start scores, naturally outranking single-start pitchers of equal per-start quality.
+- **Batters** — rest-of-week batter pickups ranked by slot-aware streaming value against a corrected matchup margin.
+
+Both tabs share a top-level `GamePlanPanel` (per side) that contains the chase/hold/punt grouping and the inline focus pills. There is no longer a standalone `CategoryFocusBar` or `MatchupPulse` on this page — both retired in favor of the consolidated Game Plan view (see [Game Plan Card](#game-plan-card) below).
 
 The page is mounted at `src/app/streaming/page.tsx`.
 
-## Multi-day probables
+## Pickup Window
 
-Yahoo only publishes probable pitchers for tomorrow. MLB's `/schedule?date=...&hydrate=probablePitcher` works for any date (see `src/lib/mlb/schedule.ts`), and reliably hydrates D+1 through ~D+3. D+4 and D+5 become progressively thinner — most clubs haven't announced that far out. This is surfaced in-page via a helper note on the `StreamingBoard` panel.
+Both tabs operate over the same time horizon: **the pickup-playable window**. Any pickup made now lands on a roster *tomorrow*, so today is excluded from value calculations.
 
-The `DateStrip` component renders a simple horizontal strip of day buttons. The board re-fetches `useGameDay(selectedDate)` when the strip changes, so each date has its own SWR cache entry. Team offense (`useTeamOffense`) is fetched once per unique team set and reused across dates.
+```typescript
+// src/lib/dashboard/weekRange.ts
+getPickupPlayableDays() // Mon-Sat: tomorrow → Sunday. Sunday: full next Mon-Sun.
+getStreamingGridDays()  // Same shape, always 7 days for stable hook order.
+```
 
-## Data Pipeline (Four Sources)
+Window length implications for pitcher streaming:
 
-The streaming board fuses data from four independent sources. Each has its own SWR hook and cache tier:
+- Sun/Mon picks see ~7 days — plenty of two-start coverage.
+- Wed picks see ~4 days — at most one start per pitcher (rotation gap > remaining window).
+- Engine just iterates the window; two-start coverage falls out naturally without special-casing.
+
+## Pitcher Tab Pipeline
+
+Three engines compose the pitcher tab. None are bolt-ons; they share the per-start primitive at the bottom of the stack.
+
+```
+              ┌─────────────────────────────────────────┐
+              │       buildGameForecast (per start)     │  Layer 2 — talent + context
+              │       getPitcherRating  (per start)     │  Layer 3 — fantasy-cat scoring
+              └────────────────────┬────────────────────┘
+                                   │
+        ┌──────────────────────────┼──────────────────────────┐
+        ▼                          ▼                          ▼
+┌────────────────┐         ┌────────────────┐         ┌────────────────┐
+│ scorePitcher   │         │ projectPitcher │         │ projectPitcher │
+│   (single)     │         │   Player       │         │   Team         │
+│                │         │   (multi-start)│         │ (roster-wide)  │
+├────────────────┤         ├────────────────┤         ├────────────────┤
+│ Single-start   │         │ FA week scores │         │ Corrected      │
+│ breakdown      │         │ for ranking    │         │ pitcher-cat    │
+│ panel          │         │ (sum across    │         │ matchup margin │
+│ (expanded row) │         │  starts)       │         │ (counting cats)│
+└────────────────┘         └────────────────┘         └────────────────┘
+```
+
+| Layer | File | Role |
+|-------|------|------|
+| Per-start forecast | `src/lib/pitching/forecast.ts` | Talent + game → expected K/IP/ER/BB/H + P(QS), P(W) |
+| Per-start rating | `src/lib/pitching/rating.ts` | `GameForecast` → 0-100 score + per-cat sub-scores |
+| Multi-start FA score | `src/lib/projection/pitcherTeam.ts` (`projectPitcherPlayer`) | Aggregates per-start ratings + counting cats over the pickup window |
+| Roster-wide team projection | same file (`projectPitcherTeam`) | Sums FA primitives over a team's roster for the corrected pitcher-cat margin |
+| Single-start breakdown | `src/lib/pitching/scoring.ts` (`scorePitcher`) | UI-shaped per-start scoring; consumed by `ScoreBreakdownPanel` on row expand |
+
+The streaming board's per-FA ranking signal is `projection.weeklyScore` — the **sum** of per-start rating scores within the pickup window. Summing (not averaging) is what privileges two-start pitchers. Per-cat counting projections (`byCategory`) sum across starts the same way; ratio cats record numerator/denominator but pass through unchanged on the corrected margin (see [Ratio cats are YTD only](#ratio-cats-are-ytd-only)).
+
+## Data Pipeline
 
 | Source | Hook | Endpoint | TTL | What it gives us |
 |--------|------|----------|-----|------------------|
 | **Yahoo free agents** | `useAvailablePitchers` | `/api/fantasy/players` | 5 min | Eligible FA/waiver pitchers with `editorial_team_abbr`, `ownership_type`, `image_url` |
-| **MLB schedule** | `useGameDay(date)` | `/api/mlb/games` | 5 min | Games for the selected date with probable pitchers, venue, park factors, weather |
-| **MLB team offense** | `useTeamOffense(teamIds)` | `/api/mlb/team-offense` | 1 hour | Season batting + vs-LHP/RHP splits for every team appearing in the games |
-| **League pitching categories** | `useLeagueCategories` + `useScoreboard` | `/api/fantasy/*` | 10 min / 1 min | Drives the Matchup Pulse panel |
+| **MLB schedule (per day, ×7)** | `useGameDay(date)` | `/api/mlb/game-day` | 5 min | Probable starters (with talent stamped), venue, park, weather, lineups |
+| **MLB team offense** | `useTeamOffense(teamIds)` | `/api/mlb/team-offense` | 1 hour | Season batting + vs-LHP/RHP splits |
+| **League pitching categories** | `useLeagueCategories` + `useScoreboard` | `/api/fantasy/*` | 10 min / 1 min | Drives the Game Plan Panel chase/hold/punt grouping |
+| **Pitcher-team projections (mine + opp)** | `usePitcherTeamProjection` | `/api/projection/pitcher-team` | 5 min | Counting-cat projections that feed `useCorrectedMatchupAnalysis` |
 
-The fusion happens entirely client-side in a `useMemo` inside `StreamingBoard`, keyed on `[games, freeAgents, teamOffense]`.
+The fan-out happens in `useWeekPitcherScores`: seven `useGameDay` calls (stable hook order; SWR de-dupes), then per-FA `projectPitcherPlayer` over the playable window. The FA pool is filtered to those with at least one probable start; pitchers with zero starts in the window are dropped before reaching the board.
 
-### Why `teamOffense` is fetched separately
+### Team-offense lookup approximation
 
-Instead of baking team offense into `useGameDay`, we collect the set of opposing team MLB IDs from the schedule in a `useMemo`, then hand them to `useTeamOffense`:
-
-```typescript
-const opposingTeamIds = useMemo(() => {
-  const ids = new Set<number>();
-  for (const g of games) {
-    ids.add(g.homeTeam.mlbId);
-    ids.add(g.awayTeam.mlbId);
-  }
-  return Array.from(ids);
-}, [games]);
-```
-
-This keeps the schedule endpoint hot (5-min TTL) without dragging a 30-team offense fetch into it, and lets team offense ride its own 1-hour TTL since it's much more stable.
+The pitcher tab fetches `useTeamOffense` keyed by tomorrow's slate (D+1) team ids — usually 28-30 teams when all play. Multi-day starts against teams not on tomorrow's slate degrade the forecast to neutral opp context. The trade is simpler wiring vs. fetching team offense for the union across the 7-day grid; revisit if rankings feel off mid-week.
 
 ## Yahoo Free Agent Pitcher Pagination
 
@@ -71,29 +102,35 @@ const [spFa, rpFa, spW, rpW] = await Promise.all([
 
 ## Waiver pool is hidden
 
-Pitchers tagged `ownership_type === 'waivers'` are dropped from the streaming board entirely. This is intentionally conservative: Yahoo doesn't expose a per-player `waiver_date` on the player-listing endpoint, so we can't surface a player on dates ≥ their clear date the way we'd ideally want to (e.g. show a Saturday-clear pitcher on a D+3 view that lands on Saturday).
+Pitchers tagged `ownership_type === 'waivers'` are dropped from the streaming board entirely. This is intentionally conservative: Yahoo doesn't expose a per-player `waiver_date` on the player-listing endpoint, so we can't surface a player on dates ≥ their clear date.
 
 **Upgrade path** if we want date-aware waiver gating: cross-reference `/league/{key}/transactions` for each waiver player's drop timestamp with the league's waiver-period setting from `/league/{key}/settings` to compute the clear date, and revert the board filter to `waiver_date > date → skip`.
 
 ## Free Agent → Probable Starter Matching
 
-`matchFreeAgentToGame` in `src/lib/pitching/display.tsx` cross-references a Yahoo FA against MLB probable pitchers. Two layers of normalization handle the drift between the two APIs:
+`projectPitcherPlayer` uses `isLikelySamePlayer` (in `src/lib/pitching/display.tsx`) to cross-reference a Yahoo FA against the day's probable pitchers. Same matcher used by:
+
+- `matchFreeAgentToGame` (single-start FA matcher, kept for back-compat)
+- `matchProbableStarts` (rostered-pitcher matcher in `probableMatch.ts`)
 
 ### Team abbreviation aliasing
 
+The single canonical alias table is in `src/lib/mlb/teamAbbr.ts` — every cross-source matcher (Yahoo↔MLB FA matching, MLB↔ESPN scoreboard splice in `schedule.ts`) reads from it. Centralizing here closes the drift hazard that previously caused PIT @ ARI's probable starter to silently disappear when only one of two duplicate tables had the AZ/ARI entry.
+
 ```typescript
-const TEAM_ABBR_ALIASES: Record<string, string> = {
+// src/lib/mlb/teamAbbr.ts
+const ALIASES: Record<string, string> = {
   AZ: 'ARI', ARI: 'ARI',
   CHW: 'CWS', CWS: 'CWS',
   WAS: 'WSH', WSH: 'WSH',
-  KCR: 'KC', KC: 'KC',
-  SDP: 'SD', SD: 'SD',
-  SFG: 'SF', SF: 'SF',
-  TBR: 'TB', TB: 'TB',
+  KCR: 'KC',  KC:  'KC',
+  SDP: 'SD',  SD:  'SD',
+  SFG: 'SF',  SF:  'SF',
+  TBR: 'TB',  TB:  'TB',
 };
 ```
 
-Yahoo uses `KCR` / `SDP` / `SFG` / `TBR` / `CHW` / `WAS`; MLB uses the shorter forms. `normalizeTeamAbbr` collapses both sides to a canonical key.
+Yahoo uses `KCR` / `SDP` / `SFG` / `TBR` / `CHW` / `WAS`; MLB uses the shorter forms; ESPN agrees with Yahoo on most (with the notable AZ/ARI exception that hits MLB-side keys). `normalizeTeamAbbr` collapses every variant to a canonical form, idempotently.
 
 ### Name normalization
 
@@ -101,7 +138,7 @@ Yahoo uses `KCR` / `SDP` / `SFG` / `TBR` / `CHW` / `WAS`; MLB uses the shorter f
 function normalizeName(name: string): string {
   return name
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')    // strip diacritics (Peña → Pena)
+    .replace(/[̀-ͯ]/g, '')    // strip diacritics (Peña → Pena)
     .toLowerCase()
     .replace(/[.,']/g, '')               // strip punctuation (J.T. → JT, O'Neill → ONeill)
     .replace(/\s+(jr|sr|ii|iii|iv)$/i, '') // strip suffixes
@@ -109,26 +146,72 @@ function normalizeName(name: string): string {
 }
 ```
 
-Match priority in `matchFreeAgentToGame` (and the parallel rostered-pitcher matcher in `probableMatch.ts` / `TodayPitchers.tsx`):
-1. Team abbreviation must match (after aliasing)
+Match priority:
+1. Team abbreviation match (after canonicalization)
 2. Either:
    - Full normalized name equality, OR
    - Normalized last name equality **AND** first-initial agreement
 
-The first-initial gate is what stops the same-team-same-surname collision: when the Athletics carry both Jacob and Otto López (or — historically — two Ureñas), last-name-only matching attached the probable starter's projection to BOTH players, surfacing two streamers for one game. The `isLikelySamePlayer` helper in `display.tsx` is the single canonical matcher; both the streaming page and the today/dashboard probable-starter matchers route through it.
+The first-initial gate stops same-team-same-surname collisions (the Athletics carrying both Jacob and Otto López; historically two Ureñas). Last-name-only matching attached the probable starter's projection to BOTH players, surfacing two streamers for one game.
 
-**Future improvement:** if we ever sync Yahoo `player_id` ↔ MLB `id`, this name-based matching becomes unnecessary and we should switch to ID-based matching.
+**Future improvement:** if we ever sync Yahoo `player_id` ↔ MLB `id`, this name-based matching becomes unnecessary.
 
-## Per-Category Sub-Scores
+## Streaming Board
 
-Every pitcher row is rated by `scorePitcher` in `src/lib/pitching/scoring.ts` (UI-shaped wrapper around `getPitcherRating` in `src/lib/pitching/rating.ts`), which builds a 0-1 sub-score per fantasy category the league actually scores (default cats: QS, K, W, ERA, WHIP). The sub-scores drive both:
+`src/components/streaming/StreamingBoard.tsx` renders the ranked candidate list. Two view modes via the segmented toggle in the panel header:
 
-- The **category-fit pills** on each row (strong / weak / punted), and
-- The **composite score** — a focus-weighted average of the active sub-scores, multiplied at the composite by **only** velocity and platoon. Park, weather, and opp lineup quality live at the per-PA layer (in `forecast.ts`) — they shape `expectedPerPA` directly so different stats respond differently to the same stadium (Coors suppresses K and inflates HR; a flat composite multiplier would conflate the two). See [unified-rating-model.md](unified-rating-model.md) for the layered architecture.
+### Week view (default)
 
-The park multiplier comes from `getParkAdjustment` in [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) — the same primitive the lineup-side batter rating consumes, so a pitcher rating @ Coors and a batter rating @ Coors agree on the underlying park math.
+One row per pitcher with at least one probable start in the window, ranked by `projection.weeklyScore` descending. Each row shows:
 
-Sub-scores are produced by [`PitcherRating`](../src/lib/pitching/rating.ts) (Layer 3). Each Yahoo-scored category gets projected from the `GameForecast.expectedPerGame` and normalised against a per-stat league window. The category-to-projection map:
+- Header line: name, throwing-hand pill, tier label, team/position, two-start badge if `expectedStarts >= 2`, waiver badge if applicable
+- **Day pills**: a chip per probable start (`MON @ ARI 65` shape) — color-coded by per-start score (success ≥70, neutral 50-69, error <50)
+- Aggregated category strip (per-cat fit averaged across starts)
+- Score column: the **summed** weekly score + Strong/Fair/Avoid verdict (verdict is computed from per-start average so two-start pitchers don't auto-promote on volume alone)
+
+### By-Day view
+
+Sections per date in the pickup window. Within each section, candidates are filtered to those with a start that day and sorted by **that day's per-start score**. Two-start pitchers naturally appear in both their start-day sections; the section's active date pill gets a primary ring so it reads as "this start" vs. "also pitches another day."
+
+By-day's score column shows the per-day score (not the week sum), and the verdict is the per-start band directly. This is the lens for "best Mon options, best Tue options…" sequencing — pick one per day you want covered.
+
+### Expanded row
+
+Either view, expanding a row stacks `ScoreBreakdownPanel` for each probable start in the window. The panel was originally per-start (single-day model) and is reused unchanged — the `gameRef` and `ppRef` carried on each `PerStartProjection` populate the breakdown context.
+
+### Row tint
+
+Per-start average score drives the row's background tint:
+- `≥ 70` → `bg-success/5` (green — favorable)
+- `50–69` → no tint (neutral)
+- `< 50` → `bg-error/5` (red — rough)
+
+In by-day view, the tint reflects that day's score; in week view, the average across the pitcher's starts.
+
+## Game Plan Card
+
+`src/components/streaming/GamePlanPanel.tsx` is shared between the two tabs (`side: 'batting' | 'pitching'` prop). Renders chase/hold/punt sections grouped by MLBoss's *suggested* focus, with each row showing:
+
+```
+[pill] | CAT | values | reason
+```
+
+The leftmost cell is a `RowFocusPill` — single-letter chase/punt/neutral toggle, override dot when the user differs from the suggested focus. Clicks cycle `neutral → chase → punt → neutral`. Reset-to-suggested lives in the panel header next to the W/L projected badge.
+
+Section placement follows the *suggestion* (so "MLBoss thinks chase X" stays put); the inline pill reflects the user's *effective* override. The override dot keeps the manual choice legible. This replaces both:
+
+1. The old standalone `CategoryFocusBar` panel (above the board)
+2. The old `MatchupPulse` panel (also above the board on the pitcher tab)
+
+Both retired — same data, fewer panels.
+
+### Pitcher-side helper text
+
+When the corrected analysis has resolved (`isCorrected === true`), the pitcher tab Game Plan helper notes: "Counting cats use projection · ratio cats (ERA, WHIP) stay YTD." See [Ratio cats are YTD only](#ratio-cats-are-ytd-only).
+
+## Per-Start Sub-Scores
+
+Sub-scores are produced by `getPitcherRating` (Layer 3, `src/lib/pitching/rating.ts`). Each Yahoo-scored category gets projected from the `GameForecast.expectedPerGame` and normalised against a per-stat league window. The category-to-projection map:
 
 | Sub-score | Projection source (from `GameForecast.expectedPerGame`) | Normalisation window |
 |-----------|---------------------------------------------------------|----------------------|
@@ -138,7 +221,9 @@ Sub-scores are produced by [`PitcherRating`](../src/lib/pitching/rating.ts) (Lay
 | **ERA** | `expectedERA` | 5.50 → 2.30 (lower is better) |
 | **WHIP** | derived from `expectedPerPA.bbPerPA` and `expectedPerPA.baa` | 1.55 → 0.95 (lower is better) |
 
-There is no longer a separate "pitcher talent score" function — the canonical talent vector lives in `PitcherTalent` (`src/lib/pitching/talent.ts`) and is consumed by `buildGameForecast` to produce the per-game projections above. See [pitcher-evaluation.md](pitcher-evaluation.md).
+The week-aggregate engine consumes these per-start sub-scores in two ways: scores are **summed** into `weeklyScore`; counting-cat `expected` values are summed into `byCategory.expectedCount`. Ratio cats record `expectedCount` (numerator) and `expectedDenom` (IP) for completeness but the corrected-margin pipeline ignores them per [Ratio cats are YTD only](#ratio-cats-are-ytd-only).
+
+The canonical talent vector lives in `PitcherTalent` (`src/lib/pitching/talent.ts`) and is consumed by `buildGameForecast` to produce the per-game projections above. See [pitcher-evaluation.md](pitcher-evaluation.md).
 
 ### Opposing-starter signal in W
 
@@ -146,17 +231,13 @@ There is no longer a separate "pitcher talent score" function — the canonical 
 
 ### Bullpen signal in W
 
-Bullpen quality only feeds the W probability, not the composite. Uses **team staff ERA** (`MLBGame.homeTeam.staffEra` / `awayTeam.staffEra`) as a proxy — overall pitching ERA, not relief-only. Correlates ~0.7 with true bullpen ERA. The contribution is halved before applying to P(W), since the bullpen only pitches ~3 of every 9 innings. Upgrade path: fetch sitCodes=rp split if the proxy isn't sharp enough.
-
-### Pills
-
-`getStreamPills` (in `scoring.ts`) reads the rating's category contributions: **strong** when normalized ≥ 0.72, **weak** when ≤ 0.35. One hard gate: a pitcher with projected IP < 5.0 always gets the QS-weak pill regardless of sub-score (a 4.6-IP opener simply can't QS). Confidence is surfaced separately as a UI cue but does NOT gate pills — we don't hide low-confidence pitchers, we mark them.
+Bullpen quality only feeds the W probability, not the composite. Uses **team staff ERA** (`MLBGame.homeTeam.staffEra` / `awayTeam.staffEra`) as a proxy — overall pitching ERA, not relief-only. Correlates ~0.7 with true bullpen ERA. The contribution is halved before applying to P(W), since the bullpen only pitches ~3 of every 9 innings. Upgrade path: fetch `sitCodes=rp` split if the proxy isn't sharp enough.
 
 ### Multipliers
 
-**Composite-level** (applied to the score):
+**Composite-level** (applied to the per-start score):
 
-- **Velocity** (year-over-year fastball delta): ±2 mph → asymmetric ±6% (losses 4%/mph, gains 3%/mph). Asymmetry is empirically motivated — velo loss is a stronger negative predictor than velo gain is a positive one.
+- **Velocity** (year-over-year fastball delta): now informational only — the ±6% asymmetric multiplier was retired when the velo signal moved into the talent-layer regime-shift probe. The display value remains for breakdown transparency.
 - **Platoon vulnerability** (weak-side OPS allowed): clean split → +5%, vulnerable → -5%.
 
 **Surface-level** (already in per-cat numbers; shown for breakdown transparency):
@@ -167,27 +248,21 @@ Bullpen quality only feeds the W probability, not the composite. Uses **team sta
 
 The breakdown panel labels these "Context (already in cats above)" so the user doesn't think they were multiplied a second time.
 
-Sample-size handling has moved from a runtime "credibility multiplier" applied after scoring to a Bayesian regression applied upstream at the talent layer. Thin-sample pitchers are pulled toward the prior via the `effectivePA`-weighted blend in `computePitcherTalent`, and the resulting `confidence` cue (`high`/`medium`/`low`) is surfaced in the UI as a label PLUS a numeric ± band on the score (e.g. `62 ± 8`). The score band renders next to the number when ≥ 5 score points; large bands (≥ 10) flag in error tone.
+Sample-size handling lives in the talent layer's Bayesian regression. Thin-sample pitchers are pulled toward the prior via the `effectivePA`-weighted blend in `computePitcherTalent`, and the resulting `confidence` cue (`high`/`medium`/`low`) is surfaced in the UI as a label PLUS a numeric ± band on the score (e.g. `62 ± 8`). The score band renders next to the number when ≥ 5 score points; large bands (≥ 10) flag in error tone.
 
-## Compare Tray
+## Ratio cats are YTD only
 
-Each row has a checkbox column on the left for adding the candidate to a side-by-side comparison tray that renders above the row list when at least one candidate is selected. The tray surfaces:
+The corrected pitcher-cat margin (`useCorrectedMatchupAnalysis` → `composeCorrectedRows`) handles **counting cats only** — K, W, QS, IP. Ratio cats (ERA, WHIP, K/9, BB/9 etc.) pass through YTD on the Game Plan margin.
 
-- Player name + team / opponent
-- Composite score with optional ± band
-- Tier label (ACE / Tough / Avg / Weak / Bad)
-- Per-cat sub-score cells colored by fit (strong / neutral / weak / punted)
-- Top risk phrases (up to 2)
+**Why:** projecting forward ERA/WHIP requires blending YTD numerator/denominator with projected numerator/denominator, which in turn requires recovering YTD IP from the scoreboard (most leagues don't score IP as a category). The blender is non-trivial and the failure mode is silent. Per the design discussion: ratio fidelity stays at the per-FA `scorePitcher` per-start view (where the user reads "this guy will torch my WHIP" as a per-start pill), and the matchup-margin Game Plan reads ratio cats as YTD-only. Counting cats — where the projection is mechanical — get the full correction.
 
-The component is engine-agnostic — `src/components/shared/CompareTray.tsx` consumes a `CompareTraySlot[]`, and the streaming page builds slots via `streamSlotsFromCandidates` (in `StreamingBoard.tsx`). The same component is reusable on the lineup pages with a different slot adapter.
+This is enforced inside `composeCorrectedRows` so future use sites can't accidentally project ratio cats. The Game Plan Pitching helper text surfaces this asymmetry to the user.
 
-## Row Tint
+## What lives elsewhere
 
-Background tint comes from the final composite score:
-
-- `score ≥ 0.70` → `bg-success/5` (green — favorable stream)
-- `0.50 ≤ score < 0.70` → no tint (neutral)
-- `score < 0.50` → `bg-error/5` (red — rough matchup)
+- **Today page** (`/lineup`, Pitchers tab — `src/components/lineup/TodayPitchers.tsx`) handles the daily sit/start decision for **rostered** pitchers. No streaming logic, pills, composite score, or date strip — those belong here. That page shows Active / Bench / Injured groups with today's matchup context and an expandable score breakdown.
+- **Roster page** (`/roster`) handles long-term batter roster construction (`RosterManager`). Pitcher-side roster optimization is follow-up work.
+- **BossCard** (dashboard) reads the same `useCorrectedMatchupAnalysis` for the leverage bar — both pages now see counting pitcher cats corrected forward.
 
 ## Weather Gotcha
 
@@ -197,6 +272,9 @@ MLB's `weather` hydrate is only populated ~2 hours before first pitch. For futur
 
 `weatherIcon(condition)` also returns `null` (not a default icon) when condition is missing, so we never render a placeholder.
 
-## What lives on Today, not Streaming
+## Open follow-ups
 
-The Today page (`/lineup`, Pitchers tab — `src/components/lineup/TodayPitchers.tsx`) handles the simpler sit/start decision for **rostered** pitchers. No streaming logic, pills, composite score, or date strip — those belong here. That page shows Active / Bench / Injured groups with today's matchup context and an expandable score breakdown.
+- **Sequence planner.** A "Plan" mode that lets the user select 1–2 pickups and shows a coverage strip ("Mon: covered by X, Tue: open, Wed: covered by Y…"). The by-day view today gives the read manually; an explicit planner would close the loop.
+- **Persisted focus overrides per league.** Currently the inline-pill override resets per session. Persisting in localStorage keyed on `leagueKey + statId` would make "always punt SV" a one-time setup rather than a per-session re-toggle. Three-state mental model (suggested / overridden / persisted) needs a "Reset all overrides for this league" affordance.
+- **CompareTray.** Was per-start-shaped on the prior single-day board; dropped on the week-aggregate rewrite. Reintroducing requires a week-aggregate slot adapter.
+- **Pitcher cap awareness.** Some leagues set `max_weekly_innings_pitched` / `max_weekly_games_started`. The hooks (`useLeagueLimits`) exist and BossCard already consumes them; the streaming engine could fold a cap discount into the FA week score. Not currently wired (per design call: leagues without caps don't need it).

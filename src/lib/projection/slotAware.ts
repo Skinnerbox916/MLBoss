@@ -58,7 +58,7 @@ export interface DailyBaseline {
   /** How many positional + UTIL slots my baseline assignment filled. */
   rosterStartersFilled: number;
   /** Weakest baseline starter (lowest score), if any. Drives the
-   *  StrategySummary "your weak spot" callout. */
+   *  GamePlanPanel "weakest starter" footer. */
   weakestStarter?: { position: BatterPosition | 'UTIL'; score: number; name: string };
   /** Sum of starter scores in the baseline. Useful for debug/inspection. */
   baselineTotal: number;
@@ -92,7 +92,7 @@ export interface SlotAwareInput {
 export interface SlotAwareResult {
   /** Per-FA streaming value + per-day breakdown. */
   byPlayerKey: Map<string, FAStreamingValue>;
-  /** Per-day baseline metadata for the StrategySummary "light days" line. */
+  /** Per-day baseline metadata for the GamePlanPanel "light days" footer. */
   dailyBaselines: DailyBaseline[];
 }
 

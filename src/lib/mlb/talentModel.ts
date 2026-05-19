@@ -48,11 +48,24 @@ const LEAGUE_XWOBACON_PITCHER = 0.368; // pitcher-allowed xwOBA on contact
 const LEAGUE_HARD_HIT = 0.40;         // MLB average Hard-Hit % (EV ≥ 95 mph)
 
 const LEAGUE_XWOBA = 0.320;           // for the end-result composite clamp
+// 2024 MLB averages from Savant expected-stats leaderboard. xBA tracks AVG
+// closely (it's the no-luck deserved version of AVG); xSLG is meaningfully
+// higher than league SLG because Savant's per-BBE expected outcomes credit
+// hard contact that becomes outs at the .240 league-average BAA rate.
+// See docs/unified-rating-model.md#per-cat-batter-baselines for usage.
+const LEAGUE_XBA = 0.243;
+const LEAGUE_XSLG = 0.404;
 
 const PRIOR_K_PA = 60;
 const PRIOR_BB_PA = 120;
 const PRIOR_XWOBACON_BIP = 50;
 const PRIOR_HARD_HIT_BIP = 50;        // HH% stabilises ~50 BBE (Carleton)
+// xBA and xSLG are PA-denominated Savant outputs (they account for K's
+// in the denominator), so we regress them with PA-based priors. They
+// stabilise faster than xwOBA's component recomposition (~150 BIP) but
+// slower than K%/BB% — empirically ~100-120 PA half-stabilisation.
+const PRIOR_XBA_PA = 100;
+const PRIOR_XSLG_PA = 120;
 
 // Empirical slope: moving from 30% → 50% HH% corresponds to roughly
 // .320 → .416 xwOBACON across the MLB hitter distribution. We use this
@@ -98,6 +111,20 @@ export interface BlendInput {
   leagueMean: number;
   leaguePriorN: number;
   priorCap: number;
+  /**
+   * Optional sample-size at which the prior season is treated as fully
+   * reliable. When set, the prior's effective weight is scaled by
+   * `min(1, priorN / priorReliabilityN)` BEFORE the cap, so a partial-
+   * season prior (rookie call-up, IL-shortened year, mid-year trade)
+   * doesn't get the same authority as a full-season prior.
+   *
+   * Without this knob, a 234-PA prior season counts almost the same as
+   * a 600-PA one — overweighting noise and pulling rookies/returners
+   * toward whatever they happened to do in their partial sample.
+   *
+   * Leave undefined to preserve legacy behavior (raw priorN up to cap).
+   */
+  priorReliabilityN?: number;
 }
 
 export interface BlendOutput {
@@ -112,7 +139,16 @@ export interface BlendOutput {
  */
 export function blendRate(input: BlendInput): BlendOutput {
   const curN = input.current !== null ? input.currentN : 0;
-  const priN = input.prior !== null ? Math.min(input.priorN, input.priorCap) : 0;
+  // Cap first (legacy behavior), then optionally shrink for partial-season
+  // priors. The shrinkage is multiplicative on N, so a 234-PA prior with
+  // priorReliabilityN=400 gets 234 × min(1, 234/400) ≈ 137 effective weight
+  // instead of 234. Full-season priors (priorN ≥ priorReliabilityN) are
+  // unaffected.
+  const cappedPriN = input.prior !== null ? Math.min(input.priorN, input.priorCap) : 0;
+  const reliability = input.priorReliabilityN && input.priorReliabilityN > 0
+    ? Math.min(1, input.priorN / input.priorReliabilityN)
+    : 1;
+  const priN = cappedPriN * reliability;
   const lgN = input.leaguePriorN;
 
   let num = 0;
@@ -139,7 +175,7 @@ export function blendRate(input: BlendInput): BlendOutput {
  * the regressed value.
  *
  * This is the canonical successor to the legacy `blendSavant` helper —
- * see `docs/scoring-conventions.md` for the one-source-of-truth rule.
+ * see `docs/architecture.md` for the one-source-of-truth rule.
  */
 export function blendRateOrNull(input: BlendInput): number | null {
   const hasCurrent = input.current !== null && input.currentN > 0;
@@ -158,6 +194,14 @@ export interface TalentResult {
    *  for this player — callers should fall back to whatever prior they
    *  have (population mean, tier classifier, etc.). */
   xwoba: number | null;
+  /** Regressed talent xBA. Bayesian-blended Savant `est_ba` (current +
+   *  prior + league), the deserved-AVG signal that feeds the AVG and H
+   *  per-cat batter baselines. Null only when neither side carries an
+   *  xBA value. Batter-only — pitcher path leaves this null. */
+  xba: number | null;
+  /** Regressed talent xSLG. Bayesian-blended Savant `est_slg`. Drives
+   *  the TB per-cat baseline. Batter-only — pitcher path leaves null. */
+  xslg: number | null;
   /** Component breakdown. Useful for debugging and for the future
    *  expandable-card UI the user mentioned but isn't shown right now. */
   components: {
@@ -230,6 +274,10 @@ interface TalentSource {
   hardHitRate: number | null;
   /** Fallback if components aren't populated by the skills merge. */
   xwoba: number | null;
+  /** Savant `est_ba` — deserved AVG. Only present for batters. */
+  xba?: number | null;
+  /** Savant `est_slg` — deserved SLG. Only present for batters. */
+  xslg?: number | null;
 }
 
 function computeTalent(args: {
@@ -321,8 +369,43 @@ function computeTalent(args: {
   const bipRate = Math.max(0, 1 - k.value - bb.value);
   const talentXwoba = bb.value * 0.69 + bipRate * con.value;
 
+  // xBA and xSLG — Bayesian-blended Savant outputs (PA-denominated, so
+  // they account for Ks in the denominator). Regressed independently of
+  // the K/BB/xwOBACON composition path. Returns null when neither side
+  // carries the field (pitcher path always; batter path with no Savant
+  // skills merge). Same prior-cap shrink applies if regime indicates.
+  const xbaCurrent = current?.xba ?? null;
+  const xbaPrior = prior?.xba ?? null;
+  const xba = (xbaCurrent === null && xbaPrior === null)
+    ? null
+    : blendRate({
+        current: xbaCurrent,
+        currentN: curPa,
+        prior: xbaPrior,
+        priorN: prior?.pa ?? 0,
+        leagueMean: LEAGUE_XBA,
+        leaguePriorN: PRIOR_XBA_PA * lgShrink,
+        priorCap: paCap,
+      }).value;
+
+  const xslgCurrent = current?.xslg ?? null;
+  const xslgPrior = prior?.xslg ?? null;
+  const xslg = (xslgCurrent === null && xslgPrior === null)
+    ? null
+    : blendRate({
+        current: xslgCurrent,
+        currentN: curPa,
+        prior: xslgPrior,
+        priorN: prior?.pa ?? 0,
+        leagueMean: LEAGUE_XSLG,
+        leaguePriorN: PRIOR_XSLG_PA * lgShrink,
+        priorCap: paCap,
+      }).value;
+
   return {
     xwoba: talentXwoba,
+    xba,
+    xslg,
     components: {
       kRate: k.value,
       bbRate: bb.value,
@@ -370,6 +453,12 @@ function degradeToXwobaOnly(
 
   return {
     xwoba: num / den,
+    // Degraded path: skills merge didn't fire, so we don't have the
+    // K/BB/xwOBACON sub-regressions backing xBA either. Surface raw
+    // current xBA (preferring it over prior) without regression — the
+    // consumer's effectivePA gate will keep this from being trusted.
+    xba: current?.xba ?? prior?.xba ?? null,
+    xslg: current?.xslg ?? prior?.xslg ?? null,
     components: {
       kRate: LEAGUE_K_RATE,
       bbRate: LEAGUE_BB_RATE,

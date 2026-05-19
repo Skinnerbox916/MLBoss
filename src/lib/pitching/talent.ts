@@ -6,7 +6,7 @@
  * rate on contact, GB%) plus health/decline signals (fastball velocity,
  * YoY velo trend) plus sample-trust metadata.
  *
- * Architecture notes (see docs/pitcher-evaluation.md):
+ * Architecture notes (see docs/unified-rating-model.md):
  *
  * - This module replaces `classifyPitcherTier` (rule-based ace/tough/...)
  *   AND `pitcherTalentScore` (RV/100 → xwOBA → tier fallback). Both old
@@ -286,7 +286,7 @@ export function composeAdjustedXwobaAllowed(args: {
  * league-avg anchor lands at 4.20. Floor / ceiling clamps keep
  * degenerate inputs from producing nonsensical projections. Adjusting
  * the slope or anchor is "global blast radius" — see
- * docs/scoring-conventions.md.
+ * docs/unified-rating-model.md#calibration-anchors.
  */
 export function xwobaToXera(xwoba: number): number {
   return Math.max(1.50, Math.min(7.50, 25 * xwoba - 3.75));
@@ -319,12 +319,26 @@ export function talentHrPerPA(t: TalentForHr): number {
   return t.hrPerContact * talentContactRate(t);
 }
 
+/** Talent-derived per-PA hit rate (H/PA, not H/AB). Composed so the
+ *  per-cat batter rating can log5 against a single source of pitcher
+ *  hit-allowing skill — same shape as `talentBaa` but normalised per
+ *  PA (BAA strips walks; H/PA includes them in the denominator).
+ *
+ *  H/PA = H/AB × AB/PA = talentBaa × (1 − bbPerPA) approximately
+ *  (HBP and SF are tiny and partially offset; ignored here for
+ *  simplicity — adding them would change H/PA by < 0.5%). */
+export function talentHitsPerPA(
+  t: Pick<PitcherTalent, 'contactXwoba' | 'bbPerPA'>,
+): number {
+  return talentBaa(t) * Math.max(0, 1 - t.bbPerPA);
+}
+
 // ---------------------------------------------------------------------------
 // League constants (used by SoS + the HR/contact regression)
 //
 // Exported so consumers (forecast.ts in particular) don't redefine them.
 // These are population means; updating them is "global blast radius" —
-// see docs/scoring-conventions.md.
+// see docs/league-baselines.md.
 // ---------------------------------------------------------------------------
 
 /** League-average team OPS vs RHP / LHP. Used by `forecast.ts` for

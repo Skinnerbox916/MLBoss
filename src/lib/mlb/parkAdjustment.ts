@@ -59,7 +59,7 @@ export interface ParkAdjustmentInput {
 export interface ParkAdjustment {
   /** 1.0 = neutral. Already clamped to the per-stat band. */
   multiplier: number;
-  /** Short human-readable hint for the waterfall row (e.g. "HR+ (128 vs L)",
+  /** Short human-readable hint for the waterfall row (e.g. "HR+ (128 vs LHB)",
    *  "CHC 15mph out"). Empty when neutral / unavailable. */
   hint: string;
   /** Was park data actually available? Consumers can use this to skip
@@ -173,11 +173,14 @@ function windAmplification(
   };
 }
 
-/** Build the standard "PF NNN [vs L]" hint string. */
+/** Build the standard "PF NNN [vs LHB]" hint string. The hand suffix names
+ *  the BATTER's handedness (the park factor is split by batter hand), not
+ *  the pitcher's — explicit "LHB" / "RHB" avoids the misread where a bare
+ *  "vs L" reads as "vs LHP" on a card that's also surfacing the SP. */
 function buildHint(label: string, value: number, resolvedHand: 'L' | 'R' | null): string {
   if (Math.abs(value - 100) < 4) return ''; // neutral — nothing to surface
   const sign = value > 100 ? '+' : '−';
-  const handTag = resolvedHand ? ` vs ${resolvedHand}` : '';
+  const handTag = resolvedHand ? ` vs ${resolvedHand}HB` : '';
   return `${label}${sign} (${Math.round(value)}${handTag})`;
 }
 

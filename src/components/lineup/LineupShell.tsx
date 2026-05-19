@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import Tabs from '@/components/ui/Tabs';
-import MatchupPulse from '@/components/shared/MatchupPulse';
 import { Heading } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import LineupManager from './LineupManager';
@@ -19,21 +18,22 @@ function todayStr(): string {
 type Tab = 'batters' | 'pitchers';
 
 /**
- * Wrapper for the Today page. Owns the tab state and the always-on matchup
- * pulse so both batter lineup and pitcher sit/start decisions have the same
- * category scoreboard visible at the top of the page.
+ * Tab shell for the Lineup page. Owns the tab state. Each tab's child
+ * (`LineupManager` / `TodayPitchers`) renders its own `GamePlanPanel`
+ * above its content so the user always sees the chase/hold/punt framing
+ * for the side they're acting on.
  */
-export default function TodayManager() {
-  const { teamKey, leagueKey } = useFantasyContext();
+export default function LineupShell() {
+  const { teamKey } = useFantasyContext();
   const [tab, setTab] = useState<Tab>('batters');
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <Heading as="h1">Today</Heading>
+          <Heading as="h1">Lineup</Heading>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Set your lineup and sit/start your pitchers for today&apos;s games
+            Set today&apos;s lineup and sit/start your pitchers
           </p>
         </div>
         <Tabs
@@ -48,8 +48,6 @@ export default function TodayManager() {
           className="sm:w-72"
         />
       </div>
-
-      <MatchupPulse leagueKey={leagueKey} teamKey={teamKey} side="both" />
 
       {tab === 'batters' ? (
         <LineupManager mode="batting" embedded />

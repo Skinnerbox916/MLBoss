@@ -7,11 +7,20 @@
  *  - Today / `LineupManager` seeds its batter `focusMap` from `suggestedFocus`.
  *  - Streaming / `StreamingManager` seeds its pitcher `focusMap` the same way.
  *
- * The math splits into two flavors. Counting stats use a week-elapsed model so
- * "HR 8-5" feels different on Wednesday than on Sunday — the same gap is much
- * harder to close late in the week because there's less production left to
- * accrue. Rate stats use a per-stat "typical-swing" scale and soften early-
- * week confidence so a small Monday sample doesn't read as locked.
+ * The math splits into two flavors. Rate stats (AVG, ERA, WHIP, …) use a
+ * per-stat "typical-swing" scale (`RATE_SCALE`) and soften early-week
+ * confidence so a small Monday sample doesn't read as locked. Counting
+ * stats branch on the `mode` option:
+ *
+ *   - `'raw'` (default — matchup-to-date scoreboard rows): a week-elapsed
+ *     model so "HR 8-5" feels different on Wednesday than on Sunday — the
+ *     same gap is much harder to close late in the week because there's
+ *     less production left to accrue.
+ *   - `'corrected'` (end-of-week projected rows): a fixed per-cat
+ *     residual-uncertainty scale (`CORRECTED_COUNTING_SCALE`). Once the
+ *     projection has absorbed rest-of-week production, the matchup-to-date
+ *     remaining-production buffer would double-count and over-compress
+ *     every gap. Only `useCorrectedMatchupAnalysis` passes this mode.
  *
  * Both branches output a margin in [-1, +1] from the user's perspective. A
  * margin of 0 is dead-even / no data; a magnitude near 1 reads as "locked".
@@ -31,7 +40,7 @@
  * already incorporates rest-of-week confidence.
  */
 
-import type { MatchupRow } from '@/components/shared/matchupRows';
+import { rowHasComparablePair, type MatchupRow } from '@/components/shared/matchupRows';
 
 /**
  * Typical-swing scale per rate stat — the gap that, on its own, corresponds
@@ -51,6 +60,43 @@ const RATE_SCALE: Record<string, number> = {
   H9: 1.5,
 };
 
+/**
+ * Per-cat counting-stat scale used when analyzing corrected (end-of-week
+ * projected) rows. The corrected row already absorbs rest-of-week
+ * production, so we can't use the matchup-to-date `expectedRemaining` denominator —
+ * it would extrapolate production past what the projection already
+ * captured, compressing every gap toward zero. Instead, evaluate the
+ * gap against the projection's residual uncertainty: a gap equal to
+ * `scale` reads as margin = ±1.0 ("locked").
+ *
+ * Calibrated to ~1.0-1.4× the cross-team σ of full-week production
+ * observed in real Yahoo H2H scoreboards. Cross-team σ overstates the
+ * post-projection residual (the projection already absorbs roster
+ * differences), but a slightly looser scale avoids over-locking high-
+ * variance cats like SB / HR. Revisit empirically once projection-vs-
+ * realized data accumulates.
+ *
+ * Keyed by `stat_id` (not display_name) because batter K (21) and
+ * pitcher K (42) share a label.
+ */
+const CORRECTED_COUNTING_SCALE: Record<number, number> = {
+  // Batter counting cats
+  7: 8,    // R
+  8: 12,   // H
+  12: 4,   // HR
+  13: 9,   // RBI
+  16: 3,   // SB
+  18: 7,   // BB (batter)
+  21: 10,  // K  (batter, lower-better)
+  23: 20,  // TB
+  // Pitcher counting cats
+  50: 15,  // IP
+  28: 2,   // W
+  32: 2,   // SV
+  42: 18,  // K  (pitcher)
+  83: 2,   // QS
+};
+
 function clamp(value: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, value));
 }
@@ -60,21 +106,22 @@ export type SuggestedFocus = 'chase' | 'neutral' | 'punt';
 export interface AnalyzedMatchupRow extends MatchupRow {
   /** Margin in [-1, +1] from the user's perspective. Positive = winning.
    *  When the analysis is corrected with projections, this is the
-   *  projected end-of-week margin; otherwise it's the YTD margin. */
+   *  projected end-of-week margin; otherwise it's the matchup-to-date margin. */
   margin: number;
   /** Priority weight in [0, 1]. 1 = toss-up, 0 = locked. */
   priority: number;
   /** Mapped onto the existing chase/neutral/punt vocabulary. */
   suggestedFocus: SuggestedFocus;
-  /** Margin from YTD-only rows, populated by `withSwing` when both raw
-   *  and corrected analyses are available. Undefined when this analysis
-   *  ran on a single set of rows (e.g. dashboard descriptive surfaces). */
+  /** Margin from matchup-to-date-only rows, populated by `withSwing` when
+   *  both raw and corrected analyses are available. Undefined when this
+   *  analysis ran on a single set of rows (e.g. the projection-only Sunday
+   *  pivot, or dashboard descriptive surfaces). */
   rawMargin?: number;
   /** `margin - rawMargin`. Positive swing = projection improves the
    *  user's standing; negative swing = projection erodes it. Undefined
    *  unless both margins are available. */
   swing?: number;
-  /** YTD-only stat values as strings (matching `myVal`/`oppVal` format).
+  /** Matchup-to-date-only stat values as strings (matching `myVal`/`oppVal` format).
    *  Populated by `withSwing` so consumers can render
    *  "current → projected" displays. Undefined unless both analyses
    *  were combined. */
@@ -98,17 +145,17 @@ const LOCKED_THRESHOLD = 0.7;
 /**
  * Does this row carry enough signal to drive a recommendation?
  *
- * Beyond the obvious `!hasData` case (Yahoo omitted the value entirely —
- * typical for ratio stats with 0 IP / 0 AB), we also treat a row where
- * both sides are exactly zero as no-signal. This is the Monday-morning
- * pattern: Yahoo returns "0" for every counting stat (so `hasData=true`,
- * `margin=0`) before any games have completed. Without this guard every
- * counting cat would land in `chase` (since `margin === 0` triggers the
- * losing/tied branch), making the rate cats — which are correctly missing
- * — look like they were "demoted" by the engine.
+ * When `rowHasComparablePair` is false (one or both sides missing / non-
+ * numeric — typical for ratio stats with 0 IP / 0 AB), there is no signal.
+ * We also treat a row where both sides are exactly zero as no-signal. This
+ * is the Monday-morning pattern: Yahoo returns "0" for every counting stat
+ * (so the row is comparable but `0=0`) before any games have completed. Without
+ * this guard every counting cat would land in `chase` (since `margin === 0`
+ * triggers the losing/tied branch), making the rate cats — which are correctly
+ * missing — look like they were "demoted" by the engine.
  */
 function hasMatchupSignal(row: MatchupRow): boolean {
-  if (!row.hasData) return false;
+  if (!rowHasComparablePair(row)) return false;
   const my = parseFloat(row.myVal);
   const opp = parseFloat(row.oppVal);
   if (!Number.isFinite(my) || !Number.isFinite(opp)) return false;
@@ -141,28 +188,53 @@ function suggestFocus(margin: number, hasSignal: boolean): SuggestedFocus {
 /**
  * Compute a per-row margin in [-1, +1] using the right model for the stat.
  *
- * The function operates purely on the row's `name` (Yahoo abbreviation, e.g.
- * "AVG") to decide rate vs. counting; the `betterIs` field handles "lower is
- * better" stats like ERA / WHIP transparently.
+ * Rate stats (AVG, ERA, WHIP, …) use a fixed `RATE_SCALE` plus a week-
+ * progress confidence factor.
+ *
+ * Counting stats branch on `mode`:
+ *  - `'raw'`: gap scaled by `expectedRemaining` = pace-extrapolated
+ *    remaining production. Right model for matchup-to-date scoreboard rows where
+ *    rest-of-week production is unknown and "lots of games left" should
+ *    shrink the margin.
+ *  - `'corrected'`: gap scaled by `CORRECTED_COUNTING_SCALE` — a fixed
+ *    per-cat residual-uncertainty scale. Right model for end-of-week
+ *    projected rows where rest-of-week production is already baked in,
+ *    so a remaining-production buffer double-counts and over-compresses
+ *    the gap.
  */
-function computeMargin(row: MatchupRow, weekProgress: number): number {
-  if (!row.hasData) return 0;
+function computeMargin(
+  row: MatchupRow,
+  weekProgress: number,
+  mode: AnalyzeMode,
+): number {
+  if (!rowHasComparablePair(row)) return 0;
   const my = parseFloat(row.myVal);
   const opp = parseFloat(row.oppVal);
   if (!Number.isFinite(my) || !Number.isFinite(opp)) return 0;
 
   const dir = row.betterIs === 'lower' ? -1 : 1;
-  const scale = RATE_SCALE[row.name];
+  const rateScale = RATE_SCALE[row.name];
 
-  if (scale !== undefined) {
+  if (rateScale !== undefined) {
     const confidence = 0.15 + 0.85 * weekProgress;
-    return clamp(((my - opp) * dir / scale) * confidence, -1, 1);
+    return clamp(((my - opp) * dir / rateScale) * confidence, -1, 1);
   }
 
-  // Counting stat: scale gap by expected remaining production.
+  if (mode === 'corrected') {
+    const countScale = CORRECTED_COUNTING_SCALE[row.statId];
+    if (countScale !== undefined) {
+      return clamp(((my - opp) * dir) / countScale, -1, 1);
+    }
+    // Unknown counting cat — fall through to the raw model rather than
+    // returning 0. Better to under-call punt than to silently hide a row.
+  }
+
+  // Counting stat, raw matchup-to-date: scale gap by expected remaining production.
   const expectedRemaining = ((my + opp) / weekProgress) * (1 - weekProgress);
   return clamp(((my - opp) * dir) / Math.max(expectedRemaining, 1), -1, 1);
 }
+
+export type AnalyzeMode = 'raw' | 'corrected';
 
 export interface AnalyzeOpts {
   /**
@@ -171,6 +243,14 @@ export interface AnalyzeOpts {
    * uses `daysElapsed / 7` to derive week progress.
    */
   daysElapsed: number;
+  /**
+   * Which counting-stat margin model to use. `'raw'` (default) is right
+   * for matchup-to-date scoreboard rows; `'corrected'` is right for rows
+   * that already carry end-of-week projections (see `CORRECTED_COUNTING_SCALE`).
+   * Only `useCorrectedMatchupAnalysis` should pass `'corrected'` — every
+   * other caller analyzes matchup-to-date-only inputs.
+   */
+  mode?: AnalyzeMode;
 }
 
 /**
@@ -179,13 +259,13 @@ export interface AnalyzeOpts {
  */
 export function analyzeMatchup(
   rows: MatchupRow[],
-  { daysElapsed }: AnalyzeOpts,
+  { daysElapsed, mode = 'raw' }: AnalyzeOpts,
 ): MatchupAnalysis {
   const weekProgress = clamp(daysElapsed / 7, 0.1, 1);
 
   const decorated: AnalyzedMatchupRow[] = rows.map(row => {
     const hasSignal = hasMatchupSignal(row);
-    const margin = hasSignal ? computeMargin(row, weekProgress) : 0;
+    const margin = hasSignal ? computeMargin(row, weekProgress, mode) : 0;
     return {
       ...row,
       margin,

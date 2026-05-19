@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getTeamRoster } from '@/lib/fantasy';
+import { getTeamRosterByDate } from '@/lib/fantasy';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy/stats';
-import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
+import { getWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import {
   projectBatterTeam,
@@ -53,7 +53,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'leagueKey is required' }, { status: 400 });
     }
 
-    const days = getMatchupWeekDays();
+    // `?targetWeek=next` projects next Mon-Sun instead of the current
+    // matchup. Used by the Sunday streaming pivot — the current matchup
+    // is effectively closed (only Sunday remains), so the chase/hold/punt
+    // and volume-gap views should describe next week instead. Default
+    // `'current'` preserves mid-week behavior.
+    const targetWeek: WeekTarget = searchParams.get('targetWeek') === 'next' ? 'next' : 'current';
+    const days = getWeekDays(new Date(), targetWeek);
     const remaining = days.filter(d => d.isRemaining);
     const weekStart = days[0]?.date;
     const weekEnd = days[days.length - 1]?.date;
@@ -76,8 +82,13 @@ export async function GET(request: Request) {
     // Fan out roster + categories + per-day games in parallel. The
     // underlying caches (dynamic 1-min for rosters, semi-dynamic 5-min for
     // games) cover the cost of repeated calls within a session.
+    //
+    // Roster as of the LAST remaining day of the matchup week — captures
+    // pickups effective for upcoming days that aren't on today's roster
+    // snapshot yet. See `docs/history.md` "Always-fetch-roster-by-date".
+    const rosterDate = remaining[remaining.length - 1]!.date;
     const [roster, allCategories, gameDayResults] = await Promise.all([
-      getTeamRoster(user.id, teamKey),
+      getTeamRosterByDate(user.id, teamKey, rosterDate),
       getEnrichedLeagueStatCategories(user.id, leagueKey),
       Promise.all(remaining.map(d => getGameDay(d.date))),
     ]);

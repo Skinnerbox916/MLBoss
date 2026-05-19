@@ -1,26 +1,43 @@
-# MLBoss Documentation Index
+## MLBoss Documentation Index
 
-This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files.
+This index is the single authoritative table of contents for all Markdown docs in the project. Each entry has a one-sentence description; avoid duplicating content across files. **Load this first if you're new to the project.**
 
-- **product-spec.md** — Product vision, key features, and high-level architecture.
-- **design-system.md** — Color palette, typography, and UI component standards.
-- **setup.md** — Environment variables and Yahoo OAuth configuration.
-- **for-ai-developers.md** — Guidelines and navigation tips for LLM contributors.
-- **yahoo-api-reference.md** — Comprehensive Yahoo Fantasy Sports API guide.
-- **mlb-api-reference.md** — MLB Stats API guide: hydrate params, splits, early-season gap, disambiguation.
-- **dashboard-components.md** — Component-based dashboard architecture and integration guide.
-- **streaming-page.md** — Streaming board architecture: multi-day probables, data pipeline, pills, composite score, matching.
-- **ui-patterns.md** — Shared UI components, display patterns, and anti-patterns for LLM contributors.
+### Read me first
 
-Data layer:
+- **[engines.md](./engines.md)** — Index of every prediction / suggestion engine, organized by layer (L1 talent → L7 narrative). Start here to orient.
+- **[architecture.md](./architecture.md)** — The constitution: principles, anti-patterns, rules for adding engines / docs / calibration constants. Read once when you join the project.
+- **[history.md](./history.md)** — Decision log. Patterns we tried and stopped, with reasons.
 
-- **data-architecture.md** — Three-layer model, fetch + cache contract, identity contract, full Yahoo API reference.
-- **scoring-conventions.md** — Stat levels (raw / rate / talent / matchup-adjusted), calibration knobs, one-source-of-truth rule.
-- **stats.md** — Canonical `stat_id` model, stat enrichment, and disambiguation patterns.
-- **recommendation-system.md** — Matchup-state layer: `analyzeMatchup` as single source of truth, focus suggestions, Boss Brief, leverage bar.
-- **unified-rating-model.md** — Canonical reference for both pitcher AND batter rating engines: shared substrate (talent primitives, parkAdjustment, weather, focus map), unified `Rating` shape, `MatchupContext`, edge-case helpers, calibration anchors.
-- **pitcher-evaluation.md** — Pitcher-side three-layer engine (PitcherTalent → GameForecast → PitcherRating), regime-shift probe, confidence model. Companion to unified-rating-model.md.
+### Per-layer engine reference
+
+- **[unified-rating-model.md](./unified-rating-model.md)** — L1 + L2 + L3: talent, forecast, rating. Both batter and pitcher engines, shared substrate, regime probe, calibration anchors.
+- **[projection.md](./projection.md)** — L4: team projection, lineup optimizer, slot-aware streaming. Aggregation of per-game ratings.
+- **[recommendation-system.md](./recommendation-system.md)** — L5 + L7: `analyzeMatchup`, focus suggestions, Boss Brief, UI surface map. The bridge between rating and roster decisions.
+- **[roster-strategy.md](./roster-strategy.md)** — L6: league forecast, forward focus (anchors / swings / concedes), swap strategy. Long-horizon roster construction.
+
+### Cross-cutting concepts
+
+- **[stat-levels.md](./stat-levels.md)** — The four stat levels (raw counting / raw rate / regressed talent / matchup-adjusted) and common pitfalls.
+- **[league-baselines.md](./league-baselines.md)** — Cross-engine league-mean constants (`LEAGUE_K_RATE`, `LEAGUE_OPS`, etc.).
+- **[data-architecture.md](./data-architecture.md)** — Source / model / compose layering, cache tier discipline, identity contract.
+- **[stats.md](./stats.md)** — Canonical `stat_id` model, stat enrichment, disambiguation patterns.
+
+### UI and page-specific
+
+- **[design-system.md](./design-system.md)** — Color palette, typography, UI component standards.
+- **[ui-patterns.md](./ui-patterns.md)** — Shared UI components, display patterns, anti-patterns.
+- **[dashboard-components.md](./dashboard-components.md)** — Dashboard card architecture.
+- **[streaming-page.md](./streaming-page.md)** — Streaming-page specifics: pickup window, Yahoo pagination, FA matching, Game Plan card.
+
+### API references and setup
+
+- **[product-spec.md](./product-spec.md)** — Product vision, key features, high-level architecture.
+- **[setup.md](./setup.md)** — Environment variables and Yahoo OAuth configuration.
+- **[for-ai-developers.md](./for-ai-developers.md)** — Reading order and patterns for LLM contributors.
+- **[yahoo-api-reference.md](./yahoo-api-reference.md)** — Yahoo Fantasy Sports API guide.
+- **[mlb-api-reference.md](./mlb-api-reference.md)** — MLB Stats API guide: hydrate params, splits, early-season gap, disambiguation.
 
 ---
 
-➜ If you add a new Markdown file, register it here to keep the index up to date. 
+➜ **If you add a new doc**, register it here and read [architecture.md](./architecture.md#rules-for-adding-a-new-doc) first.
+➜ **If you delete or restructure**, add a [history.md](./history.md) entry.

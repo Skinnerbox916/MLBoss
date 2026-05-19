@@ -4,7 +4,7 @@
  *
  * This is the canonical regression check for the pitcher engine.
  * Auth-gated through the `/api/admin` prefix in `middleware.ts`. Keep
- * the synthetic profiles in sync with `docs/pitcher-evaluation.md`'s
+ * the synthetic profiles in sync with `docs/unified-rating-model.md`'s
  * "Calibration anchors" section so that drift between the two surfaces
  * is loud rather than silent.
  *

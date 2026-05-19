@@ -1,5 +1,6 @@
 import useSWR from 'swr';
 import { fetcher } from './fetcher';
+import type { WeekTarget } from '@/lib/dashboard/weekRange';
 
 /** Per-cat counting + denominator sum across the team's projected week.
  *  For batter AVG the denominator is AB; for pitcher rate cats it would
@@ -53,17 +54,24 @@ export interface BatterTeamProjectionResponse {
  * matchup margin, and the FA scoring path. The same hook serves both my
  * team and the opponent (different `teamKey`).
  *
- * SWR caches the result keyed by team + league. The route itself does no
- * additional caching beyond the underlying roster / game-day / stats
- * caches; recomputation per request is cheap (~50 batters × 7 days, all
- * pure CPU after the inputs are warm).
+ * Pass `targetWeek: 'next'` to project next week (Mon-Sun) instead of the
+ * current matchup. Used by the Sunday streaming pivot, where the current
+ * matchup is effectively closed and the chase/hold/punt and volume-gap
+ * views should describe the upcoming matchup.
+ *
+ * SWR caches the result keyed by team + league + targetWeek. The route
+ * itself does no additional caching beyond the underlying roster /
+ * game-day / stats caches; recomputation per request is cheap (~50
+ * batters × 7 days, all pure CPU after the inputs are warm).
  */
 export function useBatterTeamProjection(
   teamKey: string | undefined,
   leagueKey: string | undefined,
+  opts: { targetWeek?: WeekTarget } = {},
 ) {
+  const { targetWeek = 'current' } = opts;
   const url = teamKey && leagueKey
-    ? `/api/projection/batter-team?teamKey=${teamKey}&leagueKey=${leagueKey}`
+    ? `/api/projection/batter-team?teamKey=${teamKey}&leagueKey=${leagueKey}${targetWeek === 'next' ? '&targetWeek=next' : ''}`
     : null;
   const { data, error, isLoading } = useSWR<BatterTeamProjectionResponse>(url, fetcher, {
     revalidateOnFocus: false,

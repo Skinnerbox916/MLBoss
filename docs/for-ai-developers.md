@@ -6,44 +6,40 @@ This guide is specifically written for LLMs working on the MLBoss codebase. It c
 
 ## Quick Links
 
-- **Data Layer Architecture** - See [data-architecture.md](./data-architecture.md)
-- **Scoring Conventions** - See [scoring-conventions.md](./scoring-conventions.md)
-- **Statistical Architecture** - See [stats.md](./stats.md)
-- **Yahoo API Reference** - See [yahoo-api-reference.md](./yahoo-api-reference.md)
-- **Dashboard Components** - See [dashboard-components.md](./dashboard-components.md)
+- **Engine registry** - [engines.md](./engines.md) — load this first to orient
+- **Strategy / principles** - [architecture.md](./architecture.md) — read this once
+- **Decision log** - [history.md](./history.md) — patterns we tried and stopped
+- **Data Layer Architecture** - [data-architecture.md](./data-architecture.md)
+- **Statistical Architecture** - [stats.md](./stats.md)
+- **Yahoo API Reference** - [yahoo-api-reference.md](./yahoo-api-reference.md)
+- **Dashboard Components** - [dashboard-components.md](./dashboard-components.md)
 
 ## Documentation Strategy
 
-### Core Principles
+### Reading order for LLMs
 
-1. **Keep docs near code** - Documentation lives next to the code it describes
-   - `docs/data-architecture.md` for data layer
-   - `docs/scoring-conventions.md` for stat-level conventions
-   - Component-level docs in their directories
+1. **Top-level index first** — [engines.md](./engines.md) tells you what engines exist and where they live. Load this when you don't know the codebase yet.
+2. **Strategy doc next** — [architecture.md](./architecture.md) has the six principles and the anti-patterns to avoid. Read this once; consult when adding a new engine.
+3. **Per-layer reference** — drop into the relevant engine doc when you're touching that code (e.g. [unified-rating-model.md](./unified-rating-model.md) for L1+L2+L3, [projection.md](./projection.md) for L4, etc.).
+4. **Cross-cutting concepts** — [stat-levels.md](./stat-levels.md) and [league-baselines.md](./league-baselines.md) for the vocabulary used across engines.
 
-2. **One README per package root** - Don't over-nest documentation
-   - Main concepts at package level
-   - Implementation details in code comments
+### Core principles
 
-3. **Reality over aspiration** - Document what exists, not what's planned
-   - This file tracks actual implementation status
-   - No roadmap promises
-
-4. **LLM-first, human-friendly** - Optimize for machine parsing
-   - Clear structure and headings
-   - Code examples with context
-   - Error patterns and solutions
+1. **One concept = one home.** Each idea has exactly one canonical home in the docs. Other places link, never restate. Drift between two "authoritative" descriptions is the worst-case failure mode for LLM consumers.
+2. **Source is authoritative for values; doc is authoritative for rationale.** Calibration constants live in `.ts` files with a one-line comment pointing to the doc section. The doc owns the *why*, not the *what*.
+3. **History is separate from reference.** Live rules and dead rules go in different files. See [history.md](./history.md).
+4. **Index entries are one line.** If [engines.md](./engines.md) grows multi-paragraph entries, split out a per-engine doc.
 
 ## Common Patterns
 
-Authentication, caching, and stat enrichment patterns are documented in **[data-architecture.md](./data-architecture.md)**. Per-stat conventions (which fields are regressed, calibration knobs) live in **[scoring-conventions.md](./scoring-conventions.md)**.
+Authentication, caching, and stat enrichment patterns are documented in **[data-architecture.md](./data-architecture.md)**. Stat-level discipline (raw counting / raw rate / regressed talent / matchup-adjusted) lives in **[stat-levels.md](./stat-levels.md)**. Cross-engine calibration constants live in **[league-baselines.md](./league-baselines.md)**.
 
 ## Navigation Tips
 
-1. **Check the data layer** - See [data-architecture.md](./data-architecture.md) for the three-layer model, fetch+cache contract, and identity contract
-2. **Reference scoring conventions** - [scoring-conventions.md](./scoring-conventions.md) for stat levels and calibration knobs
-3. **Reference Yahoo API guide** - [yahoo-api-reference.md](./yahoo-api-reference.md) for API details
-4. **Dashboard architecture** - [dashboard-components.md](./dashboard-components.md) for card system
+1. **Touching engine code** - Find the engine in [engines.md](./engines.md); follow the layer pointer to the detail doc.
+2. **Tuning a calibration constant** - Open the source file. The inline comment points to the doc section that owns the rationale. Update both; add a [history.md](./history.md) entry if the change is wide-blast.
+3. **Adding a new engine** - Read [architecture.md](./architecture.md#rules-for-adding-a-new-engine). Place it in a layer, register in [engines.md](./engines.md).
+4. **Deleting or deprecating a pattern** - Add a [history.md](./history.md) entry before merging.
 
 ## Environment Variables
 

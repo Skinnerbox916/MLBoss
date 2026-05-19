@@ -6,11 +6,12 @@ import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
 import { Text } from '@/components/typography';
-import CategoryFocusBar from '@/components/shared/CategoryFocusBar';
+import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
-import { useMatchupAnalysis } from '@/lib/hooks/useMatchupAnalysis';
+import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
+import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
@@ -251,7 +252,17 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
     () => leagueCategories.filter(c => c.is_pitcher_stat),
     [leagueCategories],
   );
-  const { analysis: matchupAnalysis } = useMatchupAnalysis(leagueKey, teamKey);
+  // Use the corrected (matchup-to-date + rest-of-week projection) analysis
+  // so the chase/hold/punt split agrees with the streaming page's pitcher
+  // tab. Both pages ask "which pitcher cats will be contested by Sunday
+  // given my actual roster?" — the projection answers that better than
+  // the scoreboard alone, and using the same hook on both sides keeps the
+  // suggestions identical for the same matchup.
+  const {
+    analysis: matchupAnalysis,
+    isCorrected,
+    isLoading: matchupLoading,
+  } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
   const pitcherStatIds = useMemo(() => {
     const set = new Set<number>();
     for (const c of scoredPitcherCategories) set.add(c.stat_id);
@@ -264,10 +275,12 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
   const {
     focusMap,
     suggestedFocusMap,
-    toggle: toggleFocus,
+    set: setFocus,
     reset: resetFocus,
     hasOverrides: hasFocusOverrides,
   } = useSuggestedFocus(matchupAnalysis, pitcherPredicate);
+
+  const { opponentName } = useMatchupHeader(leagueKey, teamKey);
 
   const opposingTeamIds = useMemo(() => {
     const ids = new Set<number>();
@@ -360,15 +373,17 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
   return (
     <div className="space-y-4">
       {scoredPitcherCategories.length > 0 && (
-        <CategoryFocusBar
-          categories={scoredPitcherCategories}
+        <GamePlanPanel
+          analysis={matchupAnalysis}
+          isCorrected={isCorrected}
+          isLoading={matchupLoading}
+          side="pitching"
+          opponentName={opponentName}
           focusMap={focusMap}
-          onToggle={toggleFocus}
-          title="Pitching Focus"
-          helper="Suggested by MLBoss · click to override"
+          onSetFocus={setFocus}
+          suggestedFocusMap={suggestedFocusMap}
           onReset={resetFocus}
           hasOverrides={hasFocusOverrides}
-          suggestedFocusMap={suggestedFocusMap}
         />
       )}
 

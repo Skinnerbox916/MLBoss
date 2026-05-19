@@ -19,7 +19,7 @@ interface NavItem {
 
 const navigation: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: FiHome },
-  { name: 'Today', href: '/lineup', icon: FiList },
+  { name: 'Lineup', href: '/lineup', icon: FiList },
   { name: 'Streaming', href: '/streaming', icon: GiThrowingBall },
   { name: 'Roster', href: '/roster', icon: FiUsers },
   { name: 'League', href: '/league', icon: GiBaseballGlove },

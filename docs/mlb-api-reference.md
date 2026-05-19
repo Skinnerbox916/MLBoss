@@ -136,7 +136,7 @@ const enrichPitcher = async (p: ProbablePitcher) => {
 
 ### 2. Current-season sample handled by Bayesian regression
 
-The old IP-gated tier classifier (`classifyPitcherTier` with IP ≥ 25 cutoffs and an `'unknown'` bucket) is gone. Thin current-season samples are now handled by the talent layer's Bayesian regression: current-season K%/BB%/xwOBACON-allowed are blended against prior-season values (capped at a fraction of current PA) and against league means, weighted by their respective sample sizes. A pitcher with 27 IP gets pulled hard toward the prior; a pitcher with 150 IP gets pulled mostly toward themselves. There is no `'unknown'` state — every pitcher gets a regressed estimate plus a `confidence` cue (`high`/`medium`/`low`) based on `effectivePA`. See [pitcher-evaluation.md](pitcher-evaluation.md).
+The old IP-gated tier classifier (`classifyPitcherTier` with IP ≥ 25 cutoffs and an `'unknown'` bucket) is gone. Thin current-season samples are now handled by the talent layer's Bayesian regression: current-season K%/BB%/xwOBACON-allowed are blended against prior-season values (capped at a fraction of current PA) and against league means, weighted by their respective sample sizes. A pitcher with 27 IP gets pulled hard toward the prior; a pitcher with 150 IP gets pulled mostly toward themselves. There is no `'unknown'` state — every pitcher gets a regressed estimate plus a `confidence` cue (`high`/`medium`/`low`) based on `effectivePA`. See [unified-rating-model.md](unified-rating-model.md).
 
 The same pattern applies to batters: `getBatterSplits` swaps the splits source to the prior season when current PA < 30, but always preserves the **current calendar year line** as `currentSeason` so the UI can still show "how this player is hitting THIS year" prominently (via the `RawStat` parsed line on the root response).
 
@@ -197,7 +197,7 @@ Tiers are derived from the rating score, not classified by stat thresholds. `tie
 | `weak` | 28–41 |
 | `bad` | < 28 |
 
-The score itself comes out of the three-layer pipeline: `PitcherTalent` (context-free) → `GameForecast` (talent + opponent/park/weather/platoon) → `PitcherRating` (forecast projected onto the user's scored categories with their focus weights). There is no `'unknown'` bucket — pitchers with thin samples get a `confidence: 'low'` cue but still place where their data suggests. See [pitcher-evaluation.md](pitcher-evaluation.md).
+The score itself comes out of the three-layer pipeline: `PitcherTalent` (context-free) → `GameForecast` (talent + opponent/park/weather/platoon) → `PitcherRating` (forecast projected onto the user's scored categories with their focus weights). There is no `'unknown'` bucket — pitchers with thin samples get a `confidence: 'low'` cue but still place where their data suggests. See [unified-rating-model.md](unified-rating-model.md).
 
 Tiers drive the batter-row "Facing Ace" / "Weak SP" pills and the streaming board's row tint and composite scoring (see [streaming-page.md](streaming-page.md)).
 

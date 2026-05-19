@@ -1,8 +1,8 @@
 'use client';
 
-import { formatStatValue } from '@/lib/formatStat';
 import type { DayProbables } from '@/lib/hooks/useWeekProbables';
 import type { LeagueLimits } from '@/lib/fantasy/limits';
+import CapPill from '@/components/shared/CapPill';
 
 interface WeekProgressProps {
   myStarts: DayProbables[];
@@ -42,13 +42,9 @@ function DayStrip({ starts, side }: DayStripProps) {
           ? 'bg-border-muted text-muted-foreground/60'
           : count === 0
             ? 'bg-surface-muted text-muted-foreground/60 border border-border'
-            : isSpike
-              ? side === 'me'
-                ? 'bg-accent text-background'
-                : 'bg-error text-background'
-              : side === 'me'
-                ? 'bg-accent/70 text-background'
-                : 'bg-primary/60 text-background';
+            : side === 'me'
+              ? 'bg-accent text-background'
+              : 'bg-primary text-background';
 
         return (
           <div
@@ -57,8 +53,8 @@ function DayStrip({ starts, side }: DayStripProps) {
             title={`${day.dayName} ${day.date}: ${pitcherList}`}
           >
             <span
-              className={`flex items-center justify-center rounded-full font-mono font-numeric text-[10px] font-bold leading-none transition-transform ${
-                isSpike ? 'w-6 h-6 ring-2 ring-accent/40' : 'w-5 h-5'
+              className={`flex items-center justify-center rounded-full font-mono font-numeric text-[10px] font-bold leading-none transition-all ${
+                isSpike ? 'w-6 h-6 border-2 border-current/20' : 'w-5 h-5'
               } ${dotTone}`}
             >
               {count > 0 ? count : ''}
@@ -74,41 +70,6 @@ function DayStrip({ starts, side }: DayStripProps) {
         );
       })}
     </div>
-  );
-}
-
-function CapPill({
-  label,
-  used,
-  cap,
-  formatName,
-}: {
-  label: string;
-  used: string | undefined;
-  cap: number;
-  formatName: 'IP' | 'GS';
-}) {
-  const usedNum = used !== undefined ? parseFloat(used) : NaN;
-  // Pressure: how much of the cap has been used. Threshold mirrors how a
-  // manager actually thinks — "tight" when more than 80% is gone.
-  const pct = Number.isFinite(usedNum) ? Math.min(1, usedNum / cap) : 0;
-  const isTight = pct >= 0.8;
-  const isMaxed = pct >= 1;
-
-  const tone =
-    isMaxed ? 'bg-error/15 text-error border-error/30' :
-    isTight ? 'bg-accent/15 text-accent-700 border-accent/30' :
-    'bg-surface-muted text-muted-foreground border-border';
-
-  const usedStr = Number.isFinite(usedNum) ? formatStatValue(used!, formatName) : '–';
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-mono font-numeric ${tone}`}
-      title={`${label}: ${usedStr} of ${cap} used${isTight ? ' — tight' : ''}`}
-    >
-      <span className="font-semibold uppercase tracking-wider">{label}</span>
-      <span>{usedStr}/{cap}</span>
-    </span>
   );
 }
 

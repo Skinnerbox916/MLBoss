@@ -41,9 +41,18 @@ export function useWeekProbables(
 ): UseWeekProbablesResult {
   const days = useMemo(() => getMatchupWeekDays(), []);
 
-  // Both rosters as of today — we don't need date-shifted views for runway.
-  const { roster: myRoster, isLoading: myRosterLoading } = useRoster(myTeamKey);
-  const { roster: oppRoster, isLoading: oppRosterLoading } = useRoster(opponentTeamKey);
+  // Roster as of the LAST remaining day of the matchup week — captures
+  // pickups effective for upcoming starts that aren't on today's roster
+  // snapshot yet. The remaining-starts count and day strip both reflect
+  // pending pickups this way. See `docs/history.md`
+  // "Always-fetch-roster-by-date".
+  const rosterDate = useMemo(() => {
+    const remaining = days.filter(d => d.isRemaining);
+    return remaining[remaining.length - 1]?.date;
+  }, [days]);
+
+  const { roster: myRoster, isLoading: myRosterLoading } = useRoster(myTeamKey, rosterDate);
+  const { roster: oppRoster, isLoading: oppRosterLoading } = useRoster(opponentTeamKey, rosterDate);
 
   // Stable hook order: seven calls, one per Mon..Sun day.
   const day0 = useGameDay(days[0]?.date);

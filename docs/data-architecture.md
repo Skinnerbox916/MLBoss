@@ -1,6 +1,6 @@
-# Data Architecture
+## Data Architecture
 
-This is the canonical reference for how MLBoss fetches, models, and composes data. Read this before touching anything in `src/lib/fantasy/`, `src/lib/mlb/`, `src/lib/roster/`, `src/lib/pitching/`, or `src/lib/lineup/`.
+The reference for how MLBoss fetches, models, and composes data. Read this before touching anything in `src/lib/fantasy/`, `src/lib/mlb/`, `src/lib/roster/`, `src/lib/pitching/`, or `src/lib/lineup/`. This doc covers the **data layer** — for the engines that consume the data, see [engines.md](./engines.md).
 
 The goal of this architecture is **flexibility without brittleness**: surface the insights the product needs (talent ratings, streaming verdicts, swap suggestions) without every change cascading into broken state somewhere else.
 
@@ -220,89 +220,16 @@ The Yahoo to MLB join is the most fragile boundary in the system. It lives in [s
 
 Cache key shape: `cache:static:mlb:identity:resolve-v2:{lowercased-name}:{lowercased-team}`. Bump the `-vN` suffix whenever the resolution rules change.
 
-## One source of truth per concept
+## Canonical implementations
 
-Each scoring concept must have exactly one canonical implementation. When we have N implementations of "how good is this pitcher?" they drift, and the same pitcher gets different verdicts on different pages. This is what's currently true:
+For the registry of all engines and where they live, see [engines.md](./engines.md). For the rule that prohibits second implementations, see [architecture.md](./architecture.md#2-single-source-of-truth-per-concept). Two specific entries that fit naturally with the data-layer concerns:
 
 | Concept | Canonical location |
 |---------|-------------------|
 | Bayesian rate blender | `blendRate` (returns `BlendOutput`) and `blendRateOrNull` (returns `number | null` for Savant secondaries) in [src/lib/mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) |
-| Component talent xwOBA (low-level) | `computeBatterTalentXwoba` / `computePitcherTalentXwobaAllowed` (talentModel.ts) |
-| Per-category baseline | `blendedBaselineForCategory` in [src/lib/mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) |
-| Pitcher talent (canonical, context-free) | `computePitcherTalent` in [src/lib/pitching/talent.ts](../src/lib/pitching/talent.ts) |
-| Pitcher game forecast (talent + context) | `buildGameForecast` in [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts) |
-| Pitcher rating (0-100, tier derived from score) | `getPitcherRating` in [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts) |
-| Batter rating | `getBatterRating` in [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts) |
-| Streaming-page composite (UI-shaped wrapper around forecast + rating) | `scorePitcher` in [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts) |
-| Forward batter projection (per-player + team aggregator) | `projectBatterPlayer` / `projectBatterTeam` in [src/lib/projection/batterTeam.ts](../src/lib/projection/batterTeam.ts) |
-| Forward pitcher projection (per-pitcher + team aggregator) | `projectPitcherPlayer` / `projectPitcherTeam` in [src/lib/projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) |
-| Corrected matchup margin (YTD + projection, both sides) | `useCorrectedMatchupAnalysis` in [src/lib/hooks/useCorrectedMatchupAnalysis.ts](../src/lib/hooks/useCorrectedMatchupAnalysis.ts) (folds batter + pitcher counting cats; ratio pitcher cats stay YTD by design) |
 | Team-abbreviation canonicalization (Yahoo / MLB / ESPN) | `normalizeTeamAbbr` in [src/lib/mlb/teamAbbr.ts](../src/lib/mlb/teamAbbr.ts) — single alias table for every cross-source matcher |
 
-Adding a second function that does any of the above — even "just slightly different for this one page" — is forbidden. Add a parameter, return a richer shape, or add a wrapper over the canonical function.
-
-Historical violations and their resolution:
-
-- ~~`blendSavant` in src/lib/mlb/savant.ts duplicates `blendRate`~~ — **resolved** by introducing `blendRateOrNull` and migrating callers (Phase 4b).
-- ~~`classifyPitcherTier` (rule-based) and `pitcherTalentScore` (RV/100-based) gave the same pitcher inconsistent verdicts~~ — **resolved** in Phase 4d by collapsing both into a single three-layer pipeline: `PitcherTalent` (talent.ts) → `GameForecast` (forecast.ts) → `PitcherRating` (rating.ts). Tiers now derive from rating score via a single `tierFromScore` mapping. See [pitcher-evaluation.md](pitcher-evaluation.md).
-
-## Forward projection engines
-
-`src/lib/projection/` is the home of the forward-looking aggregation primitives. The shape is symmetric across batter and pitcher sides: a per-player primitive (one player × the day window) on top of which a team aggregator and a per-FA week-scoring hook are thin wrappers. Both sides emit the same `PerCategoryProjection` row shape (`{ statId, expectedCount, expectedDenom }`) so `composeCorrectedRows` and `useCorrectedMatchupAnalysis` consume both without branching.
-
-```
-                     ┌──────────────────────────┐
-                     │ Per-day primitives        │  Layer 2/3 (talent + rating)
-                     │ getBatterRating /         │
-                     │ buildGameForecast +       │
-                     │ getPitcherRating          │
-                     └──────────────┬───────────┘
-                                    │
-        ┌───────────────────────────┼───────────────────────────┐
-        ▼                           ▼                           ▼
-┌────────────────┐         ┌────────────────┐         ┌────────────────┐
-│ Per-player     │         │ Team aggregate │         │ Per-FA week    │
-│ projection     │         │ (sum over      │         │ scoring        │
-│ (one × N days) │         │  active roster)│         │ (FA pool ×     │
-│                │         │                │         │  pickup window)│
-└────────────────┘         └────────────────┘         └────────────────┘
-
-Batter side:
-  projectBatterPlayer  →  projectBatterTeam   →  useWeekBatterScores
-                          (via /api/projection/batter-team
-                           + useBatterTeamProjection)
-
-Pitcher side:
-  projectPitcherPlayer →  projectPitcherTeam  →  useWeekPitcherScores
-                          (via /api/projection/pitcher-team
-                           + usePitcherTeamProjection)
-```
-
-Two reuse rules enforced by the shape:
-
-1. **One per-player primitive per side.** All three consumers (team aggregate, opponent aggregate, per-FA week ranking) call the same `projectBatterPlayer` / `projectPitcherPlayer`. Don't write a parallel "but for the streaming board" version — extend the primitive or wrap it.
-2. **One row shape across batter and pitcher.** `PerCategoryProjection` carries a denominator-agnostic `expectedDenom` (AB for batter AVG, IP for pitcher ratio cats). The corrected-rows pipeline ignores ratio pitcher cats per design — see [streaming-page.md](streaming-page.md#ratio-cats-are-ytd-only) — but the field is there for future use.
-
-Pickup window primitives live in `src/lib/dashboard/weekRange.ts`:
-
-```typescript
-getMatchupWeekDays()      // Mon-Sun for the current matchup; isRemaining flag per day
-getStreamingGridDays()    // Always 7 days starting tomorrow (or full next week on Sunday); stable hook order
-getPickupPlayableDays()   // Subset of grid actually usable by a pickup made now
-```
-
-Why the same shape both sides: the streaming page mounts both a batter and a pitcher tab, and the corrected matchup margin needs to fold both projections into one row set. Maintaining type symmetry means the Game Plan card, the corrected analysis, and the streaming boards can all consume either projection without a per-side branch.
-
-### Projection API routes
-
-| Endpoint | Hook | Purpose | TTL |
-|----------|------|---------|-----|
-| `GET /api/projection/batter-team?teamKey=&leagueKey=` | `useBatterTeamProjection` | Forward batter-cat projection for a team across the matchup week's remaining days | 5 min |
-| `GET /api/projection/pitcher-team?teamKey=&leagueKey=` | `usePitcherTeamProjection` | Forward pitcher-cat projection for a team (counting cats: K, W, QS, IP) | 5 min |
-
-Both routes filter their input roster (active batters / non-IL pitchers), fan out per-day games via `getGameDay`, and run the corresponding `projectXxxTeam` engine. The pitcher-team route does name-based matching against probable starters in the day's slate and bails on pitchers whose probable doesn't appear (relievers naturally fall out — they don't probable-start).
-
-`useCorrectedMatchupAnalysis` runs four projections in parallel (my+opp × batter+pitcher), merges the per-cat projection records into one map per side, and hands them to `composeCorrectedRows`. The output `MatchupAnalysis` has corrected counting cats on both sides; ratio pitcher cats pass through YTD.
+For forward projection engines (`projectBatterPlayer` / `projectBatterTeam` / `projectPitcherPlayer` / `projectPitcherTeam` / slot-aware streaming / lineup optimization), see [projection.md](./projection.md).
 
 ## Yahoo fantasy layer
 
@@ -401,7 +328,7 @@ invalidateCache(key): Promise<void>
 invalidateCachePattern(prefix): Promise<number>
 ```
 
-For per-stat conventions (which fields are regressed vs raw, which constants are calibration knobs, the four stat levels) see [scoring-conventions.md](./scoring-conventions.md).
+For per-stat level discipline (raw counting / raw rate / regressed talent / matchup-adjusted) see [stat-levels.md](./stat-levels.md). For cross-engine calibration constants see [league-baselines.md](./league-baselines.md).
 
 ## Common gotchas
 
@@ -411,11 +338,9 @@ For per-stat conventions (which fields are regressed vs raw, which constants are
 - **`hydrate=currentTeam` omits `abbreviation`.** Always match same-name MLB players (the two Max Muncys, etc.) on `currentTeam.id`, not on the abbreviation string.
 - **Per-host concurrency is low (~8).** Don't fan out unbounded `Promise.all` over hundreds of player IDs — `mlbFetch` will queue them, but request bursts can still time out individual entries. Use `withCacheGated` so partial outages don't poison the cache.
 
-### Migration-era gotchas (Phase 4 learnings)
+### Live discipline rules
 
-- **`PlayerStatLine` is the page-facing shape; the internal scoring engines still operate on `BatterSeasonStats`.** The polymorphic `asBatterStats` shim inside `getBatterRating` and `roster/scoring.ts` transparently adapts either input via `toBatterSeasonStats(line)`. The plan called for deleting `toBatterSeasonStats` entirely once Phase 4a shipped, but that would have required rewriting the per-category baseline pipeline and the analysis-layer `getPlatoonAdjustedTalent` helper without changing behaviour. We kept the adapter as an internal-only migration shim instead and treated "no consumer code references the legacy shape" as the practical exit criterion.
-- **`PlayerStatLine` blocks are independently nullable.** A freshly-called-up rookie has `current` only, an IL'd vet has `prior` only, and a pre-debut promotion has neither. UI code that reads `line.current?.ops` should fall back to `line.prior?.ops` so IL players still render a row instead of disappearing.
-- **`blendRateOrNull` is the successor to the legacy `blendSavant`.** It mirrors the "all-empty returns null" semantics that Savant secondaries (xERA, RV/100, wOBA-on-contact) need. Pass `leagueMean: 0, leaguePriorN: 0` when no league anchor exists, or a real league mean + a positive `leaguePriorN` when the consumer wants regression toward the population.
-- **The pitcher-evaluation pipeline is in one place.** Phase 4d collapsed the previous fork (rule-based `classifyPitcherTier` + RV/100-based `pitcherTalentScore` + file-local `resolveTalent` shim) into a single three-layer pipeline: `PitcherTalent` (`src/lib/pitching/talent.ts`) → `GameForecast` (`src/lib/pitching/forecast.ts`) → `PitcherRating` (`src/lib/pitching/rating.ts`). Tier reads derive from rating score via `tierFromScore`. Don't add a parallel "tier classifier" or "talent score" helper anywhere else — extend the canonical pipeline instead.
 - **Don't import `model/` from `source/` or vice versa.** This rule isn't enforced by a lint rule; it's enforced by code review. If you find yourself reaching across the line, the helper probably belongs in `compose/` (the orchestrator file).
 - **`withCacheGated` predicates are silent on success and noisy on failure.** When a coverage check fails, the helper logs `[cache-gated] rejected …` and returns the result without writing. If you see this log fire repeatedly for the same key, the upstream API is degraded — don't loosen the predicate to "make it cache" without diagnosing why coverage is bad.
+
+For migration history (Phase 4 `PlayerStatLine` adapter, `blendSavant` → `blendRateOrNull`, pitcher-evaluation rebuild), see [history.md](./history.md).

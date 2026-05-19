@@ -7,14 +7,25 @@
  * the user can skew the rating toward the stats they're trying to win
  * (e.g. "I'm chasing AVG this week, punting HR").
  *
- * Structure (post-2026-05 unified architecture):
+ * Calibration principle (post-2026-05 share-of-variance unification):
+ * every per-cat matchup modifier reflects the empirical fraction of
+ * per-PA variance the *opposing pitcher* actually controls. Where log5
+ * fits — K, BB, AVG, H, TB are all rate-on-rate compositions with a
+ * clean league-rate denominator — the math derives the magnitude from
+ * the rates themselves. Where log5 doesn't fit (HR is a contact-quality
+ * outcome; R/RBI are downstream of team play and 8+ unrelated PAs) we
+ * use bounded multiplicative ratios with swing windows anchored to the
+ * literature: PITCHER_SWING_HR ±18% (Tango/Clemens 2018→19) and
+ * PITCHER_SWING_RUNS ±20% (R/RBI per-PA share of ERA variance).
+ *
+ * Structure:
  *   1. For each scored category, build an `expected` per-PA rate:
- *        baseline = Bayesian blend (current + prior + league)
- *        expected = baseline · matchup modifier (log5 for K/AVG, mult
- *                    for HR/R/RBI/SB, pass-through for BB)
+ *        baseline = Bayesian blend (current + prior + league),
+ *                   prior shrunk for partial-season samples (FULL_SAMPLE_PA)
+ *        expected = baseline · matchup modifier
  *      Matchup modifiers fold in **all** stat-specific signals: the
- *      opposing SP, the park (per-stat track via `getParkAdjustment`),
- *      and weather (via the per-cat weather factor below).
+ *      opposing SP (log5 or bounded ratio), the park (per-stat track via
+ *      `getParkAdjustment`), and weather (via the per-cat weather factor).
  *   2. Normalise `expected` onto 0-1 using the category's floor/elite
  *      window (shared with roster scoring).
  *   3. Weight each category by focus (chase / neutral / punt) and sum.
@@ -32,6 +43,10 @@
  * whole composite because they scale every category proportionally
  * (platoon: every per-PA rate is shifted by the same talent-vs-hand
  * factor; opportunity: PA count scales every counting stat the same).
+ *
+ * SB intentionally retains a flat handedness bump (RHP +5%) until a
+ * pitcher SB-allowed rate is plumbed onto `ProbablePitcher`. Catcher
+ * pop time is the other half of the SB defense and isn't yet sourced.
  */
 
 import { toBatterSeasonStats } from './adapters';
@@ -41,6 +56,7 @@ import {
   talentExpectedEra,
   talentBaa as talentBaaPrimitive,
   talentHrPerPA as talentHrPerPAPrimitive,
+  talentHitsPerPA as talentHitsPerPAPrimitive,
 } from '@/lib/pitching/talent';
 
 /** Migration-era helper. Accept either shape; operate on the legacy one. */
@@ -133,8 +149,35 @@ export interface BatterRating {
 
 const LEAGUE_AVG = 0.243;
 const LEAGUE_K_PER_PA = 0.223;
+const LEAGUE_BB_PER_PA = 0.084;
+const LEAGUE_H_PER_PA = 0.215;
 /** League-average HR per plate appearance. ~0.034 across MLB pitchers. */
 const LEAGUE_HR_PER_PA = 0.034;
+
+// ---------------------------------------------------------------------------
+// Pitcher share-of-variance bounds — anchored to published research, not
+// gut-tuned. Each clamp expresses the maximum per-PA effect a single
+// pitcher can plausibly have on the batter's outcome rate, given the
+// fraction of variance the literature attributes to the pitcher.
+//
+// Where log5 fits (K, BB, AVG, H, TB) the math derives the magnitude
+// from the rates themselves — no clamp needed. Where it doesn't (HR is
+// a contact-quality outcome, R/RBI flow through team offense) we clamp
+// the multiplicative ratio.
+//
+// See docs/unified-rating-model.md "Calibration anchors".
+// ---------------------------------------------------------------------------
+
+/** HR/PA: Tango/Clemens 2018→19 study found only ~2% real per-PA edge
+ *  facing the most-HR-prone vs most-stingy pitcher; variance-decomp
+ *  research shows batter and park dominate HR variance. ±15% absorbs
+ *  modeling noise around that small empirical effect. */
+const PITCHER_SWING_HR = { lo: 0.85, hi: 1.18 };
+
+/** R/PA, RBI/PA: per-PA run scoring flows through teammate offense,
+ *  baserunning, and 8+ unrelated PAs. Pitcher's per-PA R contribution
+ *  is a fraction of their ERA share. ±20% bounds the indirect effect. */
+const PITCHER_SWING_RUNS = { lo: 0.85, hi: 1.20 };
 
 // SP-perspective wrappers around the canonical talent-math primitives in
 // `pitching/talent.ts`. We accept either a `null`/`undefined` SP (no
@@ -147,6 +190,7 @@ const LEAGUE_HR_PER_PA = 0.034;
 type SpForXera = { talent?: { kPerPA: number; bbPerPA: number; contactXwoba: number; hrPerContact: number } | null };
 type SpForHr = { talent?: { kPerPA: number; bbPerPA: number; hrPerContact: number } | null };
 type SpForBaa = { talent?: { contactXwoba: number } | null };
+type SpForHits = { talent?: { contactXwoba: number; bbPerPA: number } | null };
 
 function spExpectedEra(sp: SpForXera | null | undefined): number | null {
   const t = sp?.talent;
@@ -159,6 +203,10 @@ function spHrPerPA(sp: SpForHr | null | undefined): number | null {
 function spBaa(sp: SpForBaa | null | undefined): number | null {
   const t = sp?.talent;
   return t ? talentBaaPrimitive(t) : null;
+}
+function spHitsPerPA(sp: SpForHits | null | undefined): number | null {
+  const t = sp?.talent;
+  return t ? talentHitsPerPAPrimitive(t) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +223,19 @@ function log5(batterRate: number, pitcherRate: number, leagueRate: number): numb
 
 function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
+}
+
+/** Bounded multiplicative pitcher modifier. Used when log5 doesn't fit
+ *  (HR is a contact-quality outcome, R/RBI are downstream of team play).
+ *  Clamps `pitcherRate / leagueRate` to a swing window anchored to the
+ *  published per-PA share-of-variance for that outcome. */
+function pitcherRatioClamp(
+  pitcherRate: number,
+  leagueRate: number,
+  swing: { lo: number; hi: number },
+): number {
+  if (leagueRate <= 0) return 1.0;
+  return clamp(pitcherRate / leagueRate, swing.lo, swing.hi);
 }
 
 interface ExpectedRate {
@@ -246,8 +307,11 @@ function applyMatchupModifier(
     }
 
     case 12: { // HR — pitcher HR/PA from talent vector + park HR + weather.
+      // Pitcher swing tightened to literature: HR variance is dominated
+      // by batter and park; the empirical extreme-pitcher edge per-PA is
+      // ~2% (Tango/Clemens). PITCHER_SWING_HR caps at ±18%.
       const hrPerPA = spHrPerPA(sp);
-      const spMod = hrPerPA != null ? clamp(hrPerPA / LEAGUE_HR_PER_PA, 0.5, 2.0) : 1.0;
+      const spMod = hrPerPA != null ? pitcherRatioClamp(hrPerPA, LEAGUE_HR_PER_PA, PITCHER_SWING_HR) : 1.0;
       const expected = baseline * spMod * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
       if (hrPerPA != null && hrPerPA >= 0.045) hints.push('HR-prone SP');
@@ -265,11 +329,15 @@ function applyMatchupModifier(
     }
 
     case 7: { // R — SP quality + park + staff ERA + batting order + weather.
+      // R/PA flows through team offense; per-PA pitcher contribution is
+      // a fraction of their ERA share. PITCHER_SWING_RUNS caps at ±20%.
+      // Express SP modifier as a normalized ratio (xERA / 4.0) so the
+      // clamp is the single source of truth on swing magnitude.
       const orderMod = battingOrder && battingOrder >= 1 && battingOrder <= 3 ? 1.05
                      : battingOrder && battingOrder >= 7 ? 0.92
                      : 1.0;
       const expEra = spExpectedEra(sp);
-      const spMod = expEra != null ? clamp(Math.sqrt(expEra / 4.0), 0.7, 1.35) : 1.0;
+      const spMod = expEra != null ? pitcherRatioClamp(expEra, 4.0, PITCHER_SWING_RUNS) : 1.0;
       const opposingTeam = ctx?.isHome ? ctx.game.awayTeam : ctx?.game.homeTeam ?? null;
       const staffEra = opposingTeam?.staffEra ?? null;
       const staffMod = staffEra != null ? clamp(Math.sqrt(staffEra / 4.2), 0.85, 1.2) : 1.0;
@@ -285,11 +353,12 @@ function applyMatchupModifier(
     case 13: { // RBI — SP quality + park + middle-of-order + weather. (Staff-
               //       ERA intentionally NOT applied: RBI scoring depends on
               //       SP and own batters in front, not the relief pen.)
+      // Same swing bounds as R — RBI per-PA is similarly team-mediated.
       const orderMod = battingOrder && battingOrder >= 3 && battingOrder <= 5 ? 1.08
                      : battingOrder && battingOrder >= 8 ? 0.9
                      : 1.0;
       const expEra = spExpectedEra(sp);
-      const spMod = expEra != null ? clamp(Math.sqrt(expEra / 4.0), 0.7, 1.35) : 1.0;
+      const spMod = expEra != null ? pitcherRatioClamp(expEra, 4.0, PITCHER_SWING_RUNS) : 1.0;
       const expected = baseline * spMod * parkAdj.multiplier * orderMod * weatherMult;
       const hints: string[] = [];
       if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
@@ -311,13 +380,45 @@ function applyMatchupModifier(
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 8:   // H  — overall hitter friendliness with hand skew + small weather effect.
-    case 23:  // TB — same. HR-track effect is captured for HR-specific
-              //      scoring; using the AVG track here avoids double-counting.
-      return { expected: baseline * parkAdj.multiplier * weatherMult, modifierHint: parkAdj.hint };
+    case 8: { // H — log5 against pitcher hits-per-PA + park + weather.
+      // Previously park-only, which left H asymmetrically uncalibrated
+      // vs AVG (AVG got a log5 SP modifier; H didn't). Same primitive
+      // applied here keeps AVG ↔ H consistent.
+      const hitsPerPA = spHitsPerPA(sp);
+      const log5Mod = hitsPerPA != null ? log5(baseline, hitsPerPA, LEAGUE_H_PER_PA) / baseline : 1.0;
+      const expected = baseline * log5Mod * parkAdj.multiplier * weatherMult;
+      const hints: string[] = [];
+      if (hitsPerPA != null && hitsPerPA >= 0.235) hints.push(`hit-prone SP (${hitsPerPA.toFixed(3)} H/PA)`);
+      else if (hitsPerPA != null && hitsPerPA <= 0.195) hints.push(`hit-suppressing SP (${hitsPerPA.toFixed(3)} H/PA)`);
+      if (parkAdj.hint) hints.push(parkAdj.hint);
+      return { expected, modifierHint: hints.join(' · ') };
+    }
 
-    case 18: // BB — park walks factor (pitcher caution vs pitcher park).
-      return { expected: baseline * parkAdj.multiplier, modifierHint: parkAdj.hint };
+    case 23: { // TB — log5 against pitcher hits-per-PA + park + weather.
+      // TB tracks H + extra bases. Hits-per-PA captures the contact
+      // dimension; HR-specific power is already separately credited in
+      // the HR cat. Using the same hit-allowance primitive keeps H ↔ TB
+      // moving together (a hit-suppressing SP suppresses both).
+      const hitsPerPA = spHitsPerPA(sp);
+      const log5Mod = hitsPerPA != null ? log5(baseline, hitsPerPA, LEAGUE_H_PER_PA) / baseline : 1.0;
+      const expected = baseline * log5Mod * parkAdj.multiplier * weatherMult;
+      return { expected, modifierHint: parkAdj.hint };
+    }
+
+    case 18: { // BB — log5 against pitcher BB/PA + park.
+      // BB is one of the three true outcomes (K, BB, HR) and the most
+      // pitcher-controlled rate after K. log5 is the right primitive
+      // here; previously BB had only a park modifier, leaving the
+      // pitcher's BB-prone tendency uncredited.
+      const spBb = sp?.talent?.bbPerPA ?? null;
+      const log5Mod = spBb != null ? log5(baseline, spBb, LEAGUE_BB_PER_PA) / baseline : 1.0;
+      const expected = baseline * log5Mod * parkAdj.multiplier;
+      const hints: string[] = [];
+      if (spBb != null && spBb >= 0.10) hints.push(`high-BB SP (${(spBb * 100).toFixed(0)}%)`);
+      else if (spBb != null && spBb <= 0.06) hints.push(`low-BB SP (${(spBb * 100).toFixed(0)}%)`);
+      if (parkAdj.hint) hints.push(parkAdj.hint);
+      return { expected, modifierHint: hints.join(' · ') };
+    }
 
     default:
       return { expected: baseline, modifierHint: '' };

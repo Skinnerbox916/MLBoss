@@ -12,6 +12,12 @@
  *   3. Normalise the blended rate onto a 0-1 scale using a (floor, elite)
  *      window so contributions across categories are comparable.
  *
+ * For batters with sufficient Savant sample, the talent-derived rate
+ * (xBA, regressed K%/BB%) takes precedence over the raw-rate blend on
+ * cats with strong Statcast signal (AVG / H / K / BB). This is the
+ * canonical path described in [docs/unified-rating-model.md] — raw
+ * blend remains as a fallback for thin-sample / no-Savant players.
+ *
  * This is the canonical mapping of Yahoo batter `stat_id` → per-PA rate.
  * Adding a new category is a one-entry change here; both the roster
  * scoring and the lineup rating pick it up automatically.
@@ -157,6 +163,19 @@ export function supportsStatId(statId: number): boolean {
   return statId in CATEGORY_BASELINE_CONFIG;
 }
 
+/**
+ * PA at which a prior season is treated as fully reliable. Below this,
+ * `blendRate` shrinks the prior's effective weight by `priorN / FULL_SAMPLE_PA`
+ * so a partial-season call-up / IL-shortened year / mid-season trade
+ * doesn't get the same authority as a full ~600-PA season.
+ *
+ * Anchor: ~⅔ of a full MLB season. Full-season regulars sit at 600+ PA;
+ * 400 PA is the smallest "you played a real role" sample that empirically
+ * still tracks well year-to-year. Below that, sample noise plus selection
+ * effects (the player only batted that little for a reason) dominate.
+ */
+const FULL_SAMPLE_PA = 400;
+
 export interface BlendedBaseline {
   /** Bayesian-blended per-PA rate (or native rate for AVG). */
   rate: number;
@@ -165,8 +184,66 @@ export interface BlendedBaseline {
 }
 
 /**
+ * Effective-PA gate: below this the talent regression is dominated by
+ * league priors, so the raw-rate blend (which keys off the player's
+ * actual current + prior PA) is a better signal. Above this the talent
+ * vector has enough sample behind it to genuinely beat raw rates by
+ * stripping BABIP/luck noise. ~30 GP for a regular starter.
+ * See docs/unified-rating-model.md#per-cat-batter-baselines.
+ */
+const TALENT_GATE_EFFECTIVE_PA = 100;
+
+/**
+ * Talent-derived rate for cats with strong Statcast signal. Returns null
+ * for cats where talent doesn't help (R/RBI/SB depend on lineup context,
+ * not pure batter skill) or when the talent vector isn't available.
+ *
+ * The rates returned here are PA-denominated per-PA outcome rates —
+ * comparable to the raw `s.hits / s.pa` shape — so the downstream
+ * normalize step doesn't need to know whether it got a talent or raw
+ * input.
+ *
+ * For AVG (Yahoo stat_id 3) the function returns the H/AB rate (xBA
+ * directly), matching the raw-rate getter which returns `s.avg`. The
+ * other rate cats return per-PA.
+ */
+function talentRateForCategory(
+  stats: BatterSeasonStats,
+  statId: number,
+): number | null {
+  const kRate = stats.kRate;
+  const bbRate = stats.bbRate;
+  const xba = stats.xba;
+  switch (statId) {
+    case 3: // AVG — xBA is the deserved H/AB
+      return xba;
+    case 8: // H — xBA × (AB/PA); AB/PA ≈ (1 − bbRate)
+      return xba !== null && bbRate !== null ? xba * (1 - bbRate) : null;
+    case 21: // K — regressed K%
+      return kRate;
+    case 18: // BB — regressed BB%
+      return bbRate;
+    // HR, TB, R, RBI, SB stay on the raw-rate blend. HR and TB will move
+    // here once we expose xSLG-derived signals via a follow-up commit;
+    // R/RBI/SB are lineup-context-dominated and don't benefit from xBA.
+    default:
+      return null;
+  }
+}
+
+/**
  * Bayesian-blended per-PA (or native) rate for one category. Returns null
  * when the stat isn't in the baseline config.
+ *
+ * Two-path:
+ *   1. **Talent path** (preferred when available): batter has Savant talent
+ *      with effectivePA ≥ TALENT_GATE_EFFECTIVE_PA AND the cat is one of
+ *      the four high-Statcast-signal cats (AVG / H / K / BB). The talent
+ *      vector is already Bayesian-regressed inside the talent layer, so
+ *      we surface it directly — no second blend.
+ *   2. **Raw path** (fallback): the legacy Bayesian blend of raw current
+ *      + prior + league. Used when talent isn't ready (thin Savant sample,
+ *      rookie pre-debut) or for cats outside the talent-eligible set.
  */
 export function blendedBaselineForCategory(
   stats: BatterSeasonStats,
@@ -174,6 +251,21 @@ export function blendedBaselineForCategory(
 ): BlendedBaseline | null {
   const cfg = CATEGORY_BASELINE_CONFIG[statId];
   if (!cfg) return null;
+
+  // Talent path: when we have a sufficient-sample talent vector AND the
+  // category has a Statcast-derivable rate, surface that. Talent rates
+  // are already Bayesian-blended inside the talent layer, so we trust
+  // them as-is and pass through the talent's effective PA for the
+  // confidence cue downstream.
+  const eff = stats.xwobaEffectivePA;
+  if (eff >= TALENT_GATE_EFFECTIVE_PA) {
+    const talentRate = talentRateForCategory(stats, statId);
+    if (talentRate !== null) {
+      return { rate: talentRate, effectivePA: eff };
+    }
+  }
+
+  // Raw path: legacy Bayesian blend of raw current + prior + league.
   const cur = cfg.getCurrent(stats);
   const prior = stats.priorSeason ? cfg.getPrior(stats.priorSeason) : null;
   const result = blendRate({
@@ -184,6 +276,7 @@ export function blendedBaselineForCategory(
     leagueMean: cfg.leagueMean,
     leaguePriorN: cfg.leaguePriorN,
     priorCap: cfg.priorCap,
+    priorReliabilityN: FULL_SAMPLE_PA,
   });
   return { rate: result.value, effectivePA: result.effectiveN };
 }

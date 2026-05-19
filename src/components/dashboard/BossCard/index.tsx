@@ -111,7 +111,7 @@ export default function BossCard() {
   const highlightStatId = useMemo(() => {
     let best: { statId: number; priority: number; margin: number } | null = null;
     for (const row of analysis.rows) {
-      if (!row.hasData || row.winning !== false) continue;
+      if (!row.countsTowardRecord || row.winning !== false) continue;
       if (
         !best ||
         row.priority > best.priority ||

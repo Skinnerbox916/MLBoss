@@ -246,6 +246,24 @@ export interface BatterSeasonStats {
    *  data alone). Used as the "before" reference for the Rising bonus —
    *  current xwOBA above this by ~20 pts of wOBA → genuine improvement. */
   xwobaTalentPrior: number | null;
+  /** Regressed talent K rate (Bayesian blend of current + prior + league,
+   *  stabilises ~60 PA). Feeds the K per-cat baseline so HOLD-all and
+   *  matchup ratings reflect true-talent K% instead of raw current K/PA.
+   *  Null only when no Savant skills data merges for the player. */
+  kRate: number | null;
+  /** Regressed talent BB rate. Same shape as `kRate`; stabilises ~120 PA.
+   *  Feeds the BB per-cat baseline and the H/PA derivation (H/PA ≈ xBA ×
+   *  (1 - bbRate)). */
+  bbRate: number | null;
+  /** Regressed talent xBA (deserved AVG from Savant). Feeds the AVG and H
+   *  per-cat baselines. Cuts through BABIP noise — a guy hitting .310 on
+   *  inflated BABIP with a .265 xBA shows up as roughly the .265 hitter
+   *  he probably is going forward. Null when the player has no current
+   *  or prior Savant xBA. */
+  xba: number | null;
+  /** Regressed talent xSLG (deserved SLG). Reserved for the TB per-cat
+   *  baseline. Null when no Savant xSLG either side. */
+  xslg: number | null;
   /** Batter handedness — drives platoon regression priors. */
   bats: 'L' | 'R' | 'S' | null;
   /** Observed OPS vs LHP (null when no sample). */
@@ -343,6 +361,17 @@ export interface PlayerTalent {
   xwobaTalentPrior: number | null;
   /** Actual wOBA blended current + prior (UI-only luck-delta signal). */
   woba: number | null;
+  /** Regressed talent K rate (Bayesian-blended K%, stabilises ~60 PA).
+   *  Drives the K per-cat batter baseline. */
+  kRate: number | null;
+  /** Regressed talent BB rate (stabilises ~120 PA). Drives the BB per-cat
+   *  baseline and the H/PA derivation. */
+  bbRate: number | null;
+  /** Regressed talent xBA (deserved AVG). Drives AVG and H per-cat
+   *  baselines. Null when no Savant xBA exists for either season. */
+  xba: number | null;
+  /** Regressed talent xSLG (deserved SLG). Reserved for TB per-cat. */
+  xslg: number | null;
 }
 
 /**

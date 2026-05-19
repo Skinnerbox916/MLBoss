@@ -1,6 +1,7 @@
 import useSWR from 'swr';
 import { fetcher } from './fetcher';
 import type { ProjectedCategory } from './useBatterTeamProjection';
+import type { WeekTarget } from '@/lib/dashboard/weekRange';
 
 /** Per-start projection summary for the pitcher team-projection response. */
 export interface ProjectedPerStart {
@@ -41,14 +42,17 @@ export interface PitcherTeamProjectionResponse {
 /**
  * Forward pitcher-cat projection for a team across the rest of the matchup
  * week. Mirrors `useBatterTeamProjection` for the pitcher side. The same
- * hook serves my team and the opponent (different `teamKey`).
+ * hook serves my team and the opponent (different `teamKey`). Pass
+ * `targetWeek: 'next'` to target next week — see `useBatterTeamProjection`.
  */
 export function usePitcherTeamProjection(
   teamKey: string | undefined,
   leagueKey: string | undefined,
+  opts: { targetWeek?: WeekTarget } = {},
 ) {
+  const { targetWeek = 'current' } = opts;
   const url = teamKey && leagueKey
-    ? `/api/projection/pitcher-team?teamKey=${teamKey}&leagueKey=${leagueKey}`
+    ? `/api/projection/pitcher-team?teamKey=${teamKey}&leagueKey=${leagueKey}${targetWeek === 'next' ? '&targetWeek=next' : ''}`
     : null;
   const { data, error, isLoading } = useSWR<PitcherTeamProjectionResponse>(url, fetcher, {
     revalidateOnFocus: false,

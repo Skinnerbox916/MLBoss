@@ -35,7 +35,7 @@ const SPIKE_THRESHOLD = 3;
  */
 function pickLockedWins(rows: AnalyzedMatchupRow[], n = 2): AnalyzedMatchupRow[] {
   return rows
-    .filter(r => r.hasData && r.winning === true)
+    .filter(r => r.countsTowardRecord && r.winning === true)
     .sort((a, b) => Math.abs(b.margin) - Math.abs(a.margin))
     .slice(0, n);
 }
@@ -47,7 +47,7 @@ function pickLockedWins(rows: AnalyzedMatchupRow[], n = 2): AnalyzedMatchupRow[]
  */
 function pickContestedLosses(rows: AnalyzedMatchupRow[], n = 2): AnalyzedMatchupRow[] {
   return rows
-    .filter(r => r.hasData && r.winning === false)
+    .filter(r => r.countsTowardRecord && r.winning === false)
     .sort((a, b) => b.priority - a.priority)
     .slice(0, n);
 }
@@ -85,16 +85,43 @@ export function getBossBrief(input: BossBriefInput): BossBriefOutput | null {
   const allRows = input.analysis.rows;
   if (allRows.length === 0) return null;
 
-  // ---- 1. Opponent weekend pitcher spike --------------------------------
-  const oppSpikes = input.oppStarts
-    .filter(d => d.day.isRemaining && d.starts.length >= SPIKE_THRESHOLD)
-    .sort((a, b) => b.starts.length - a.starts.length);
+  const pitchingRows = allRows.filter(r => r.isPitcherStat);
+  const battingRows = allRows.filter(r => r.isBatterStat);
 
-  if (oppSpikes.length > 0) {
-    const spike = oppSpikes[0];
+  // ---- 1. Pitching volume competition -----------------------------------
+  // Instead of an "alert" framing, we look at the total projected volume for
+  // the week. Pitching stats are cumulative; the head-to-head on a given day
+  // matters less than the end-of-week IP gap.
+  const ipRow = allRows.find(r => r.name === 'IP');
+  const myCurrentIp = ipRow ? parseFloat(ipRow.myVal) : 0;
+  const oppCurrentIp = ipRow ? parseFloat(ipRow.oppVal) : 0;
+
+  const calculateRemainingIp = (starts: DayProbables[]) => {
+    return starts
+      .filter(d => d.day.isRemaining)
+      .reduce((sum, d) => {
+        const dayIp = d.starts.reduce((daySum, s) => {
+          // Use talent-based ipPerStart if available; fall back to league avg.
+          return daySum + (s.pitcher.talent?.ipPerStart ?? 5.4);
+        }, 0);
+        return sum + dayIp;
+      }, 0);
+  };
+
+  const myRemainingIp = calculateRemainingIp(input.myStarts);
+  const oppRemainingIp = calculateRemainingIp(input.oppStarts);
+
+  const myTotalProjectedIp = myCurrentIp + myRemainingIp;
+  const oppTotalProjectedIp = oppCurrentIp + oppRemainingIp;
+  const ipGap = oppTotalProjectedIp - myTotalProjectedIp;
+
+  const losingCountingPit = pitchingRows.filter(r => r.countsTowardRecord && r.winning === false && (r.name === 'K' || r.name === 'W' || r.name === 'QS' || r.name === 'IP'));
+
+  if (ipGap > 5.0 && losingCountingPit.length > 0) {
+    const streamersNeeded = Math.ceil(ipGap / 5.4);
     return {
-      text: `${spike.day.dayName} alert — ${spike.starts.length} probable starts for the opponent. Stack a counter or defend ratios.`,
-      cta: { phrase: 'Plan your streamers →', href: '/streaming' },
+      text: `Volume Gap — You're projected for ${myTotalProjectedIp.toFixed(1)} IP vs Opponent's ${oppTotalProjectedIp.toFixed(1)} IP. You likely need ${streamersNeeded}+ streamers to catch up in ${joinLabels(losingCountingPit)}.`,
+      cta: { phrase: 'Find a streamer →', href: '/streaming' },
     };
   }
 
@@ -129,11 +156,9 @@ export function getBossBrief(input: BossBriefInput): BossBriefOutput | null {
   // ERA / WHIP are domain-special: a bad ratio with innings still being
   // logged is a structural problem, not just "you're losing this cat." Keep
   // the dedicated rule even though it bypasses the priority sort.
-  const pitchingRows = allRows.filter(r => r.isPitcherStat);
-  const battingRows = allRows.filter(r => r.isBatterStat);
   const lockedWinsBat = pickLockedWins(battingRows, 2);
   const lockedWinsPit = pickLockedWins(pitchingRows, 2);
-  const losingPit = pitchingRows.filter(r => r.hasData && r.winning === false);
+  const losingPit = pitchingRows.filter(r => r.countsTowardRecord && r.winning === false);
 
   const bleedingRatios = losingPit.filter(r => r.name === 'ERA' || r.name === 'WHIP');
   if (bleedingRatios.length > 0 && input.myRemaining > 0) {
@@ -160,7 +185,7 @@ export function getBossBrief(input: BossBriefInput): BossBriefOutput | null {
   }
 
   // ---- 5. Tied / close --------------------------------------------------
-  const live = allRows.filter(r => r.hasData);
+  const live = allRows.filter(r => r.countsTowardRecord);
   const wins = live.filter(r => r.winning === true).length;
   const losses = live.filter(r => r.winning === false).length;
 

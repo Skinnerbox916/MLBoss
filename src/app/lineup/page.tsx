@@ -1,5 +1,5 @@
 import AppLayout from '@/components/layout/AppLayout';
-import TodayManager from '@/components/lineup/TodayManager';
+import LineupShell from '@/components/lineup/LineupShell';
 
 export default async function LineupPage() {
   // Authentication handled by middleware
@@ -7,7 +7,7 @@ export default async function LineupPage() {
   return (
     <AppLayout>
       <main className="flex-1 overflow-y-auto bg-background">
-        <TodayManager />
+        <LineupShell />
       </main>
     </AppLayout>
   );

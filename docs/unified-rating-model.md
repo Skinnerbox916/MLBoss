@@ -48,7 +48,6 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
                                          │
                                          ▼
                               ScoreBreakdownPanel (one component)
-                              CompareTray (one component)
                               VerdictStack (score ± band)
 ```
 
@@ -413,4 +412,3 @@ If a pitcher seems mis-rated:
 - [lineup/optimizeWeek.ts](../src/lib/lineup/optimizeWeek.ts) — calls `getBatterRating` with the unified `MatchupContext` to score every batter for every day of the week, then runs `optimizeLineup` to assign roster slots. See [projection.md](./projection.md).
 - [projection/batterTeam.ts](../src/lib/projection/batterTeam.ts) and [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) — forward projection engines that consume `getBatterRating` and `getPitcherRating` per-day/per-start and aggregate across the matchup week or pickup window. See [projection.md](./projection.md).
 - [components/shared/ScoreBreakdownPanel.tsx](../src/components/shared/ScoreBreakdownPanel.tsx) — single breakdown component. Renders 4 sections: Category Fit, Composite Multipliers, Context (already in cats above), Sample (confidence band). On the streaming pitcher board it stacks once per probable start when a row is expanded.
-- [components/shared/CompareTray.tsx](../src/components/shared/CompareTray.tsx) — engine-agnostic compare tray.

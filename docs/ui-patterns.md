@@ -100,16 +100,9 @@ import { GiBaseballBat } from 'react-icons/gi';
 <Icon icon={GiBaseballBat} size={24} className="text-accent" />
 ```
 
-### Focus Pills (chase / punt / neutral)
+### Focus Controls (chase / punt / neutral)
 
-Two sibling components, both cycle `neutral → chase → punt → neutral` on click. Pick by host context:
-
-- **`FocusPill`** in [`src/components/shared/CategoryFocusBar.tsx`](../src/components/shared/CategoryFocusBar.tsx) — full-width labeled chip ("HR", "ERA"). Lives inside the standalone `CategoryFocusBar` panel. Still used on roster, today, and lineup pages.
-- **`RowFocusPill`** in [`src/components/streaming/GamePlanPanel.tsx`](../src/components/streaming/GamePlanPanel.tsx) — compact 5×5 single-character button (`C` / `P` / `·`). Lives as the leftmost cell of each Game Plan row, where horizontal space is at a premium.
-
-Both render an override dot (top-right) when the user's effective focus differs from MLBoss's *suggested* focus. The override dot is the legibility cue that "you've made a manual choice here" — it's the same primitive in both places.
-
-When adding a focus toggle to a new surface, decide based on space: standalone bar context → `FocusPill`, dense row context → `RowFocusPill`. Don't create a third variant.
+All chase/punt/neutral focus UI lives in [`src/components/shared/focusPanel.tsx`](../src/components/shared/focusPanel.tsx). The `FocusSegmentedControl` is the canonical control — used per-row inside [`GamePlanPanel`](../src/components/shared/GamePlanPanel.tsx) (Lineup and Streaming) and per-tile inside [`RosterFocusPanel`](../src/components/roster/RosterFocusPanel.tsx). It cycles `neutral → chase → punt → neutral` and renders an override dot when the user's effective focus differs from MLBoss's *suggested* focus. The shared section chrome (`FocusSectionTrio`, `FocusResetButton`, `deriveFocusSection`) lives in the same file. When adding focus toggling to a new surface, consume from `focusPanel.tsx` — do not build a sibling control.
 
 ## Shared Utilities (`src/lib/`)
 
@@ -149,11 +142,10 @@ Pitcher today version: `src/components/lineup/TodayPitchers.tsx` + `src/componen
 Pitcher streaming version: `src/components/streaming/StreamingBoard.tsx` + `src/components/shared/ScoreBreakdownPanel.tsx`
 
 ### Stat Comparison (head-to-head)
-Three patterns exist for showing your stats vs opponent — pick by layout context:
+Two patterns exist for showing your stats vs opponent — pick by layout context:
 
 1. **DivergingRow** (`src/components/ui/DivergingRow.tsx`) — center-origin bar chart. Preferred for vertical lists (dashboard cards).
-2. **MatchupPulse** (`src/components/shared/MatchupPulse.tsx`) — horizontal strip of per-category tiles with red/green tint. Still used on the dashboard. Accepts `side: 'batting' | 'pitching' | 'both'`. Retired from the streaming page (replaced by Game Plan).
-3. **GamePlanPanel** (`src/components/streaming/GamePlanPanel.tsx`) — chase/hold/punt-grouped panel showing per-cat current → projected → reason, with the focus pill inline on each row. Use this as the action-surface header on action-first pages. Accepts `side: 'batting' | 'pitching'`.
+2. **GamePlanPanel** (`src/components/shared/GamePlanPanel.tsx`) — chase/hold/punt-grouped panel showing per-cat current → projected → reason, with the focus control inline on each row. Use this as the action-surface header on action-first pages. Accepts `side: 'batting' | 'pitching'`.
 
 ### Day Pills (per-start descriptor)
 
@@ -183,9 +175,9 @@ No shared table component exists yet — follow these conventions when building 
 - **Don't create new card wrappers for the dashboard.** Use `DashboardCard`.
 - **Don't wrap non-dashboard sections in hand-rolled `bg-surface rounded-lg shadow p-4`.** Use `Panel`.
 - **Don't hand-roll tab styles.** Use `Tabs` (segment for mode switches, underline for peer views).
-- **Don't reinvent `MatchupPulse` / `CategoryFocusBar` / `GamePlanPanel` per page.** They live in `src/components/shared/` (or `src/components/streaming/` for Game Plan) and get extended via props. Game Plan accepts a `side` prop and is the consolidated action-surface header on the streaming page.
-- **Don't ship a third focus-pill variant.** `FocusPill` (in standalone bar context) and `RowFocusPill` (in dense row context) cover both layouts. Add a prop to one of them if you need a tweak.
-- **Don't build a new comparison visualization** when DivergingRow or MatchupPulse already handles it.
+- **Don't reinvent `GamePlanPanel` per page.** It lives in `src/components/shared/` and is extended via props (`side: 'batting' | 'pitching'`). It's the consolidated action-surface header on Lineup and Streaming.
+- **Don't ship a sibling focus control.** `FocusSegmentedControl` in [`focusPanel.tsx`](../src/components/shared/focusPanel.tsx) is the only chase/punt/neutral toggle. Add a prop if you need a tweak.
+- **Don't build a new comparison visualization** when `DivergingRow` or `GamePlanPanel` already handles it.
 - **Don't add a new color system.** Use the semantic colors: `primary`, `accent`, `success`, `error`, `muted-foreground`. See `docs/design-system.md`.
 - **Don't create new loading states.** Use `Skeleton` or `DashboardCard`'s built-in `isLoading`.
 - **Don't duplicate tier/verdict color logic.** The pattern is: `success` = good/winning/strong, `error` = bad/losing/weak, `accent` = neutral/notable, `muted` = unknown/inactive.

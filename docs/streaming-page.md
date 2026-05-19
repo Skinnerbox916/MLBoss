@@ -13,7 +13,7 @@ Two tabs:
 - **Pitchers** — multi-day probable starts ranked by week-aggregate projected output. The two-start bias falls out of the math: a 2-start streamer sums two per-start scores, naturally outranking single-start pitchers of equal per-start quality.
 - **Batters** — rest-of-week batter pickups ranked by slot-aware streaming value against a corrected matchup margin.
 
-Both tabs share a top-level [GamePlanPanel](../src/components/streaming/GamePlanPanel.tsx) (per side) that contains the chase/hold/punt grouping and inline focus pills. There is no longer a standalone `CategoryFocusBar` or `MatchupPulse` on this page — both retired in favor of the Game Plan view; see [history.md](./history.md#2026-05--streaming-page-matchuppulse-and-categoryfocusbar-retired).
+Both tabs share a top-level [GamePlanPanel](../src/components/shared/GamePlanPanel.tsx) (per side) that contains the chase/hold/punt grouping and inline focus pills. There is no longer a standalone `CategoryFocusBar` or `MatchupPulse` on this page — both retired in favor of the Game Plan view; see [history.md](./history.md#2026-05--streaming-page-matchuppulse-and-categoryfocusbar-retired).
 
 The pitcher tab additionally leads with a [`VolumeGap`](../src/components/streaming/VolumeGap.tsx) panel above the Game Plan — the "should I stream?" question that comes before "which streamer?" See [Volume Gap panel](#volume-gap-panel) below.
 
@@ -30,7 +30,7 @@ The engine just iterates the window; two-start coverage falls out naturally.
 
 ## Sunday pivot
 
-On Sunday the current matchup is closed for streaming purposes — any pickup lands on next week's roster and contributes only to next week's matchup. The streaming page pivots the entire upper UI (Volume Gap, Game Plan chase/hold/punt, opponent label, W/L projection) to describe **next week** instead of the closing one. The DateStrip and per-FA week scores already point at next Mon–Sun via [`getStreamingGridDays`](../src/lib/dashboard/weekRange.ts), so the pivot brings the matchup framing into alignment.
+On Sunday the current matchup is closed for streaming purposes — any pickup lands on next week's roster and contributes only to next week's matchup. The streaming page pivots the entire upper UI (Volume Gap, Game Plan chase/hold/punt, opponent label, W/L projection) to describe **next week** instead of the closing one. The streaming grid and per-FA week scores already point at next Mon–Sun via [`getStreamingGridDays`](../src/lib/dashboard/weekRange.ts), so the pivot brings the matchup framing into alignment.
 
 Vocabulary: a `WeekTarget = 'current' | 'next'` flows from [`StreamingManager`](../src/components/streaming/StreamingManager.tsx) through every consumer (analysis hook, projection hooks, panels). The Sunday rule itself lives in one place — `isSundayPivot()` in [weekRange.ts](../src/lib/dashboard/weekRange.ts) — and is consulted by both `StreamingManager` (to derive the target) and the streaming-grid helpers (to roll the date strip).
 
@@ -198,13 +198,13 @@ The "behind" threshold is per-cat: 1.0 IP/K, 0.5 W/QS. Half-unit deadband on sma
 
 ## Game Plan Card
 
-[GamePlanPanel.tsx](../src/components/streaming/GamePlanPanel.tsx) is shared between the two tabs (`side: 'batting' | 'pitching'` prop). Renders chase/hold/punt sections grouped by MLBoss's *suggested* focus, with each row showing:
+[GamePlanPanel.tsx](../src/components/shared/GamePlanPanel.tsx) is shared between the two tabs (`side: 'batting' | 'pitching'` prop). Renders chase/hold/punt sections grouped by MLBoss's *suggested* focus, with each row showing:
 
 ```
 [pill] | CAT | values | reason
 ```
 
-The leftmost cell is a `RowFocusPill` — single-letter chase/punt/neutral toggle, override dot when the user differs from the suggested focus. Clicks cycle `neutral → chase → punt → neutral`. Reset-to-suggested lives in the panel header next to the W/L projected badge.
+The leftmost cell is a [`FocusSegmentedControl`](../src/components/shared/focusPanel.tsx) — chase/neutral/punt toggle with an override dot when the user differs from the suggested focus. Clicks cycle `neutral → chase → punt → neutral`. Reset-to-suggested lives in the panel header next to the W/L projected badge.
 
 **Section placement uses the always-jump rule** — defined in [`focusPanel`](../src/components/shared/focusPanel.tsx) as `deriveFocusSection`. Each row places by the user's *effective* focus (`focusMap[statId]`). When the user toggles a tile to PUNT, the tile moves immediately. The override dot on the segmented control still surfaces "engine disagreed" for transparency, but layout reflects the user's decision.
 
@@ -247,5 +247,4 @@ MLB's `weather` hydrate is only populated ~2 hours before first pitch. For futur
 
 - **Sequence planner.** A "Plan" mode that lets the user select 1–2 pickups and shows a coverage strip ("Mon: covered by X, Tue: open, Wed: covered by Y…"). The by-day view today gives the read manually; an explicit planner would close the loop.
 - **Persisted focus overrides per league.** Currently the inline-pill override resets per session. Persisting in localStorage keyed on `leagueKey + statId` would make "always punt SV" a one-time setup rather than a per-session re-toggle.
-- **CompareTray.** Was per-start-shaped on the prior single-day board; dropped on the week-aggregate rewrite. Reintroducing requires a week-aggregate slot adapter.
 - **Pitcher cap awareness.** Some leagues set `max_weekly_innings_pitched` / `max_weekly_games_started`. The hooks (`useLeagueLimits`) exist and BossCard already consumes them; the streaming engine could fold a cap discount into the FA week score. Not currently wired (per design call: leagues without caps don't need it).

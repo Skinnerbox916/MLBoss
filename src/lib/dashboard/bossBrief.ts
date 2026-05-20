@@ -27,8 +27,6 @@ export interface BossBriefOutput {
   cta?: { phrase: string; href: string };
 }
 
-const SPIKE_THRESHOLD = 3;
-
 /**
  * Top winning categories — sorted by `|margin|` desc so the most-locked
  * wins surface first ("cruising in HR & TB"). Filters to live data only.

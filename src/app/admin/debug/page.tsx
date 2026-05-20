@@ -3,7 +3,7 @@ import APIHealthPanel from './APIHealthPanel';
 import RosterDebugPanel from './RosterDebugPanel';
 import IdentityMetricsPanel from './IdentityMetricsPanel';
 import LogoutButton from './LogoutButton';
-import { getCurrentMLBGameKey, analyzeUserFantasyLeagues, isTokenValid, refreshUserTokens, type LeagueAnalysis, type LeagueAnalysisEntry, type LeagueAnalysisSummary } from '@/lib/fantasy';
+import { getCurrentMLBGameKey, analyzeUserFantasyLeagues, isTokenValid, refreshUserTokens, type LeagueAnalysis, type LeagueAnalysisEntry } from '@/lib/fantasy';
 import AppLayout from '@/components/layout/AppLayout';
 import { Heading, Text } from '@/components/typography';
 
@@ -20,7 +20,6 @@ export default async function AdminDebugPage() {
   let fantasyData: LeagueAnalysis | null = null;
   let fantasyError: string | null = null;
   let mlbLeagues: LeagueAnalysisEntry[] | null = null;
-  let mlbSummary: LeagueAnalysisSummary | null = null;
   let currentMLBSeason: MLBSeason | null = null;
 
   try {
@@ -37,7 +36,6 @@ export default async function AdminDebugPage() {
       if (!result.ok) throw new Error(result.error);
       fantasyData = result.data;
       mlbLeagues = fantasyData?.leagues ?? [];
-      mlbSummary = fantasyData?.summary ?? null;
     } else {
       const result = await analyzeUserFantasyLeagues(user.id);
       if (!result.ok) throw new Error(result.error);

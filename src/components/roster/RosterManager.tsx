@@ -1457,7 +1457,7 @@ function PitcherTable({
         focusMap,
         metadata: entry.metadata,
         status: p.status,
-        ownershipPercent: p.ownership?.percent,
+        ownershipPercent: p.percent_owned,
         isRostered: !isFA,
       });
       return { player: p, talent: entry.talent, rating, metadata: entry.metadata };
@@ -1496,7 +1496,7 @@ function PitcherTable({
                     {isWaivers && <Badge color="accent">W</Badge>}
                     {player.status && <StatusBadge status={player.status} />}
                     {talent && <RegimeBadge regime={talent.regime} />}
-                    {metadata?.role === 'reliever' && <Badge color="secondary">RP</Badge>}
+                    {metadata?.role === 'reliever' && <Badge color="muted">RP</Badge>}
                   </div>
                   <span className="text-caption text-muted-foreground">{player.editorial_team_abbr} · {player.display_position}</span>
                 </td>
@@ -1556,7 +1556,7 @@ function StreamingAdvisor({
           focusMap,
           metadata: entry.metadata,
           status: p.status,
-          ownershipPercent: p.ownership?.percent,
+          ownershipPercent: p.percent_owned,
           isRostered: true
         });
         return { player: p, rating };
@@ -1575,7 +1575,7 @@ function StreamingAdvisor({
           focusMap,
           metadata: entry.metadata,
           status: p.status,
-          ownershipPercent: p.ownership?.percent,
+          ownershipPercent: p.percent_owned,
           isRostered: false
         });
         return { player: p, rating };
@@ -1602,7 +1602,6 @@ function StreamingAdvisor({
           <Heading as="h2">Streaming Advisor</Heading>
         </div>
       }
-      variant="featured"
     >
       <div className="space-y-3">
         <p className="text-xs text-foreground">
@@ -1694,7 +1693,7 @@ function PitchersTab({
         focusMap,
         metadata: entry.metadata,
         status: p.status,
-        ownershipPercent: p.ownership?.percent,
+        ownershipPercent: p.percent_owned,
         isRostered: false,
       });
 
@@ -1712,7 +1711,7 @@ function PitchersTab({
       // 1. Specifically on Yahoo IL
       // 2. Ghosts (0 IP in 2026) with > 15% ownership (Cole/Greene)
       const isIL = p.status === 'IL';
-      const isStash = entry.metadata.isGhost && (p.ownership?.percent || 0) >= 15;
+      const isStash = entry.metadata.isGhost && (p.percent_owned || 0) >= 15;
       
       return isIL || isStash;
     });
@@ -1783,7 +1782,6 @@ function PitchersTab({
           {stashTargets.length > 0 && (
             <Panel
               title="Stash Targets (IL / Prospects)"
-              variant="featured"
               action={<span className="text-caption text-muted-foreground">{stashTargets.length} found</span>}
             >
               <PitcherTable 

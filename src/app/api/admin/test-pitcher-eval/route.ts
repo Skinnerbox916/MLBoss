@@ -205,13 +205,6 @@ const FOCUS_MAP: Record<number, 'chase' | 'punt' | 'neutral'> = {
   26: 'neutral', 27: 'neutral', 42: 'neutral', 28: 'neutral', 83: 'neutral',
 };
 
-const WEAK_OFFENSE: TeamOffense = {
-  mlbId: 100, name: 'Weak', gamesPlayed: 30,
-  avg: 0.235, ops: 0.660, strikeOutRate: 0.260,
-  runsPerGame: 3.5, homeRunsPerGame: 0.8,
-  vsLeft: { avg: 0.230, ops: 0.665, strikeOutRate: 0.265 },
-  vsRight: { avg: 0.235, ops: 0.660, strikeOutRate: 0.260 },
-};
 const AVG_OFFENSE: TeamOffense = {
   mlbId: 101, name: 'Avg', gamesPlayed: 30,
   avg: 0.252, ops: 0.710, strikeOutRate: 0.223,

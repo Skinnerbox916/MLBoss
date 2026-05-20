@@ -14,7 +14,6 @@ import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { isPitcher } from '@/components/lineup/types';
 import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import {
-  projectBatterTeamNeutral,
   projectPitcherTeamNeutral,
   projectBatterNeutral,
   buildNeutralBatterContext,

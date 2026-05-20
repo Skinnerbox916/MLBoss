@@ -6,6 +6,7 @@ import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
+import { Heading } from '@/components/typography';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import { tierFromScore } from '@/lib/pitching/rating';
 import { tierLabel } from '@/lib/pitching/scoring';
@@ -487,11 +488,11 @@ export default function StreamingBoard({
         <div className="space-y-3">
           {dayGroups.map(({ day, candidates: dayCands }) => (
             <section key={day.date}>
-              <h3 className="text-caption font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-2">
+              <Heading as="h3" className="text-caption font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-2">
                 <span className="text-foreground">{day.dayLabel}</span>
                 <span className="text-muted-foreground/70">·</span>
                 <span>{dayCands.length} starter{dayCands.length !== 1 ? 's' : ''}</span>
-              </h3>
+              </Heading>
               <div className="space-y-1">
                 {dayCands.map((c, i) => (
                   <Row

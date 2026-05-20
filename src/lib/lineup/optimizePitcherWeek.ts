@@ -9,7 +9,6 @@ import {
 import { datesThroughEndOfWeek, fetchRoster, fetchGames, saveLineup } from './optimizeWeek';
 
 const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
-const PITCHER_POSITIONS = new Set(['SP', 'RP', 'P']);
 
 export interface OptimizePitcherWeekDeps {
   teamKey: string;
@@ -61,23 +60,6 @@ function matchProbablePitchers(roster: RosterEntry[], games: MLBGame[]): Set<str
 }
 
 /**
- * Get all pitcher slots from the roster template, excluding reserves.
- * Returns a list of available slot positions that pitchers can occupy.
- */
-function getPitcherSlots(rosterPositions: RosterPositionSlot[]): string[] {
-  const slots: string[] = [];
-  for (const entry of rosterPositions) {
-    if (RESERVE_POSITIONS.has(entry.position)) continue;
-    if (entry.position_type === 'P' || PITCHER_POSITIONS.has(entry.position)) {
-      for (let i = 0; i < entry.count; i++) {
-        slots.push(entry.position);
-      }
-    }
-  }
-  return slots;
-}
-
-/**
  * Optimize pitchers for a single day: ensure probable starters are active,
  * by swapping them with non-starters if needed. This keeps all slots filled.
  */
@@ -96,8 +78,6 @@ async function optimizeOnePitcherDay(
   // Build override map: pitcher_key -> desired position
   const overrides = new Map<string, string>();
 
-  // Get available pitcher slots
-  const pitcherSlots = getPitcherSlots(deps.rosterPositions);
   const usedSlots = new Map<string, string>(); // slot name -> pitcher_key
 
   // Pitchers currently in active slots (not BN/IL)

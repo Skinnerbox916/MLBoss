@@ -32,6 +32,32 @@ interface GameLineup {
   awayLineup: LineupPlayer[];
 }
 
+/** Shape of one entry in `/api/fantasy/roster-raw` — debug view of the
+ *  Yahoo player payload. Used only by this panel to surface the raw
+ *  array structure so we can spot where Yahoo stashes fields like
+ *  `starting_status`. */
+interface RawStructureElement {
+  index: number;
+  type: string;             // 'object' | 'props_array' | other
+  content?: unknown;        // populated when type === 'object'
+  keys?: (string | string[])[]; // populated when type === 'props_array'
+  value?: unknown;          // populated for primitive elements
+}
+
+interface RawStructurePlayer {
+  name: string;
+  element_count: number;
+  elements?: RawStructureElement[];
+}
+
+/** Minimal game-day shape this panel reads off `/api/mlb/game-day`. */
+interface GameDayGame {
+  homeTeam?: { abbreviation?: string };
+  awayTeam?: { abbreviation?: string };
+  homeLineup?: LineupPlayer[];
+  awayLineup?: LineupPlayer[];
+}
+
 export default function RosterDebugPanel() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [loading, setLoading] = useState(false);
@@ -39,8 +65,7 @@ export default function RosterDebugPanel() {
   const [lineups, setLineups] = useState<GameLineup[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [teamKey, setTeamKey] = useState<string | null>(null);
-  const [rawStructure, setRawStructure] = useState<any[] | null>(null);
-  const [rawLoading, setRawLoading] = useState(false);
+  const [rawStructure, setRawStructure] = useState<RawStructurePlayer[] | null>(null);
 
   async function run() {
     setLoading(true);
@@ -74,7 +99,7 @@ export default function RosterDebugPanel() {
         const gameDayData = await gameDayRes.json();
         const games = gameDayData.games ?? [];
         setLineups(
-          games.map((g: any) => ({
+          games.map((g: GameDayGame) => ({
             homeTeam: g.homeTeam?.abbreviation ?? '?',
             awayTeam: g.awayTeam?.abbreviation ?? '?',
             homeLineup: g.homeLineup ?? [],
@@ -238,13 +263,13 @@ export default function RosterDebugPanel() {
             Looking for <code className="bg-surface-muted px-1 rounded">starting_status</code> in
             the sibling objects. Each player&apos;s array elements are shown below.
           </p>
-          {rawStructure.map((player: any, pi: number) => (
+          {rawStructure.map((player, pi) => (
             <div key={pi} className="mb-4 border border-border rounded-lg overflow-hidden">
               <div className="bg-surface-muted px-3 py-1.5 text-sm font-medium text-foreground">
                 {player.name} — {player.element_count} elements in array
               </div>
               <div className="p-3 space-y-2">
-                {player.elements?.map((el: any, ei: number) => {
+                {player.elements?.map((el, ei) => {
                   const hasStartingStatus = el.type === 'object' && el.content &&
                     JSON.stringify(el.content).includes('starting_status');
                   return (
@@ -258,7 +283,7 @@ export default function RosterDebugPanel() {
                       <span className="text-accent">{el.type}</span>
                       {el.type === 'props_array' && (
                         <span className="text-muted-foreground ml-2">
-                          keys: {el.keys?.map((k: any) =>
+                          keys: {el.keys?.map((k) =>
                             Array.isArray(k) ? `{${k.join(',')}}` : k
                           ).join(' | ')}
                         </span>

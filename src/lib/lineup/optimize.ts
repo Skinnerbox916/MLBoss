@@ -22,7 +22,7 @@ function hungarian(cost: number[][]): number[] {
 
     do {
       used[j0] = 1;
-      let i0 = p[j0];
+      const i0 = p[j0];
       let delta = INF;
       let j1 = -1;
 

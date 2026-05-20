@@ -94,8 +94,8 @@ export function renderPitcherStatLine(pp: ProbablePitcher): React.ReactNode {
 // already import from `pitching/display`.
 // ---------------------------------------------------------------------------
 
-export { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
+export { normalizeTeamAbbr };
 
 function normalizeName(name: string): string {
   return name

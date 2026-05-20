@@ -27,7 +27,8 @@
  *     expected hits count we can blend with matchup-to-date totals.
  */
 
-import { getBatterRating, type Focus, type BatterRating } from '@/lib/mlb/batterRating';
+import { getBatterRating, type BatterRating } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import { resolveMatchup } from '@/lib/mlb/analysis';
 import type { EnrichedGame, BatterSeasonStats } from '@/lib/mlb/types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';

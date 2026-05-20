@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { MatchupAnalysis } from '@/lib/matchup/analysis';
 
 function isFocus(v: unknown): v is Focus {

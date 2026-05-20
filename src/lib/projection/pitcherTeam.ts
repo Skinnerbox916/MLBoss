@@ -28,7 +28,7 @@
 import { buildGameForecast } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
 import { isLikelySamePlayer, normalizeTeamAbbr } from '@/lib/pitching/display';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedGame, ProbablePitcher } from '@/lib/mlb/types';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';

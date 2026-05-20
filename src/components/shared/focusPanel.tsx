@@ -36,7 +36,7 @@
 
 import { FiTarget, FiShield, FiSlash } from 'react-icons/fi';
 import Icon from '@/components/Icon';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { SuggestedFocus } from '@/lib/matchup/analysis';
 
 /**

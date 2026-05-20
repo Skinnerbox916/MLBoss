@@ -11,7 +11,7 @@ import { tierFromScore } from '@/lib/pitching/rating';
 import { tierLabel } from '@/lib/pitching/scoring';
 import { categoryFit, categoryFitClasses, tierColor } from '@/lib/pitching/display';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { WeekPitcherScore } from '@/lib/hooks/useWeekPitcherScores';
 import type { PerStartProjection } from '@/lib/projection/pitcherTeam';
 import type { WeekDay } from '@/lib/dashboard/weekRange';

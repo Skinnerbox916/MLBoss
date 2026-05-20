@@ -1,7 +1,12 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { FiArrowRight, FiAlertTriangle, FiTrendingUp, FiLayers, FiPlus, FiMinus, FiRotateCcw, FiChevronUp, FiChevronDown } from 'react-icons/fi';
+import { FiArrowRight, FiAlertTriangle, FiTrendingUp, FiLayers, FiPlus, FiMinus, FiRotateCcw, FiChevronUp, FiChevronDown, FiTarget, FiShield } from 'react-icons/fi';
+import { usePitcherTalent } from '@/lib/hooks/usePitcherTalent';
+import { getPitcherSeasonRating } from '@/lib/pitching/roster';
+import type { PitcherRating } from '@/lib/pitching/rating';
+import { tierColor } from '@/lib/pitching/display';
+import { tierLabel, supportsPitcherStatId } from '@/lib/pitching/rating';
 import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
@@ -41,10 +46,22 @@ import {
   estimateFullTimeGpRef,
   playingTimeFactor,
 } from '@/lib/roster/scoring';
-import CategoryFocusBar, {
-  nextFocus,
-  type FocusState,
-} from '@/components/shared/CategoryFocusBar';
+import RosterFocusPanel from './RosterFocusPanel';
+import { useLeagueForecast } from '@/lib/hooks/useLeagueForecast';
+import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
+import {
+  forecastToAnalysis,
+  assignFocusForBattingSide,
+  type BattingFocusPlan,
+} from '@/lib/league/forwardFocus';
+import {
+  analyzeSwapStrategy,
+  type EnrichedSwap,
+  type SwapStrategy,
+  type CategoryImpact,
+} from '@/lib/league/swapStrategy';
+import type { Focus as FocusState } from '@/lib/mlb/batterRating';
+import type { LeagueForecast } from '@/lib/league/forecast';
 
 // ---------------------------------------------------------------------------
 // Stat mapping: league stat_id → PlayerStatLine accessor
@@ -701,12 +718,94 @@ function reasonBadge(reason: RankedSwap['primaryReason']) {
   return <Badge color="success"><Icon icon={FiTrendingUp} size={10} /> upgrade</Badge>;
 }
 
-function SwapSuggestions({ suggestions }: { suggestions: RankedSwap[] }) {
+/**
+ * Strategic-alignment badge sourced from the swap's plan-aware analysis.
+ *
+ * Three flavours, in priority order:
+ *  - **Erodes anchor** (error tone) — swap hurts a category we've
+ *    committed to winning. Surfaces alongside (not in place of) the
+ *    positional reason badge so the user sees the warning explicitly.
+ *  - **Pushes swing** (accent tone) — swap advances a swing-target
+ *    category. The triangulation goal: this is the move type the
+ *    chase/hold/punt UI is steering toward.
+ *  - **Reinforces anchor** (success tone, low-emphasis) — swap pads a
+ *    locked-in win. Less urgent than swing pushes; shown when no
+ *    swing/erosion exists.
+ *
+ * Returns null when no plan-relevant signal — the positional reason
+ * badge alone is the explanation.
+ */
+function strategyBadge(strategy: SwapStrategy) {
+  if (strategy.erodesAnchor) {
+    const t = strategy.primaryTarget;
+    return (
+      <Badge color="error" title={t ? `Hurts ${t.displayName} (anchor)` : 'Erodes an anchor cat'}>
+        <Icon icon={FiAlertTriangle} size={10} /> erodes anchor
+      </Badge>
+    );
+  }
+  if (strategy.pushesSwing) {
+    const t = strategy.primaryTarget;
+    return (
+      <Badge color="accent" title={t ? `Improves ${t.displayName} (swing target)` : 'Pushes a swing target'}>
+        <Icon icon={FiTarget} size={10} /> {t ? `pushes ${t.displayName}` : 'pushes swing'}
+      </Badge>
+    );
+  }
+  // No swing pushed, no anchor eroded — surface a quiet anchor reinforce
+  // when present.
+  if (strategy.primaryTarget && strategy.primaryTarget.role === 'anchor' && strategy.primaryTarget.delta > 0) {
+    return (
+      <Badge color="success" title={`Pads ${strategy.primaryTarget.displayName} (anchor)`}>
+        <Icon icon={FiShield} size={10} /> reinforces {strategy.primaryTarget.displayName}
+      </Badge>
+    );
+  }
+  return null;
+}
+
+/**
+ * Per-category delta strip. Color-coded by plan role:
+ *  - **swing** — accent (we want these)
+ *  - **anchor** — success when up (good), error when down (warning)
+ *  - **concede** — muted (uninteresting; the swap shouldn't be evaluated
+ *    on these and we display them dim so the user can see the side-effects)
+ *
+ * Sign + magnitude show direction. Truncated to top 4 by |delta| so the
+ * row stays compact on the busiest swaps.
+ */
+function categoryDeltaStrip({ impact }: { impact: CategoryImpact[] }) {
+  if (impact.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
+      {impact.slice(0, 4).map(c => {
+        const sign = c.delta >= 0 ? '+' : '';
+        const tone =
+          c.role === 'concede' ? 'text-muted-foreground/70' :
+          c.role === 'swing' && c.delta > 0 ? 'text-accent' :
+          c.role === 'anchor' && c.delta > 0 ? 'text-success' :
+          c.role === 'anchor' && c.delta < 0 ? 'text-error' :
+          c.delta > 0 ? 'text-success' : 'text-error';
+        return (
+          <span
+            key={c.statId}
+            className={`text-caption font-semibold ${tone}`}
+            title={`${c.displayName} (${c.role}) — drop→add normalized rate delta`}
+          >
+            {c.displayName}: {sign}{c.delta.toFixed(2)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function SwapSuggestions({ suggestions, openSlotCount }: { suggestions: EnrichedSwap[]; openSlotCount: number }) {
   if (suggestions.length === 0) {
     return (
-      <Panel title="Suggested Swaps">
+      <Panel title="Suggested Moves">
         <Text variant="caption">
-          No net-positive swaps found. Your roster is balanced for the current category focus.
+          No net-positive moves found. Your roster is balanced for the current category focus.
         </Text>
       </Panel>
     );
@@ -714,54 +813,74 @@ function SwapSuggestions({ suggestions }: { suggestions: RankedSwap[] }) {
 
   return (
     <Panel
-      title="Suggested Swaps"
+      title="Suggested Moves"
       action={
         <span className="text-caption text-muted-foreground">
-          Ranked by net value, dampened by draft pedigree & ownership
+          {openSlotCount > 0
+            ? `${openSlotCount} open slot${openSlotCount === 1 ? '' : 's'} — pure adds at top`
+            : 'Position-aware net value × strategic plan alignment'}
         </span>
       }
     >
       <div className="space-y-2">
         {suggestions.slice(0, 8).map((swap, i) => {
-          const dropRaw = swap.drop.raw as RosterEntry;
+          const isPureAdd = swap.drop === null;
+          const dropRaw = swap.drop?.raw as RosterEntry | undefined;
           const addRaw = swap.add.raw as FreeAgentPlayer;
-          const dropPos = dropRaw.display_position;
+          const dropPos = dropRaw?.display_position;
           const addPos = addRaw.display_position;
-          const dropPct = dropRaw.percent_owned;
-          const dropPick = dropRaw.average_draft_pick;
+          const dropPct = dropRaw?.percent_owned;
+          const dropPick = dropRaw?.average_draft_pick;
           return (
             <div key={i} className="flex items-start gap-3 p-2.5 rounded bg-surface-muted/50">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-error font-medium truncate">{swap.drop.name}</span>
-                  <span className="text-caption text-muted-foreground">{dropPos}</span>
-                  {typeof dropPct === 'number' && (
-                    <span className="text-caption text-muted-foreground" title="Yahoo percent owned">
-                      {Math.round(dropPct)}%
-                    </span>
+                  {isPureAdd ? (
+                    <>
+                      <span className="text-caption text-accent font-medium uppercase tracking-wide">
+                        Add to open slot
+                      </span>
+                      <Icon icon={FiArrowRight} size={12} className="text-muted-foreground shrink-0" />
+                      <span className="text-xs text-success font-medium truncate">{swap.add.name}</span>
+                      <span className="text-caption text-muted-foreground">{addPos}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-xs text-error font-medium truncate">{swap.drop!.name}</span>
+                      <span className="text-caption text-muted-foreground">{dropPos}</span>
+                      {typeof dropPct === 'number' && (
+                        <span className="text-caption text-muted-foreground" title="Yahoo percent owned">
+                          {Math.round(dropPct)}%
+                        </span>
+                      )}
+                      {typeof dropPick === 'number' && dropPick > 0 && (
+                        <span className="text-caption text-muted-foreground" title="Preseason average draft pick">
+                          ADP {dropPick.toFixed(0)}
+                        </span>
+                      )}
+                      <Icon icon={FiArrowRight} size={12} className="text-muted-foreground shrink-0" />
+                      <span className="text-xs text-success font-medium truncate">{swap.add.name}</span>
+                      <span className="text-caption text-muted-foreground">{addPos}</span>
+                    </>
                   )}
-                  {typeof dropPick === 'number' && dropPick > 0 && (
-                    <span className="text-caption text-muted-foreground" title="Preseason average draft pick">
-                      ADP {dropPick.toFixed(0)}
-                    </span>
-                  )}
-                  <Icon icon={FiArrowRight} size={12} className="text-muted-foreground shrink-0" />
-                  <span className="text-xs text-success font-medium truncate">{swap.add.name}</span>
-                  <span className="text-caption text-muted-foreground">{addPos}</span>
                   {reasonBadge(swap.primaryReason)}
+                  {strategyBadge(swap.strategy)}
                 </div>
+                {/* Per-category strategic impact (drives the plan view) */}
+                {categoryDeltaStrip({ impact: swap.strategy.categoryImpact })}
+                {/* Positional impact (drives the depth/gap view) */}
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
                   {swap.positionChanges
                     .sort((a, b) => Math.abs(b.valueDelta) - Math.abs(a.valueDelta))
                     .map(c => {
                       const sign = c.valueDelta >= 0 ? '+' : '';
-                      const tone = c.valueDelta >= 0 ? 'text-success' : 'text-error';
+                      const tone = c.valueDelta >= 0 ? 'text-success/80' : 'text-error/80';
                       const gap = c.depthShortfallDelta < 0
                         ? ' (gap→filled)'
                         : c.depthShortfallDelta > 0
                           ? ' (gap!)' : '';
                       return (
-                        <span key={c.position} className={`text-caption font-semibold ${tone}`}>
+                        <span key={c.position} className={`text-caption ${tone}`}>
                           {c.position}: {sign}{c.valueDelta.toFixed(2)}{gap}
                         </span>
                       );
@@ -795,7 +914,14 @@ function SwapSuggestions({ suggestions }: { suggestions: RankedSwap[] }) {
 // ---------------------------------------------------------------------------
 
 const PREFERRED_DEPTH_KEY = 'roster.preferredDepth';
+
+// Per-league localStorage key for the user's roster-focus overrides. Read
+// and written by `useSuggestedFocus(..., persistKey)` — see the call site
+// inside `RosterManager`.
 const ROSTER_FOCUS_KEY_PREFIX = 'roster.categoryFocus';
+function rosterFocusPersistKey(leagueKey: string | undefined | null): string | undefined {
+  return leagueKey ? `${ROSTER_FOCUS_KEY_PREFIX}:${leagueKey}` : undefined;
+}
 
 function loadPreferredDepth(): Partial<Record<BatterPosition, number>> {
   if (typeof window === 'undefined') return {};
@@ -816,53 +942,6 @@ function loadPreferredDepth(): Partial<Record<BatterPosition, number>> {
   }
 }
 
-function rosterFocusKey(leagueKey: string | null | undefined): string | null {
-  return leagueKey ? `${ROSTER_FOCUS_KEY_PREFIX}:${leagueKey}` : null;
-}
-
-function loadRosterFocus(leagueKey: string | null | undefined): Record<number, FocusState> {
-  const key = rosterFocusKey(leagueKey);
-  if (!key || typeof window === 'undefined') return {};
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const clean: Record<number, FocusState> = {};
-    for (const [statId, value] of Object.entries(parsed)) {
-      const id = Number(statId);
-      if (
-        Number.isFinite(id) &&
-        (value === 'chase' || value === 'punt' || value === 'neutral')
-      ) {
-        clean[id] = value;
-      }
-    }
-    return clean;
-  } catch {
-    return {};
-  }
-}
-
-function persistRosterFocus(
-  leagueKey: string | null | undefined,
-  focusMap: Record<number, FocusState>,
-) {
-  const key = rosterFocusKey(leagueKey);
-  if (!key || typeof window === 'undefined') return;
-  try {
-    const persistent = Object.fromEntries(
-      Object.entries(focusMap).filter(([, value]) => value !== 'neutral'),
-    );
-    if (Object.keys(persistent).length === 0) {
-      localStorage.removeItem(key);
-    } else {
-      localStorage.setItem(key, JSON.stringify(persistent));
-    }
-  } catch {
-    // ignore quota/serialization errors — focus preference just won't persist
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Main RosterManager
 // ---------------------------------------------------------------------------
@@ -880,16 +959,11 @@ export default function RosterManager() {
   const { getPlayerStats: getFAStats } = useFreeAgentStats(availableBatters);
 
   const [tab, setTab] = useState<RosterTab>('batters');
-  const [focusMap, setFocusMap] = useState<Record<number, FocusState>>({});
   const [preferredDepth, setPreferredDepth] = useState<Partial<Record<BatterPosition, number>>>({});
 
   useEffect(() => {
     setPreferredDepth(loadPreferredDepth());
   }, []);
-
-  useEffect(() => {
-    setFocusMap(loadRosterFocus(leagueKey));
-  }, [leagueKey]);
 
   const updatePreferredDepth = useCallback((pos: BatterPosition, next: number | null) => {
     setPreferredDepth(prev => {
@@ -910,16 +984,20 @@ export default function RosterManager() {
     });
   }, []);
 
-  const toggleFocus = useCallback((statId: number) => {
-    setFocusMap(prev => {
-      const next = {
-        ...prev,
-        [statId]: nextFocus(prev[statId] ?? 'neutral'),
-      };
-      persistRosterFocus(leagueKey, next);
-      return next;
-    });
-  }, [leagueKey]);
+  // Roster-focus suggestions come from the forward-looking league forecast
+  // (per-team projection ranked across the league, outliers excluded). The
+  // user's overrides persist per-league via `useSuggestedFocus(persistKey)`,
+  // surviving page refreshes the same way the old roster page did.
+  const { forecast, isLoading: forecastLoading } = useLeagueForecast(leagueKey, teamKey);
+  const forecastAnalysis = useMemo(() => forecastToAnalysis(forecast), [forecast]);
+  const focusPredicate = useCallback(() => true, []);
+  const {
+    focusMap,
+    suggestedFocusMap,
+    set: setFocus,
+    reset: resetFocus,
+    hasOverrides: hasFocusOverrides,
+  } = useSuggestedFocus(forecastAnalysis, focusPredicate, rosterFocusPersistKey(leagueKey));
 
   const battingCategories = useMemo(
     () => categories.filter(c => c.is_batter_stat),
@@ -931,17 +1009,15 @@ export default function RosterManager() {
     [battingCategories],
   );
 
-  const chasedCategories = useMemo(
-    () => displayCategories.filter(c => focusMap[c.stat_id] === 'chase'),
+  // Scoring: include every non-punted category. Chase boosts via
+  // CHASE_WEIGHT inside `blendedCategoryScore`; punt drops the cat from
+  // the loop entirely. Filtering to chased-only made CHASE_WEIGHT a
+  // uniform scalar (no relative effect) and made punt a no-op whenever
+  // any chase existed — neither matched the chase/hold/punt UI grammar.
+  const scoringCategories = useMemo(
+    () => displayCategories.filter(c => focusMap[c.stat_id] !== 'punt'),
     [displayCategories, focusMap],
   );
-
-  // Scoring: when categories are chased, score chased-only. Otherwise fall back to "overall" —
-  // every non-punted batter category with equal weight.
-  const scoringCategories = useMemo(() => {
-    if (chasedCategories.length > 0) return chasedCategories;
-    return displayCategories.filter(c => focusMap[c.stat_id] !== 'punt');
-  }, [displayCategories, focusMap, chasedCategories]);
 
   const rosterBatters = useMemo(
     () => roster.filter(p => !isPitcher(p)),
@@ -1059,6 +1135,16 @@ export default function RosterManager() {
     [scoredRoster, startingSlots, replacementLevel, preferredDepth],
   );
 
+  // Open-slot detection: total roster capacity minus current roster
+  // size. Counts all slot types (active, BN, IL) since Yahoo lets you
+  // place an added player in any open slot. > 0 enables pure-add
+  // suggestions in `generateSwapSuggestions`.
+  const openSlotCount = useMemo(() => {
+    if (!roster || leaguePositions.length === 0) return 0;
+    const maxTeamSize = leaguePositions.reduce((sum, p) => sum + p.count, 0);
+    return Math.max(0, maxTeamSize - roster.length);
+  }, [roster, leaguePositions]);
+
   const swapSuggestions = useMemo(() => {
     if (scoredRoster.length === 0 || scoredFreeAgents.length === 0) return [];
     return generateSwapSuggestions(
@@ -1067,9 +1153,46 @@ export default function RosterManager() {
       startingSlots,
       replacementLevel,
       undefined,
-      { minNetValue: 0.05, limit: 15, preferredDepth },
+      { minNetValue: 0.05, limit: 15, preferredDepth, openSlotCount },
     );
-  }, [scoredRoster, scoredFreeAgents, startingSlots, replacementLevel, preferredDepth]);
+  }, [scoredRoster, scoredFreeAgents, startingSlots, replacementLevel, preferredDepth, openSlotCount]);
+
+  // Strategic plan for the batting side. Lifted up from RosterFocusPanel
+  // so the swap-suggestions analyzer can reuse the same anchor / swing /
+  // concede assignments without recomputing.
+  const battingPlan = useMemo<BattingFocusPlan | null>(() => {
+    if (!forecast) return null;
+    const batterEntries = forecast.entries.filter(e => e.isBatterStat);
+    if (batterEntries.length === 0) return null;
+    return assignFocusForBattingSide(batterEntries);
+  }, [forecast]);
+
+  // Decorate each swap with a strategic-context summary: per-cat deltas
+  // annotated by anchor/swing/concede role, plus a headline ("Pushes HR",
+  // "Erodes AVG", etc.). Falls back to swaps without strategy when the
+  // plan isn't ready yet.
+  const enrichedSwaps = useMemo<EnrichedSwap[]>(() => {
+    if (!battingPlan) {
+      return swapSuggestions.map(swap => ({
+        ...swap,
+        strategy: {
+          categoryImpact: [],
+          pushesSwing: false,
+          erodesAnchor: false,
+          headline: null,
+          primaryTarget: null,
+        },
+      }));
+    }
+    // Drop is on the roster, add is a free agent — combine the two
+    // lookups so the analyzer resolves either side from a single getter.
+    const lookup = (name: string, team: string) =>
+      getRosterPlayerStats(name, team) ?? getFAStats(name, team);
+    return swapSuggestions.map(swap => ({
+      ...swap,
+      strategy: analyzeSwapStrategy(swap, battingPlan, scoringCategories, lookup),
+    }));
+  }, [swapSuggestions, battingPlan, scoringCategories, getRosterPlayerStats, getFAStats]);
 
   const isLoading = ctxLoading || rosterLoading || catsLoading || posLoading;
 
@@ -1105,14 +1228,19 @@ export default function RosterManager() {
 
       {tab === 'batters' ? (
         <BattersTab
-          categories={categories}
-          catsLoading={catsLoading}
+          forecast={forecast}
+          forecastLoading={forecastLoading}
+          battingPlan={battingPlan}
           focusMap={focusMap}
-          toggleFocus={toggleFocus}
+          suggestedFocusMap={suggestedFocusMap}
+          setFocus={setFocus}
+          resetFocus={resetFocus}
+          hasFocusOverrides={hasFocusOverrides}
           isLoading={isLoading}
           rosterValue={rosterValue}
           scoredRoster={scoredRoster}
-          swapSuggestions={swapSuggestions}
+          swapSuggestions={enrichedSwaps}
+          openSlotCount={openSlotCount}
           rosterBatters={rosterBatters}
           availableBatters={availableBatters}
           battersLoading={battersLoading}
@@ -1131,6 +1259,14 @@ export default function RosterManager() {
           availablePitchers={availablePitchers}
           pitchersLoading={pitchersLoading}
           isLoading={isLoading}
+          categories={categories}
+          focusMap={focusMap}
+          suggestedFocusMap={suggestedFocusMap}
+          setFocus={setFocus}
+          resetFocus={resetFocus}
+          hasFocusOverrides={hasFocusOverrides}
+          forecast={forecast}
+          forecastLoading={forecastLoading}
         />
       )}
     </div>
@@ -1142,14 +1278,19 @@ export default function RosterManager() {
 // ---------------------------------------------------------------------------
 
 function BattersTab({
-  categories,
-  catsLoading,
+  forecast,
+  forecastLoading,
+  battingPlan,
   focusMap,
-  toggleFocus,
+  suggestedFocusMap,
+  setFocus,
+  resetFocus,
+  hasFocusOverrides,
   isLoading,
   rosterValue,
   scoredRoster,
   swapSuggestions,
+  openSlotCount,
   rosterBatters,
   availableBatters,
   battersLoading,
@@ -1162,14 +1303,19 @@ function BattersTab({
   fullTimePaceRef,
   fullTimeGpRef,
 }: {
-  categories: EnrichedLeagueStatCategory[];
-  catsLoading: boolean;
+  forecast: LeagueForecast | undefined;
+  forecastLoading: boolean;
+  battingPlan: BattingFocusPlan | null;
   focusMap: Record<number, FocusState>;
-  toggleFocus: (statId: number) => void;
+  suggestedFocusMap: Record<number, FocusState>;
+  setFocus: (statId: number, focus: FocusState) => void;
+  resetFocus: () => void;
+  hasFocusOverrides: boolean;
   isLoading: boolean;
   rosterValue: ReturnType<typeof computeRosterValue>;
   scoredRoster: ScoredPlayer[];
-  swapSuggestions: RankedSwap[];
+  swapSuggestions: EnrichedSwap[];
+  openSlotCount: number;
   rosterBatters: RosterEntry[];
   availableBatters: FreeAgentPlayer[];
   battersLoading: boolean;
@@ -1184,13 +1330,17 @@ function BattersTab({
 }) {
   return (
     <>
-      {!catsLoading && categories.length > 0 && (
-        <CategoryFocusBar
-          categories={categories.filter(c => c.is_batter_stat)}
-          focusMap={focusMap}
-          onToggle={toggleFocus}
-        />
-      )}
+      <RosterFocusPanel
+        forecast={forecast}
+        isLoading={forecastLoading}
+        side="batting"
+        plan={battingPlan ?? undefined}
+        focusMap={focusMap}
+        onSetFocus={setFocus}
+        suggestedFocusMap={suggestedFocusMap}
+        onReset={resetFocus}
+        hasOverrides={hasFocusOverrides}
+      />
 
       {isLoading ? (
         <Panel className="p-8 text-center">
@@ -1204,7 +1354,7 @@ function BattersTab({
             preferredDepth={preferredDepth}
             onDepthChange={onPreferredDepthChange}
           />
-          <SwapSuggestions suggestions={swapSuggestions} />
+          <SwapSuggestions suggestions={swapSuggestions} openSlotCount={openSlotCount} />
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <Panel
@@ -1248,19 +1398,74 @@ function BattersTab({
 }
 
 // ---------------------------------------------------------------------------
-// Pitchers tab — yahoo-sourced season line + free-agent board. The
-// depth-chart / swap optimizer lives in `depth.ts` and is currently
-// batter-only; a proper `PITCHER_STAT_MAP` + `PitcherSeasonStats` lift is
-// needed to extend it to pitchers, flagged as follow-up work in the plan.
+// Pitcher UI components
+// ---------------------------------------------------------------------------
+
+function RegimeBadge({ regime }: { regime: import('@/lib/pitching/talent').PitcherTalent['regime'] | null }) {
+  // regime comes from talent.regime
+  if (!regime || Math.abs(regime.score || 0) < 0.8) return null;
+  const isBreakout = regime.score > 0;
+  return (
+    <Badge color={isBreakout ? 'success' : 'error'} title={`Regime Score: ${regime.score?.toFixed(1)}. Confirming indicators: ${isBreakout ? regime.breakouts : regime.declines}`}>
+      <Icon icon={isBreakout ? FiTrendingUp : FiChevronDown} size={10} /> {isBreakout ? 'Breakout' : 'Decline'}
+    </Badge>
+  );
+}
+
+function PitcherScoreCell({
+  score,
+  confidence,
+}: {
+  score: number;
+  confidence: PitcherRating['confidence'];
+}) {
+  const color = score >= 62 ? 'text-success' : score <= 35 ? 'text-error' : 'text-foreground';
+  const title = `${confidence.reason}${confidence.band > 5 ? ` (±${confidence.band.toFixed(0)})` : ''}`;
+  return (
+    <td className={`px-2 py-1.5 text-right text-xs tabular-nums font-semibold ${color}`} title={title}>
+      {score.toFixed(0)}
+      {confidence.band > 5 && <span className="text-[10px] opacity-50 ml-0.5">±{confidence.band.toFixed(0)}</span>}
+    </td>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pitcher Tables
 // ---------------------------------------------------------------------------
 
 function PitcherTable({
   players,
+  talentMap,
+  scoredCategories,
+  focusMap,
+  emptyMessage,
 }: {
   players: Array<RosterEntry | FreeAgentPlayer>;
+  talentMap: Record<string, import('@/lib/mlb/players').PitcherTalentWithMetadata>;
+  scoredCategories: EnrichedLeagueStatCategory[];
+  focusMap: Record<number, FocusState>;
+  emptyMessage: string;
 }) {
+  const scored = useMemo(() => {
+    return players.map(p => {
+      const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
+      if (!entry) return { player: p, talent: null, rating: null, metadata: null };
+      const isFA = 'ownership_type' in p;
+      const rating = getPitcherSeasonRating({
+        talent: entry.talent,
+        scoredCategories,
+        focusMap,
+        metadata: entry.metadata,
+        status: p.status,
+        ownershipPercent: p.ownership?.percent,
+        isRostered: !isFA,
+      });
+      return { player: p, talent: entry.talent, rating, metadata: entry.metadata };
+    }).sort((a, b) => (b.rating?.score ?? -1) - (a.rating?.score ?? -1));
+  }, [players, talentMap, scoredCategories, focusMap]);
+
   if (players.length === 0) {
-    return <p className="text-xs text-muted-foreground p-4">No pitchers</p>;
+    return <p className="text-xs text-muted-foreground p-4">{emptyMessage}</p>;
   }
 
   return (
@@ -1269,38 +1474,49 @@ function PitcherTable({
         <thead>
           <tr className="border-b border-border">
             <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Player</th>
-            <th className="text-left px-2 py-1.5 text-muted-foreground font-medium w-16">Pos</th>
-            <th className="text-left px-2 py-1.5 text-muted-foreground font-medium w-12">Team</th>
-            <th className="text-left px-2 py-1.5 text-muted-foreground font-medium w-16">Status</th>
+            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-12">K%</th>
+            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-12">BB%</th>
+            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-12">xERA</th>
+            <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-14">Score</th>
+            <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-14">Tier</th>
           </tr>
         </thead>
         <tbody>
-          {players.map(p => {
-            const isFA = 'ownership_type' in p;
-            const isWaivers = isFA && (p as FreeAgentPlayer).ownership_type === 'waivers';
-            const rowStatus = !isFA ? getRowStatus(p as RosterEntry) : null;
+          {scored.map(({ player, talent, rating, metadata }) => {
+            const isFA = 'ownership_type' in player;
+            const isWaivers = isFA && (player as FreeAgentPlayer).ownership_type === 'waivers';
+            const rowStatus = !isFA ? getRowStatus(player as RosterEntry) : null;
             const rowOpacity = rowStatus === 'injured' ? 'opacity-40' : '';
+
             return (
-              <tr
-                key={p.player_key}
-                className={`border-b border-border/50 hover:bg-surface-muted/50 ${rowOpacity}`}
-              >
+              <tr key={player.player_key} className={`border-b border-border/50 hover:bg-surface-muted/50 ${rowOpacity}`}>
                 <td className="px-2 py-1.5">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-foreground font-medium truncate max-w-[160px]">{p.name}</span>
+                    <span className="text-foreground font-medium truncate max-w-[140px]">{player.name}</span>
                     {isWaivers && <Badge color="accent">W</Badge>}
-                    {p.status && <StatusBadge status={p.status} />}
+                    {player.status && <StatusBadge status={player.status} />}
+                    {talent && <RegimeBadge regime={talent.regime} />}
+                    {metadata?.role === 'reliever' && <Badge color="secondary">RP</Badge>}
                   </div>
+                  <span className="text-caption text-muted-foreground">{player.editorial_team_abbr} · {player.display_position}</span>
                 </td>
-                <td className="px-2 py-1.5 text-muted-foreground">{p.display_position}</td>
-                <td className="px-2 py-1.5 text-muted-foreground">{p.editorial_team_abbr}</td>
-                <td className="px-2 py-1.5 text-muted-foreground">
-                  {!isFA
-                    ? (p as RosterEntry).selected_position
-                    : isWaivers
-                      ? 'Waivers'
-                      : 'FA'}
-                </td>
+                {talent ? (
+                  <>
+                    <td className="px-2 py-1.5 text-right text-xs tabular-nums text-foreground">{(talent.kPerPA * 100).toFixed(1)}%</td>
+                    <td className="px-2 py-1.5 text-right text-xs tabular-nums text-foreground">{(talent.bbPerPA * 100).toFixed(1)}%</td>
+                    <td className="px-2 py-1.5 text-right text-xs tabular-nums text-foreground">
+                      {rating?.categories.find(c => c.statId === 26)?.expected.toFixed(2) || '—'}
+                    </td>
+                    <PitcherScoreCell score={rating?.score ?? 0} confidence={rating?.confidence || { level: 'low', reason: 'No data', band: 15 }} />
+                    <td className={`px-2 py-1.5 text-center font-bold ${rating ? tierColor(rating.tier) : ''}`}>
+                      {rating ? tierLabel(rating.tier) : '—'}
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td colSpan={5} className="px-2 py-1.5 text-center text-muted-foreground italic">Fetching talent data...</td>
+                  </>
+                )}
               </tr>
             );
           })}
@@ -1310,55 +1526,279 @@ function PitcherTable({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Streaming Advisor (Churn)
+// ---------------------------------------------------------------------------
+
+function StreamingAdvisor({
+  rosterPitchers,
+  availablePitchers,
+  talentMap,
+  scoredCategories,
+  focusMap,
+}: {
+  rosterPitchers: RosterEntry[];
+  availablePitchers: FreeAgentPlayer[];
+  talentMap: Record<string, import('@/lib/mlb/players').PitcherTalentWithMetadata>;
+  scoredCategories: EnrichedLeagueStatCategory[];
+  focusMap: Record<number, FocusState>;
+}) {
+  const advice = useMemo(() => {
+    if (Object.keys(talentMap).length === 0) return null;
+
+    const scoredRoster = rosterPitchers
+      .map(p => {
+        const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
+        if (!entry) return null;
+        const rating = getPitcherSeasonRating({ 
+          talent: entry.talent, 
+          scoredCategories, 
+          focusMap,
+          metadata: entry.metadata,
+          status: p.status,
+          ownershipPercent: p.ownership?.percent,
+          isRostered: true
+        });
+        return { player: p, rating };
+      })
+      .filter((x): x is { player: RosterEntry; rating: PitcherRating } => x !== null && x.rating.score > 0)
+      .sort((a, b) => a.rating.score - b.rating.score);
+
+    const scoredFAs = availablePitchers
+      .slice(0, 50)
+      .map(p => {
+        const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
+        if (!entry) return null;
+        const rating = getPitcherSeasonRating({ 
+          talent: entry.talent, 
+          scoredCategories, 
+          focusMap,
+          metadata: entry.metadata,
+          status: p.status,
+          ownershipPercent: p.ownership?.percent,
+          isRostered: false
+        });
+        return { player: p, rating };
+      })
+      .filter((x): x is { player: FreeAgentPlayer; rating: PitcherRating } => x !== null && x.rating.score > 0)
+      .sort((a, b) => b.rating.score - a.rating.score);
+
+    // Replacement level: top 5 streamers average
+    const replacementScore = scoredFAs.slice(0, 5).reduce((acc, x) => acc + x.rating.score, 0) / Math.max(1, Math.min(5, scoredFAs.length));
+
+    // Candidates for churn: rostered pitchers below replacement level
+    const churnCandidates = scoredRoster.filter(p => p.rating.score < replacementScore - 2);
+
+    return { replacementScore, churnCandidates, topFAs: scoredFAs.slice(0, 3) };
+  }, [rosterPitchers, availablePitchers, talentMap, scoredCategories, focusMap]);
+
+  if (!advice || advice.churnCandidates.length === 0) return null;
+
+  return (
+    <Panel
+      title={
+        <div className="flex items-center gap-2">
+          <Icon icon={FiTarget} size={14} className="text-accent" />
+          <Heading as="h2">Streaming Advisor</Heading>
+        </div>
+      }
+      variant="featured"
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-foreground">
+          Current streaming replacement level is <span className="font-bold text-accent">{advice.replacementScore.toFixed(0)}</span>. 
+          The following pitchers are underperforming this baseline and could be dropped to open up a streaming slot for higher weekly output:
+        </p>
+        <div className="space-y-2">
+          {advice.churnCandidates.slice(0, 3).map(({ player, rating }) => (
+            <div key={player.player_key} className="flex items-center justify-between p-2 rounded bg-surface-muted/50 border border-border/50">
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-error">{player.name}</span>
+                <span className="text-caption text-muted-foreground">{player.editorial_team_abbr} · Talent Score: {rating.score.toFixed(0)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge color="error">Drop Candidate</Badge>
+                <div className="text-right">
+                  <span className="text-xs font-bold text-accent">−{(advice.replacementScore - rating.score).toFixed(0)} pts</span>
+                  <span className="block text-caption text-muted-foreground">vs streamer</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-caption text-muted-foreground italic">
+          Tip: Churning these slots allows you to capture ~2-3 extra starts per week from top-available streamers.
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pitchers Tab - Implementation
+// ---------------------------------------------------------------------------
+
 function PitchersTab({
   rosterPitchers,
   availablePitchers,
   pitchersLoading,
   isLoading,
+  categories,
+  focusMap,
+  suggestedFocusMap,
+  setFocus,
+  resetFocus,
+  hasFocusOverrides,
+  forecast,
+  forecastLoading,
 }: {
   rosterPitchers: RosterEntry[];
   availablePitchers: FreeAgentPlayer[];
   pitchersLoading: boolean;
   isLoading: boolean;
+  categories: EnrichedLeagueStatCategory[];
+  focusMap: Record<number, FocusState>;
+  suggestedFocusMap: Record<number, FocusState>;
+  setFocus: (statId: number, focus: FocusState) => void;
+  resetFocus: () => void;
+  hasFocusOverrides: boolean;
+  forecast: LeagueForecast | undefined;
+  forecastLoading: boolean;
 }) {
-  if (isLoading) {
+  const { talentMap, isLoading: talentLoading } = usePitcherTalent([...rosterPitchers, ...availablePitchers.slice(0, 50)]);
+
+  const pitchingCategories = useMemo(
+    () => categories.filter(c => c.is_pitcher_stat),
+    [categories],
+  );
+
+  const displayCategories = useMemo(
+    () => pitchingCategories.filter(c => supportsPitcherStatId(c.stat_id)),
+    [pitchingCategories],
+  );
+
+  const scoredCategories = useMemo(
+    () => displayCategories.filter(c => focusMap[c.stat_id] !== 'punt'),
+    [displayCategories, focusMap],
+  );
+
+  const filteredFAs = useMemo(() => {
+    return availablePitchers.slice(0, 50).filter(p => {
+      const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
+      if (!entry) return true;
+
+      // Compute temporary rating to check score
+      const rating = getPitcherSeasonRating({
+        talent: entry.talent,
+        scoredCategories,
+        focusMap,
+        metadata: entry.metadata,
+        status: p.status,
+        ownershipPercent: p.ownership?.percent,
+        isRostered: false,
+      });
+
+      // Filter out players with 0 score (Inactive/Ghosts who aren't stashed)
+      return rating.score > 0;
+    });
+  }, [availablePitchers, talentMap, scoredCategories, focusMap]);
+
+  const stashTargets = useMemo(() => {
+    return availablePitchers.slice(0, 80).filter(p => {
+      const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
+      if (!entry) return false;
+
+      // Stash targets are:
+      // 1. Specifically on Yahoo IL
+      // 2. Ghosts (0 IP in 2026) with > 15% ownership (Cole/Greene)
+      const isIL = p.status === 'IL';
+      const isStash = entry.metadata.isGhost && (p.ownership?.percent || 0) >= 15;
+      
+      return isIL || isStash;
+    });
+  }, [availablePitchers, talentMap]);
+
+  if (isLoading || talentLoading) {
     return (
       <Panel className="p-8 text-center">
-        <div className="animate-pulse text-sm text-muted-foreground">Loading pitcher data...</div>
+        <div className="animate-pulse text-sm text-muted-foreground">Loading pitcher talent and evaluation data...</div>
       </Panel>
     );
   }
 
   return (
     <>
-      <Panel
-        helper="Long-term pitcher moves live here. For daily pickups against today/tomorrow's matchups, use the Streaming page."
-      >
-        <Text variant="caption">
-          Full depth-chart + swap suggestions for pitchers is on the roadmap. Today this tab surfaces
-          the rostered and available pitchers so you can decide on structural long-term adds.
-        </Text>
-      </Panel>
+      <RosterFocusPanel
+        forecast={forecast}
+        isLoading={forecastLoading}
+        side="pitching"
+        plan={undefined}
+        focusMap={focusMap}
+        onSetFocus={setFocus}
+        suggestedFocusMap={suggestedFocusMap}
+        onReset={resetFocus}
+        hasOverrides={hasFocusOverrides}
+      />
+
+      <StreamingAdvisor 
+        rosterPitchers={rosterPitchers}
+        availablePitchers={availablePitchers}
+        talentMap={talentMap}
+        scoredCategories={scoredCategories}
+        focusMap={focusMap}
+      />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <Panel
           title="Your Pitchers"
           action={<span className="text-caption text-muted-foreground">{rosterPitchers.length} on roster</span>}
         >
-          <PitcherTable players={rosterPitchers} />
+          <PitcherTable 
+            players={rosterPitchers} 
+            talentMap={talentMap}
+            scoredCategories={scoredCategories}
+            focusMap={focusMap}
+            emptyMessage="No pitchers on roster"
+          />
         </Panel>
 
-        <Panel
-          title="Available Pitchers"
-          action={
-            <span className="text-caption text-muted-foreground">
-              {pitchersLoading ? 'Loading...' : `${availablePitchers.length} available`}
-            </span>
-          }
-        >
-          <PitcherTable players={availablePitchers.slice(0, 40)} />
-        </Panel>
+        <div className="space-y-4">
+          <Panel
+            title="Active Upgrades (Waiver Wire)"
+            action={
+              <span className="text-caption text-muted-foreground">
+                {pitchersLoading ? 'Loading...' : `${filteredFAs.length} active`}
+              </span>
+            }
+          >
+            <PitcherTable 
+              players={filteredFAs.slice(0, 25)} 
+              talentMap={talentMap}
+              scoredCategories={scoredCategories}
+              focusMap={focusMap}
+              emptyMessage="No active upgrades found"
+            />
+          </Panel>
+
+          {stashTargets.length > 0 && (
+            <Panel
+              title="Stash Targets (IL / Prospects)"
+              variant="featured"
+              action={<span className="text-caption text-muted-foreground">{stashTargets.length} found</span>}
+            >
+              <PitcherTable 
+                players={stashTargets.slice(0, 10)} 
+                talentMap={talentMap}
+                scoredCategories={scoredCategories}
+                focusMap={focusMap}
+                emptyMessage="No stash targets found"
+              />
+            </Panel>
+          )}
+        </div>
       </div>
     </>
   );
 }
+
+

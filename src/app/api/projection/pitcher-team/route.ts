@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getTeamRoster } from '@/lib/fantasy';
+import { getTeamRosterByDate } from '@/lib/fantasy';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy/stats';
-import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
+import { getWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import {
   projectPitcherTeam,
@@ -52,7 +52,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'leagueKey is required' }, { status: 400 });
     }
 
-    const days = getMatchupWeekDays();
+    // See sibling batter-team route for the `targetWeek=next` rationale
+    // (Sunday streaming pivot — describe next week's matchup, not the
+    // closed one).
+    const targetWeek: WeekTarget = searchParams.get('targetWeek') === 'next' ? 'next' : 'current';
+    const days = getWeekDays(new Date(), targetWeek);
     const remaining = days.filter(d => d.isRemaining);
     const weekStart = days[0]?.date;
     const weekEnd = days[days.length - 1]?.date;
@@ -70,8 +74,12 @@ export async function GET(request: Request) {
       });
     }
 
+    // Roster as of the LAST remaining day of the matchup week — captures
+    // pickups effective for upcoming starts that aren't on today's roster
+    // snapshot yet. See `docs/history.md` "Always-fetch-roster-by-date".
+    const rosterDate = remaining[remaining.length - 1]!.date;
     const [roster, allCategories, gameDayResults] = await Promise.all([
-      getTeamRoster(user.id, teamKey),
+      getTeamRosterByDate(user.id, teamKey, rosterDate),
       getEnrichedLeagueStatCategories(user.id, leagueKey),
       Promise.all(remaining.map(d => getGameDay(d.date))),
     ]);

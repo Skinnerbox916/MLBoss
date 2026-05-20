@@ -24,7 +24,7 @@
  *     null and the opportunity multiplier degrades to neutral.
  *   - Counting cats are projected as `expected_per_PA × expected_PA`. AVG
  *     uses native `expected` × `expected_AB` (≈ PA × 0.91) to recover an
- *     expected hits count we can blend with YTD.
+ *     expected hits count we can blend with matchup-to-date totals.
  */
 
 import { getBatterRating, type Focus, type BatterRating } from '@/lib/mlb/batterRating';

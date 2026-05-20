@@ -10,10 +10,11 @@ import { useGameDay } from '@/lib/hooks/useGameDay';
 import { useRosterStats } from '@/lib/hooks/useRosterStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
+import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
-import CategoryFocusBar from '@/components/shared/CategoryFocusBar';
+import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import { optimizeWeek } from '@/lib/lineup/optimizeWeek';
 import DatePicker from './DatePicker';
 import PositionFilter from './PositionFilter';
@@ -66,9 +67,9 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // implementation detail of the scoring engines).
   const { getPlayerLine } = useRosterStats(roster);
 
-  // League scoring categories → drive both the CategoryFocusBar and the
-  // per-category batter rating. Only batter-side categories show up in
-  // the lineup focus bar (a pitcher K category doesn't help a hitter).
+  // League scoring categories → drive both the Game Plan focus picker
+  // and the per-category batter rating. Only batter-side categories show
+  // up in the lineup focus bar (a pitcher K category doesn't help a hitter).
   const { categories: leagueCategories } = useLeagueCategories(leagueKey);
   const scoredBatterCategories = useMemo(
     () => leagueCategories.filter(c => c.is_batter_stat),
@@ -81,11 +82,18 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // the focusMap defaults that `getBatterRating` consumes below. The user
   // can still override and reset. See `docs/recommendation-system.md`.
   //
-  // We use the corrected (YTD + rest-of-week projection) analysis here so
-  // the focus bar agrees with the streaming page's batter tab — both pages
-  // ask "which categories will be contested by Sunday given my actual
-  // roster?" and the projection answers that better than YTD alone.
-  const { analysis: matchupAnalysis } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
+  // We use the corrected (matchup-to-date + rest-of-week projection)
+  // analysis here so the focus bar agrees with the streaming page's batter
+  // tab — both pages ask "which categories will be contested by Sunday
+  // given my actual roster?" and the projection answers that better than
+  // the scoreboard alone.
+  const {
+    analysis: matchupAnalysis,
+    isCorrected,
+    isLoading: matchupLoading,
+  } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
+
+  const { opponentName } = useMatchupHeader(leagueKey, teamKey);
 
   const batterStatIds = useMemo(() => {
     const set = new Set<number>();
@@ -97,7 +105,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   const {
     focusMap,
     suggestedFocusMap,
-    toggle: toggleFocus,
+    set: setFocus,
     reset: resetFocus,
     hasOverrides: hasFocusOverrides,
   } = useSuggestedFocus(matchupAnalysis, batterPredicate);
@@ -253,21 +261,23 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         </div>
       )}
 
-      {/* Category focus bar — only for batter mode. Defaults come from the
-          matchup analysis engine (chase the close ones, punt the locked
-          ones); the user's clicks override per-category and the reset
-          button restores the suggestions. */}
+      {/* Game Plan — chase/hold/punt grouping over the current matchup,
+          with inline focus pills so the user can override MLBoss's
+          suggestions without leaving the page. The same panel sits on
+          the streaming batter tab; toggles here flow into the lineup
+          optimizer (focusMap is shared with `getBatterRating` below). */}
       {mode === 'batting' && scoredBatterCategories.length > 0 && (
-        <CategoryFocusBar
-          categories={scoredBatterCategories}
+        <GamePlanPanel
+          analysis={matchupAnalysis}
+          isCorrected={isCorrected}
+          isLoading={matchupLoading}
+          side="batting"
+          opponentName={opponentName}
           focusMap={focusMap}
-          onToggle={toggleFocus}
-          batterOnly
-          title="Category Focus"
-          helper="Suggested by MLBoss · click to override"
+          onSetFocus={setFocus}
+          suggestedFocusMap={suggestedFocusMap}
           onReset={resetFocus}
           hasOverrides={hasFocusOverrides}
-          suggestedFocusMap={suggestedFocusMap}
         />
       )}
 

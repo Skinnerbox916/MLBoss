@@ -1,7 +1,7 @@
 'use client';
 
 import { formatStatValue } from '@/lib/formatStat';
-import type { MatchupRow } from '@/components/shared/matchupRows';
+import { matchupCellShowsNumeric, type MatchupRow } from '@/components/shared/matchupRows';
 
 interface CategoryRailProps {
   /** Batting categories first, pitching second — preserves Yahoo's natural order. */
@@ -14,21 +14,26 @@ interface CategoryRailProps {
 }
 
 function CategoryCell({ row, isHighlight }: { row: MatchupRow; isHighlight: boolean }) {
+  const myShown = matchupCellShowsNumeric(row.myVal);
+  const oppShown = matchupCellShowsNumeric(row.oppVal);
+
   const tone =
-    !row.hasData ? 'border-border bg-surface' :
+    !row.countsTowardRecord ? 'border-border bg-surface' :
     row.winning === true ? 'border-success/40 bg-success/5' :
     row.winning === false ? 'border-error/40 bg-error/5' :
     'border-border bg-surface';
 
   const myValueTone =
-    !row.hasData ? 'text-muted-foreground/70' :
+    !row.countsTowardRecord ? 'text-muted-foreground/70' :
     row.winning === true ? 'text-success' :
     row.winning === false ? 'text-error' :
     'text-foreground';
 
-  const tooltip = row.hasData
+  const tooltip = row.countsTowardRecord
     ? `${row.label}: ${formatStatValue(row.myVal, row.name)} vs ${formatStatValue(row.oppVal, row.name)}${isHighlight ? ' · most contested category — chase this' : ''}`
-    : `${row.label}: no data yet`;
+    : myShown || oppShown
+      ? `${row.label}: ${myShown ? formatStatValue(row.myVal, row.name) : '—'} vs ${oppShown ? formatStatValue(row.oppVal, row.name) : '—'} · head-to-head pending`
+      : `${row.label}: no data yet`;
 
   return (
     <div
@@ -45,10 +50,10 @@ function CategoryCell({ row, isHighlight }: { row: MatchupRow; isHighlight: bool
         {row.label}
       </span>
       <span className={`mt-1 text-sm font-bold font-mono font-numeric leading-none ${myValueTone}`}>
-        {row.hasData ? formatStatValue(row.myVal, row.name) : '—'}
+        {myShown ? formatStatValue(row.myVal, row.name) : '—'}
       </span>
       <span className="mt-0.5 text-[11px] font-mono font-numeric text-muted-foreground leading-none">
-        {row.hasData ? formatStatValue(row.oppVal, row.name) : '—'}
+        {oppShown ? formatStatValue(row.oppVal, row.name) : '—'}
       </span>
     </div>
   );

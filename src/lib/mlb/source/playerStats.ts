@@ -183,6 +183,34 @@ export async function fetchPitcherStarterLine(
   }
 }
 
+/**
+ * Fetch a pitcher's overall season line (all appearances — starts + relief).
+ * Companion to `fetchPitcherStarterLine`: the SP-filtered line drives talent
+ * and projection math, but for the user-facing ERA next to the pitcher's
+ * name we want what every other site shows — the overall season ERA. A
+ * reliever making a spot start has an "as starter" ERA of 0.00 on a
+ * one-outing sample, which is technically correct but misleading.
+ */
+export async function fetchPitcherOverallLine(
+  mlbId: number,
+  season: number,
+): Promise<RawStatsResponse | null> {
+  const params = new URLSearchParams({
+    stats: 'season',
+    group: 'pitching',
+    season: String(season),
+    gameType: 'R',
+  });
+  const path = `/people/${mlbId}/stats?${params.toString()}`;
+
+  try {
+    return await mlbFetchSplits<RawStatsResponse>(path, `pitching-overall:${mlbId}:${season}`);
+  } catch (err) {
+    console.error(`fetchPitcherOverallLine(${mlbId}, ${season}) failed:`, err);
+    return null;
+  }
+}
+
 /** Fetch a pitcher's vs-L / vs-R OPS-allowed splits. */
 export async function fetchPitcherPlatoon(
   mlbId: number,

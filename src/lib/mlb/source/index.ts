@@ -6,6 +6,7 @@ export {
   fetchHittingGameLog,
   fetchCareerVsPitcher,
   fetchPitcherStarterLine,
+  fetchPitcherOverallLine,
   fetchPitcherPlatoon,
   fetchPitcherGameLog,
 } from './playerStats';

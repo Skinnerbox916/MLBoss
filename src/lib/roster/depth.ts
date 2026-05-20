@@ -385,7 +385,9 @@ export interface PositionChange {
 }
 
 export interface SwapEvaluation {
-  drop: ScoredPlayer;
+  /** The player dropped to make room for the add. **Null** when the move
+   *  is a pure add (open roster slot available — no drop required). */
+  drop: ScoredPlayer | null;
   add: ScoredPlayer;
   netValue: number;
   primaryReason: SwapReason;
@@ -426,19 +428,29 @@ function classifyReason(changes: PositionChange[]): SwapReason {
   return 'upgrade';
 }
 
+/**
+ * Evaluate a move — either a swap (drop ≠ null) or a pure add
+ * (drop === null) when the roster has an open slot.
+ *
+ * For a swap: after-roster is `before − drop + add`.
+ * For a pure add: after-roster is `before + add` (no removal).
+ *
+ * Pure adds tend to have lower position-shift action (they don't open
+ * a hole) but get full credit for whatever the add brings.
+ */
 export function evaluateSwap(
   rosterBefore: ScoredPlayer[],
   before: RosterValue,
-  drop: ScoredPlayer,
+  drop: ScoredPlayer | null,
   add: ScoredPlayer,
   slots: StartingSlots,
   replacement: Map<BatterPosition, number>,
   config: DepthConfig = DEFAULT_DEPTH_CONFIG,
   preferredDepth?: PreferredDepth,
 ): SwapEvaluation {
-  const afterRoster = rosterBefore
-    .filter(p => p.player_key !== drop.player_key)
-    .concat(add);
+  const afterRoster = drop === null
+    ? rosterBefore.concat(add)
+    : rosterBefore.filter(p => p.player_key !== drop.player_key).concat(add);
   const after = computeRosterValue(afterRoster, slots, replacement, config, preferredDepth);
   const netValue = after.total - before.total;
   const positionChanges = diffPositions(before, after);
@@ -501,10 +513,17 @@ export function generateSwapSuggestions(
     preferredDepth?: PreferredDepth;
     /** Max times any single drop candidate can appear in the final list. */
     dropCap?: number;
+    /** Number of open roster slots (max_team_size − current_roster_size).
+     *  When > 0, the engine also generates **pure adds** (drop = null) —
+     *  filling an open slot without dropping anyone. Pure adds are
+     *  ranked alongside swaps by `netValue`; they typically win when
+     *  open slots exist because they avoid the drop cost. */
+    openSlotCount?: number;
   } = {},
 ): RankedSwap[] {
   const minNet = opts.minNetValue ?? 0.05;
   const dropCap = Math.max(1, opts.dropCap ?? 2);
+  const openSlots = Math.max(0, opts.openSlotCount ?? 0);
   const before = computeRosterValue(roster, slots, replacement, config, opts.preferredDepth);
 
   // Pre-compute resistance per roster player — it's constant across all their swaps.
@@ -513,6 +532,32 @@ export function generateSwapSuggestions(
 
   const results: RankedSwap[] = [];
 
+  // Pure-add candidates (drop = null) — only generated when the roster
+  // has open slots. No drop resistance applies (we're not dropping
+  // anyone). These naturally dominate the ranking when slots are open
+  // because they avoid the drop-side value loss.
+  if (openSlots > 0) {
+    for (const add of freeAgents) {
+      const evalResult = evaluateSwap(
+        roster,
+        before,
+        null,
+        add,
+        slots,
+        replacement,
+        config,
+        opts.preferredDepth,
+      );
+      if (evalResult.netValue <= minNet) continue;
+      results.push({
+        ...evalResult,
+        adjustedNetValue: evalResult.netValue,
+        dropResistance: 0,
+      });
+    }
+  }
+
+  // Swap candidates (drop ≠ null) — same as before.
   for (const drop of roster) {
     const dropResistance = resistanceByDrop.get(drop.player_key) ?? 0;
     for (const add of freeAgents) {
@@ -542,18 +587,22 @@ export function generateSwapSuggestions(
   });
 
   // Diversity-aware dedupe:
-  //   - Each `add` appears at most once (we already pick their best drop).
+  //   - Each `add` appears at most once (we already pick their best drop
+  //     — or pure-add when that's better).
   //   - Each `drop` appears at most `dropCap` times (prevents one obvious
-  //     drop candidate from dominating the list).
+  //     drop candidate from dominating the list). Pure adds (drop=null)
+  //     are exempt — they don't pin a roster player.
   const seenAdds = new Set<string>();
   const dropCount = new Map<string, number>();
   const deduped: RankedSwap[] = [];
   for (const s of results) {
     if (seenAdds.has(s.add.player_key)) continue;
-    const cnt = dropCount.get(s.drop.player_key) ?? 0;
-    if (cnt >= dropCap) continue;
+    if (s.drop !== null) {
+      const cnt = dropCount.get(s.drop.player_key) ?? 0;
+      if (cnt >= dropCap) continue;
+      dropCount.set(s.drop.player_key, cnt + 1);
+    }
     seenAdds.add(s.add.player_key);
-    dropCount.set(s.drop.player_key, cnt + 1);
     deduped.push(s);
   }
 

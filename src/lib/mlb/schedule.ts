@@ -8,6 +8,7 @@ import {
 import { getParkByVenueId } from './parks';
 import {
   fetchPitcherFullLine,
+  fetchPitcherOverallSeasonEra,
   fetchPitcherPlatoonSplits,
   fetchPitcherRecentForm,
   resolveMLBId,
@@ -383,7 +384,7 @@ function stubPitcher(name: string): ProbablePitcher {
  * provides everything else (schedule, venue, weather, lineups, the per-pitcher
  * stats that drive enrichment). After name → MLB ID resolution, every pitcher
  * runs through the documented enrichment + talent pipeline; this is the
- * canonical stamp point for `pp.talent` per `docs/pitcher-evaluation.md`.
+ * canonical stamp point for `pp.talent` per `docs/unified-rating-model.md`.
  */
 export async function getGameDay(date: string): Promise<MLBGame[]> {
   // No probablePitcher hydrate — ESPN owns that field. We keep venue,
@@ -438,13 +439,21 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
       p.mlbId = identity.mlbId;
     }
 
-    const [line, platoon, recentForm, seasonLines] = await Promise.all([
+    const [line, overallEra, platoon, recentForm, seasonLines] = await Promise.all([
       fetchPitcherFullLine(p.mlbId),
+      fetchPitcherOverallSeasonEra(p.mlbId),
       fetchPitcherPlatoonSplits(p.mlbId),
       fetchPitcherRecentForm(p.mlbId),
       getPitcherSeasonLines(p.mlbId),
     ]);
     applyPitcherStatsLine(p, line);
+    // Overlay the user-facing ERA with the overall (all-appearances) value.
+    // `applyPitcherStatsLine` wrote the SP-filtered ERA so the talent and
+    // projection-relevant fields stay "as starter" pure, but for the ERA
+    // pill next to the SP name in the lineup card the user expects what
+    // Yahoo shows — the overall season ERA. Matters for relievers making
+    // spot starts (1 outing × 0 ER → 0.00 SP-filtered ERA).
+    if (overallEra !== null) p.era = overallEra;
     applySavantSignals(p, savantMap.get(p.mlbId), priorSavantMap.get(p.mlbId));
     applyPitcherPlatoon(p, platoon);
     applyPitcherRecentForm(p, recentForm);

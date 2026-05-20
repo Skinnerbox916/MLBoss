@@ -64,15 +64,14 @@ No test framework is configured.
 Five primary routes, organized by the time horizon of the decisions they support:
 
 - `/dashboard` — **Reference.** Mixed-horizon snapshot: lineup issues, player updates, current-week scoreboard (`CurrentScoreCard`), opponent status, season comparison, waivers, activity.
-- `/lineup` — **Today.** Daily sit/start. Uses `TodayManager` (`src/components/lineup/TodayManager.tsx`) with segment tabs `[Batters | Pitchers]`:
+- `/lineup` — **Lineup.** Daily sit/start. Uses `LineupShell` (`src/components/lineup/LineupShell.tsx`) with segment tabs `[Batters | Pitchers]`. Each tab renders its own `GamePlanPanel` (`side="batting"` / `side="pitching"`) above its content for the chase/hold/punt framing.
   - Batters tab: `LineupManager` with `mode="batting"`
   - Pitchers tab: `TodayPitchers` (`src/components/lineup/TodayPitchers.tsx`) for rostered pitchers + today's game context
-  - Shared `MatchupPulse` (`side="both"`) above the tabs so category leverage informs both decisions.
-- `/streaming` — **This-week pitcher pickups.** `StreamingManager` + `StreamingBoard` with a `DateStrip` covering D+1 through D+5 (MLB probables hydrate 3-5 days out). Shared `MatchupPulse` (`side="pitching"`) at the top.
-- `/roster` — **Long-term roster construction.** `RosterManager` with segment tabs `[Batters | Pitchers]`. Page leads with `CategoryFocusBar` (manual chase/punt), then `DepthChart`, then `SwapSuggestions`, then the per-player tables. There is intentionally no marquee rank summary — every signal on the page is forward-looking talent + roster shape, and a YTD rank strip would contradict the suggestions; go to `/league` for league-wide rankings. Batters tab runs the full depth-chart + swap optimizer; the pitchers tab lists rostered + available pitchers (full pitcher optimizer is follow-up work).
+- `/streaming` — **This-week pickups.** `StreamingManager` + `StreamingBoard` (pitchers) / `BatterStreamingBoard` (batters) with a `DateStrip` covering D+1 through D+5. Each tab leads with `GamePlanPanel` matching the side.
+- `/roster` — **ROS roster construction (matchup vacuum).** `RosterManager` with segment tabs `[Batters | Pitchers]`. Page leads with `RosterFocusPanel` (per-side chase/hold/punt tile grid), then `DepthChart`, then `Suggested Moves` (swaps + pure adds when open slots exist), then the per-player tables. Focus suggestions come from talent-only neutral-week projection ranked across the league, RUPM-based closeability, and a manager-engagement multiplier — no this-week schedule, no opp SP, no park. There is intentionally no marquee rank summary — every signal on the page is forward-looking talent + roster shape, and a YTD rank strip would contradict the suggestions; go to `/league` for YTD league-wide rankings. Batters tab runs the full depth-chart + move optimizer; the pitchers tab lists rostered + available pitchers (full pitcher optimizer is follow-up work). See [docs/roster-strategy.md](docs/roster-strategy.md).
 - `/league` — **Reference.** Standings, stat rankings, league-wide context.
 
-Both the Today and Streaming pages share the lineup component library (`src/components/lineup/`) via a `LineupMode` type (`'batting' | 'pitching'`).
+Both the Lineup and Streaming pages share the lineup component library (`src/components/lineup/`) via a `LineupMode` type (`'batting' | 'pitching'`). They also share `GamePlanPanel` (`src/components/shared/GamePlanPanel.tsx`) — the chase/hold/punt tile grid with inline focus segmented control — and `useMatchupHeader` for the panel's week/opponent header inputs.
 
 ### Dashboard
 - Card-based architecture: `src/components/dashboard/`
@@ -101,19 +100,37 @@ Schema and validation: `src/constants/envSchema.ts`
 
 ## Documentation
 
-All docs live in `docs/`. Index: `docs/README.md`. Key files:
-- `docs/product-spec.md` — product vision and features
-- `docs/design-system.md` — colors, typography, component patterns, container intent rubric
-- `docs/setup.md` — environment setup and OAuth configuration
-- `docs/for-ai-developers.md` — LLM contributor guide with gotchas
-- `docs/yahoo-api-reference.md` — Yahoo Fantasy API reference
+All docs live in `docs/`. Full index: `docs/README.md`. **For any non-trivial change, load `docs/engines.md` first to orient, then drop into the relevant per-layer doc.**
+
+Reading order:
+- `docs/engines.md` — registry of every prediction/suggestion engine, by layer. Load first.
+- `docs/architecture.md` — principles, anti-patterns, rules for adding engines/docs/constants. Read once.
+- `docs/history.md` — decision log of patterns we tried and stopped. Consult before reintroducing a deleted pattern.
+
+Per-layer / per-concept reference:
+- `docs/unified-rating-model.md` — L1+L2+L3 talent / forecast / rating (both engines, shared substrate)
+- `docs/projection.md` — L4 team projection, lineup optimizer, slot-aware streaming
+- `docs/recommendation-system.md` — L5 matchup state (`analyzeMatchup`, focus) and L7 Boss Brief
+- `docs/roster-strategy.md` — L6 league forecast, forward focus, swap strategy
+- `docs/stat-levels.md` — the four stat levels (raw counting / raw rate / regressed talent / matchup-adjusted)
+- `docs/league-baselines.md` — cross-engine league-mean constants
+- `docs/data-architecture.md` — source/model/compose, cache tiers, identity contract
+- `docs/streaming-page.md` — streaming-page specifics (Yahoo pagination, FA matching, Game Plan card)
 - `docs/dashboard-components.md` — dashboard card architecture
-- `docs/ui-patterns.md` — shared UI components, display patterns, and anti-patterns (points to design-system.md for container rubric)
-- `docs/data-architecture.md` — data layer architecture, caching, identity contract, full API reference
-- `docs/scoring-conventions.md` — stat levels, calibration knobs, one-source-of-truth rule
-- `docs/recommendation-system.md` — matchup-state layer: `analyzeMatchup` as the single source of truth for "which categories should I chase?", Boss Brief, focus suggestions, leverage
-- `docs/stats.md` — stat_id architecture and disambiguation patterns
-- `docs/streaming-page.md` — streaming board internals (team-abbr aliasing, FA→probable matching, pill scoring)
+- `docs/ui-patterns.md` — shared UI components and display patterns
+- `docs/design-system.md` — colors, typography, container intent rubric
+- `docs/stats.md` — `stat_id` architecture
+- `docs/setup.md`, `docs/yahoo-api-reference.md`, `docs/mlb-api-reference.md`, `docs/for-ai-developers.md`, `docs/product-spec.md` — setup and API refs
+
+### Documentation discipline
+
+These rules exist because the doc set previously fractured into multiple "canonical" tables of the same content (calibration anchors in 3 docs, canonical-implementations tables in 4 docs). LLMs treat conflicting docs as authoritative on both sides; drift is the cardinal sin.
+
+- **One concept = one home.** Don't add a canonical table or rationale that already lives elsewhere — link to the existing home. If the existing home is wrong, fix it there.
+- **Source owns values; doc owns rationale.** Calibration constants live in `.ts` files. Comment is a one-line pointer to the doc section (e.g. `// see docs/unified-rating-model.md#calibration-anchors`). Doc tables list file path + anchor, never the value itself.
+- **When you delete a canonical engine / function / pattern, add a `docs/history.md` entry.** Date, what changed, why we stopped. Bar: "an LLM might propose to re-introduce this; without context they'd be right to try."
+- **When you tune a calibration constant, read the linked doc section first.** Confirm the rationale still holds. If the rationale changed, update the doc. If the change is wide-blast (touches a league mean or prior strength), add a history.md entry and run the smoke harness (`/api/admin/test-pitcher-eval`).
+- **When you add a new engine or doc**, see `docs/architecture.md#rules-for-adding-a-new-engine` and register it in `docs/engines.md` (engines) or `docs/README.md` (docs).
 
 ## Gotchas
 

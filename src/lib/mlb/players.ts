@@ -17,6 +17,7 @@ import {
   fetchHittingGameLog,
   fetchCareerVsPitcher as sourceFetchCareerVsPitcher,
   fetchPitcherStarterLine,
+  fetchPitcherOverallLine,
   fetchPitcherPlatoon,
   fetchPitcherGameLog,
   fetchStatSplitsForSeason,
@@ -161,6 +162,32 @@ export async function fetchPitcherFullLine(
   if (current && current.ip > 0) return current;
   const prior = await fetchPitcherSeasonLine(mlbId, season - 1);
   return prior && prior.ip > 0 ? prior : null;
+}
+
+/**
+ * Fetch the pitcher's OVERALL season ERA (all appearances, starts + relief).
+ * Companion to `fetchPitcherFullLine`: the latter is "as starter" filtered
+ * for talent/projection use; this is the user-facing number that matches
+ * what Yahoo and every other site shows on the pitcher's profile. Used for
+ * the ERA pill next to the opposing-SP name in the lineup batter card.
+ *
+ * Returns null when the season group is missing (rookie / pre-debut / API
+ * outage). Callers should keep whatever ERA they already have on the
+ * pitcher object in that case.
+ */
+export async function fetchPitcherOverallSeasonEra(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<number | null> {
+  const raw = await fetchPitcherOverallLine(mlbId, season);
+  if (!raw) return null;
+  const seasonGroup = findGroup(raw, 'season');
+  const first = seasonGroup[0];
+  if (!first) return null;
+  const eraStr = first.stat.era;
+  if (!eraStr) return null;
+  const era = parseFloat(eraStr);
+  return isNaN(era) ? null : era;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +484,10 @@ export async function getRosterSeasonStats(
               xwobaCurrent: currentSavant?.xwoba ?? null,
               xwobaCurrentBip: currentSavant?.bip ?? 0,
               xwobaTalentPrior,
+              kRate: talent?.components.kRate ?? null,
+              bbRate: talent?.components.bbRate ?? null,
+              xba: talent?.xba ?? null,
+              xslg: talent?.xslg ?? null,
               bats: identity.bats ?? null,
               opsVsL: vsL.ops,
               paVsL: vsL.pa,
@@ -495,6 +526,10 @@ export async function getRosterSeasonStats(
               xwobaCurrent: null,
               xwobaCurrentBip: 0,
               xwobaTalentPrior: priorTalent?.xwoba ?? null,
+              kRate: priorTalent?.components.kRate ?? null,
+              bbRate: priorTalent?.components.bbRate ?? null,
+              xba: priorTalent?.xba ?? null,
+              xslg: priorTalent?.xslg ?? null,
               bats: identity.bats ?? null,
               opsVsL: null,
               paVsL: 0,
@@ -519,4 +554,105 @@ function hashCode(str: string): string {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
   }
   return (hash >>> 0).toString(36);
+}
+
+// ---------------------------------------------------------------------------
+// Roster-level batch talent (Pitchers)
+// ---------------------------------------------------------------------------
+
+export interface PitcherTalentWithMetadata {
+  talent: import('@/lib/pitching/talent').PitcherTalent;
+  metadata: {
+    role: 'starter' | 'reliever' | 'inactive';
+    isGhost: boolean;
+    /** Games started in the current season. Used by the neutral-week
+     *  projection to derive starts/week. */
+    seasonGS: number;
+    /** Innings pitched in the current season. Drives the talent-only
+     *  per-week IP assumption in the L6 forecast. */
+    seasonIP: number;
+  };
+}
+
+/**
+ * Fetch canonical talent vectors (Layer 1) for a list of pitchers.
+ * Resolves Yahoo names -> MLB IDs, then fans out Stats-API lines +
+ * Savant data in parallel to compute the talent vector.
+ *
+ * Result map is keyed by "name|team" (lowercased).
+ */
+export async function getPitcherTalentBatch(
+  players: RosterPlayer[],
+  season: number = new Date().getFullYear(),
+): Promise<Record<string, PitcherTalentWithMetadata>> {
+  if (players.length === 0) return {};
+
+  const { computePitcherTalent } = await import('@/lib/pitching/talent');
+  const { fetchStatcastPitchers } = await import('./savant');
+
+  const [savantMap, priorSavantMap] = await Promise.all([
+    fetchStatcastPitchers(season),
+    fetchStatcastPitchers(season - 1),
+  ]);
+
+  const results: Record<string, PitcherTalentWithMetadata> = {};
+
+  await Promise.all(
+    players.map(async ({ name, team }) => {
+      const key = `${name.toLowerCase()}|${team.toLowerCase()}`;
+      try {
+        const identity = await resolveMLBId(name, team);
+        if (!identity) return;
+
+        const [seasonLines] = await Promise.all([
+          getPitcherSeasonLines(identity.mlbId, season),
+        ]);
+
+        const talent = computePitcherTalent({
+          mlbId: identity.mlbId,
+          throws: identity.throws as 'L' | 'R' | 'S',
+          currentLine: seasonLines.current,
+          priorLine: seasonLines.prior,
+          currentSavant: savantMap.get(identity.mlbId) ?? null,
+          priorSavant: priorSavantMap.get(identity.mlbId) ?? null,
+        });
+
+        // Role Detection & Liveness (2026 Focus)
+        const currentIP = seasonLines.current?.ip ?? 0;
+        const currentGS = seasonLines.current?.gamesStarted ?? 0;
+        const priorGS = seasonLines.prior?.gamesStarted ?? 0;
+        const priorIP = seasonLines.prior?.ip ?? 0;
+        
+        // A "Ghost" has 0 IP in the current season (2026).
+        // This is the trigger for the "Liveness Gate" in the UI.
+        const isGhost = currentIP === 0;
+
+        // Role Detection:
+        // 1. If they have started in 2026, they are a Starter.
+        // 2. If they have pitched but NOT started in 2026, they are a Reliever.
+        // 3. If they haven't pitched in 2026, fallback to 2025 GS.
+        let role: 'starter' | 'reliever' | 'inactive';
+        if (currentGS > 0) {
+          role = 'starter';
+        } else if (currentIP > 0) {
+          role = 'reliever';
+        } else if (priorGS > 0) {
+          role = 'starter'; // Probable starter on IL/stashed
+        } else if (priorIP > 0) {
+          role = 'reliever';
+        } else {
+          role = 'inactive';
+        }
+
+        results[key] = {
+          talent,
+          metadata: { role, isGhost, seasonGS: currentGS, seasonIP: currentIP },
+        };
+      } catch (err) {
+        console.error(`getPitcherTalentBatch: failed for ${name} (${team}):`, err);
+      }
+    }),
+  );
+
+  return results;
 }

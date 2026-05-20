@@ -71,7 +71,7 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
   - `nonHrContactValue` ← talent.nonHrXwoba × oppOpsFactor × parkOverall × weather
   - `xwobaAllowed` ← linear-weights composition (BB·0.69 + nonHrContact·nonHrXwoba + HR·1.97)
   - `expectedERA` ← `xwobaToXera(xwobaAllowed)` — park / opp / weather aware end-to-end.
-- **Batter side** (`getBatterRating` → `applyMatchupModifier`):
+- **Batter side** (`buildBatterForecast` in [batterForecast.ts](../src/lib/mlb/batterForecast.ts)):
   - AVG cat ← log5(talent.avg, SP BAA) × parkAVG
   - K cat ← log5(talent.K%, SP K%) × parkSO
   - HR cat ← talent.HR-rate × SP HR-prone factor × parkHR × weather
@@ -79,6 +79,8 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
   - RBI cat ← talent.RBI-rate × SP xERA × parkR × battingOrderMod × weather
   - SB cat ← talent.SB-rate × hand bump
   - BB cat ← talent.BB-rate × parkBB
+
+  Both sides have a clean L2/L3 split: forecast is a pure function from talent + `MatchupContext` to per-PA expected values; rating consumes the forecast and adds normalization, weighting, focus, composite multipliers, tier mapping, and confidence aggregation. `getBatterRating` internally calls `buildBatterForecast` (extracted in 2026-05); pre-2026-05 the two layers were inlined in one function.
 
 **Composite layer.** Only matchup-wide signals that genuinely scale every category proportionally:
 - **Pitcher:** platoon (the SP's weak-handed side stack vs this lineup). Velocity moved out of the composite into the talent-layer regime probe (2026-05) — see [history.md](./history.md#2026-05--velocity-multiplier-moved-to-talent-layer-regime-probe).

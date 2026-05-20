@@ -8,6 +8,22 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-05 — Batter L2/L3 split (`buildBatterForecast` extracted)
+
+The batter rating engine was one big function — `getBatterRating()` in `src/lib/mlb/batterRating.ts` inlined the entire per-PA forecast (via `applyMatchupModifier`) alongside the normalization, weighting, composite multipliers, tier mapping, and confidence aggregation. The pitcher side already had a clean two-layer split: `buildGameForecast` (L2 forecast) → `getPitcherRating` (L3 rating). The batter side documented the same architecture but didn't have it in code.
+
+**Replaced with:** a new [`src/lib/mlb/batterForecast.ts`](../src/lib/mlb/batterForecast.ts) exporting `buildBatterForecast(stats, ctx, battingOrder, scoredCategories) → BatterForecast`. The forecast struct is keyed by stat_id and carries `{ baseline, expected, effectivePA, modifierHint }` per cat. The L2 helpers (`applyMatchupModifier`, `log5`, `pitcherRatioClamp`, `weatherCatFactor`, SP talent wrappers, league constants, `PITCHER_SWING_*` calibration anchors) all moved with it. `getBatterRating` now calls `buildBatterForecast` once at the top of the per-cat loop instead of inlining the per-cat math.
+
+**Behavior:** identical to the bit. A 10-profile numerical equivalence harness (`/api/admin/test-batter-rating`) exercises every branch in `applyMatchupModifier` plus the degenerate paths; outputs match pre- and post-refactor JSON-stringify-exact.
+
+**File sizes:** `batterRating.ts` shrank from 746 lines to 460. `batterForecast.ts` is 350 lines.
+
+**Why this matters:**
+- Consumers that want batter per-PA forecasts without paying for full rating composition now have a clean entry point. Currently `batterTeam.ts:261` re-extracts per-PA from `rating.categories[]`; future work could call `buildBatterForecast` directly.
+- The batter and pitcher sides are now architecturally parallel, which is the precondition for an eventual Rating discriminated union (Tier 3 in the rating-cleanup plan).
+
+**Don't reintroduce:** inlining the per-cat matchup math inside `getBatterRating`. The L2/L3 split is load-bearing and the boundary is the natural cut point (forecast is pure-function over per-PA rates; rating composes them with focus/weighting/scoring).
+
 ## 2026-05 — Rating unification: orphan canonical module removed
 
 `src/lib/rating/types.ts` was deleted. The file documented the target unified Rating shape — `engine: 'batter' | 'pitcher'` discriminator, `composite.multipliers` map, `surface.multipliers` map, one `CategoryContribution`, one `ContextMultiplier` — but zero engine or consumer ever migrated to it. The 2026-05 "Single `MatchupContext`, single `Rating`" entry below described the intended *outcome* of that rebuild; only the `MatchupContext` half landed. The `Rating` half stayed orphan.

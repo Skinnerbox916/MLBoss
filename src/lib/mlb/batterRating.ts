@@ -74,12 +74,11 @@ import {
 } from './categoryBaselines';
 import { getPlatoonAdjustedTalent, getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
 import { getParkAdjustment } from './parkAdjustment';
+import type { Focus } from '@/lib/rating/focus';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export type Focus = 'neutral' | 'chase' | 'punt';
 
 export interface CategoryContribution {
   statId: number;

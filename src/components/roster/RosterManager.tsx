@@ -60,7 +60,7 @@ import {
   type SwapStrategy,
   type CategoryImpact,
 } from '@/lib/league/swapStrategy';
-import type { Focus as FocusState } from '@/lib/mlb/batterRating';
+import type { Focus as FocusState } from '@/lib/rating/focus';
 import type { LeagueForecast } from '@/lib/league/forecast';
 
 // ---------------------------------------------------------------------------

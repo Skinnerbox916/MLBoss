@@ -13,7 +13,7 @@ import type {
 } from '@/lib/matchup/analysis';
 import { rowHasComparablePair } from '@/components/shared/matchupRows';
 import type { DailyBaseline } from '@/lib/projection/slotAware';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
 import {
   FocusSectionTrio,

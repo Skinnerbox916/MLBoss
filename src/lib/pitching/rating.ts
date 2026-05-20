@@ -34,14 +34,13 @@
  * categories. Including bullpen at the composite would dilute K/ERA/
  * WHIP scores for pitchers behind a bad pen, which isn't right.
  *
- * Tier label is derived from `score`, NOT classified separately. There
- * is exactly one mapping (score → tier) and it lives in
- * `src/lib/rating/types.ts`. The Montero ACE-vs-FAIR situation is
- * structurally impossible: tier and score are projections of the same
- * number.
+ * Tier label is derived from `score`, NOT classified separately. The
+ * single score → tier mapping lives in `tierFromScore` below. The
+ * Montero ACE-vs-FAIR situation is structurally impossible: tier and
+ * score are projections of the same number.
  */
 
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { GameForecast, ContextMultiplier } from './forecast';
 

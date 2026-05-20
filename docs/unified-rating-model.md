@@ -1,6 +1,6 @@
 ## Unified Rating Model (L1 + L2 + L3)
 
-The single canonical reference for how MLBoss predicts player performance in a specific game. Both the streaming page (pitcher pickups) and the lineup tools (batter sit/start, pitcher sit/start) consume the same architecture: one shared substrate of math primitives, two parallel rating engines, one `Rating` shape returned to the UI, one breakdown panel for display.
+The single canonical reference for how MLBoss predicts player performance in a specific game. Both the streaming page (pitcher pickups) and the lineup tools (batter sit/start, pitcher sit/start) consume the same architecture: one shared substrate of math primitives, two parallel rating engines that share the same `MatchupContext` shape, and engine-specific rating outputs (`BatterRating`, `PitcherRating`). The engines do **not** currently return a single unified `Rating` discriminated union — that's target state, not current reality (see [history.md](./history.md#2026-05--rating-unification-orphan-canonical-module-removed)).
 
 This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 rating). For "which categories should I chase?" see [recommendation-system.md](./recommendation-system.md). For aggregation of L3 outputs over time windows see [projection.md](./projection.md).
 
@@ -42,12 +42,19 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
                           │                             │
                           └──────────────┬──────────────┘
                                          │
-                                Rating { score, scoreBand, tier,
-                                  categories[], composite multipliers,
-                                  surface multipliers, confidence }
+                              Engine-specific rating shapes:
+                                BatterRating { score, scoreBand, tier,
+                                  categories[], platoon, opportunity,
+                                  weather, confidence }
+                                PitcherRating { score, tier, categories[],
+                                  velocity, platoon, park, weather, opp,
+                                  confidence }
                                          │
                                          ▼
-                              ScoreBreakdownPanel (one component)
+                              PlayerSplitsPanel  (batter breakdown)
+                              ScoreBreakdownPanel (pitcher breakdown,
+                                consumes PitcherStreamingRating from
+                                pitching/scoring.ts)
                               VerdictStack (score ± band)
 ```
 
@@ -265,29 +272,52 @@ Lives at the forecast layer (not in the talent vector or the shared `xwobaToXera
 - It has no batter-side analogue. Batter-vs-pitcher rating reads `forecast.expectedPerPA` for log5; it doesn't read `expectedERA`. Putting the penalty here keeps the batter side untouched.
 - Symmetric to how park / weather / opp adjustments already modify forecast outputs without touching shared primitives.
 
-## The `Rating` shape
+## Rating shapes (current state)
 
-Both engines return an isomorphic shape, distinguished by an `engine` discriminator (in [src/lib/rating/types.ts](../src/lib/rating/types.ts)):
+The engines return **engine-specific shapes**. They are *similar* (both have `score`, `tier`, `categories`, a `confidence` blob) but they are **not** a discriminated union — neither carries an `engine` field, and their multiplier sets differ.
+
+**`BatterRating`** (from [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts)):
 
 ```typescript
-interface RatingBase {
-  score: number;        // 0-100, 50 = neutral
-  scoreBand: number;    // ± uncertainty in score points
-  netVsNeutral: number; // score - 50
-  categories: CategoryContribution[];
-  composite: { multipliers: Record<string, ContextMultiplier> };
-  surface: { park, weather, opp: ContextMultiplier };
-  confidence: { level: 'high'|'medium'|'low'; reason; band };
+interface BatterRating {
+  score: number;          // 0-100, 50 = neutral
+  scoreBand: number;      // ± uncertainty in score points
+  netVsNeutral: number;
+  tier: 'great' | 'good' | 'neutral' | 'poor' | 'bad';
+  categories: CategoryContribution[];   // batter-side shape
+  platoon: RatingMultiplier;            // composite — applied to score
+  opportunity: RatingMultiplier;        // composite — applied to score
+  weather: RatingMultiplier;            // surface — already in cats
+  confidence: { level; reason; band };
 }
-
-type Rating =
-  | (RatingBase & { engine: 'pitcher'; tier: PitcherTier })
-  | (RatingBase & { engine: 'batter';  tier: BatterTier });
 ```
 
-Per-engine tier vocabularies (pitcher: ace/tough/avg/weak/bad; batter: great/good/neutral/poor/bad) acknowledge that "ace" carries pitcher-specific meaning. Tier is **always** derived from `score` via a single classifier per engine — no separate rule-based tier system.
+**`PitcherRating`** (from [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts)):
 
-> The current implementation still carries multipliers as named fields on `PitcherRating` (`velocity`, `platoon`, `park`, `weather`, `opp`) for back-compat with the streaming UI. The composite/surface distinction is enforced by *which fields the composite formula multiplies* — as of 2026-05, only `platoon`. Velocity is informational only (its `multiplier` is pinned at 1.0); YoY velo delta now feeds the talent-layer regime probe instead. Park/weather/opp are surface-only.
+```typescript
+interface PitcherRating {
+  score: number;          // 0-100, 50 = neutral
+  netVsNeutral: number;   // (no scoreBand on this shape)
+  tier: 'ace' | 'tough' | 'average' | 'weak' | 'bad';
+  categories: PitcherCategoryContribution[];
+  velocity: ContextMultiplier;          // informational only (multiplier = 1.0)
+  platoon: ContextMultiplier;           // composite — applied to score
+  park: ContextMultiplier;              // surface — already in cats
+  weather: ContextMultiplier;           // surface — already in cats
+  opp: ContextMultiplier;               // surface — already in cats
+  confidence: { level; reason; band };
+}
+```
+
+Per-engine tier vocabularies (pitcher: ace/tough/avg/weak/bad; batter: great/good/neutral/poor/bad) reflect that "ace" carries pitcher-specific meaning. Tier is always derived from `score` via a single classifier per engine — `batterTierFromScore` in `batterRating.ts`, `tierFromScore` in `pitching/rating.ts` — no separate rule-based tier system.
+
+**Composite vs surface enforcement.** The split is enforced by *which fields the composite formula multiplies*. As of 2026-05, that's `platoon` on both sides plus `opportunity` on batter. Everything else is surface (already folded in at the per-PA layer; rendered in the breakdown panel for transparency).
+
+There's a third pitcher rating shape — `PitcherStreamingRating` — produced by `scorePitcher()` in [pitching/scoring.ts](../src/lib/pitching/scoring.ts). It wraps `getPitcherRating` and reshapes the output into the table-shaped form the streaming board consumes (0–1 score scale for back-compat with table widgets; `subScore` per category instead of `expected`/`normalized`/`betterIs`). The streaming board, today-page pitcher rows, and the pitcher `ScoreBreakdownPanel` all consume that shape, not `PitcherRating` directly.
+
+### Target shape (not yet implemented)
+
+The originally-planned unified `Rating` discriminated union (engine: 'batter' | 'pitcher', composite/surface multiplier maps) was specified but never adopted by the engines. See [history.md](./history.md#2026-05--rating-unification-orphan-canonical-module-removed) for the deletion of the orphan canonical module. Future work to actually unify the shapes would touch every rating consumer; until then, the current per-engine shapes are load-bearing.
 
 ## The `MatchupContext` shape
 

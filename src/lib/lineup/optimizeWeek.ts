@@ -2,7 +2,8 @@ import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { RosterPositionSlot } from '@/lib/hooks/useRosterPositions';
 import type { MLBGame, ParkData, PlayerStatLine } from '@/lib/mlb/types';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
-import { getBatterRating, type Focus } from '@/lib/mlb/batterRating';
+import { getBatterRating } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { optimizeLineup } from './optimize';
 

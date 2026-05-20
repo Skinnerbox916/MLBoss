@@ -25,7 +25,7 @@
 import type { ProbablePitcher, ParkData, GameWeather, EnrichedGame } from '@/lib/mlb/types';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import { buildGameForecast, type ContextMultiplier } from './forecast';
 import {
   getPitcherRating as ratingV2,
@@ -108,7 +108,7 @@ export interface PillInput {
 
 export type PitcherRatingMultiplier = ContextMultiplier;
 
-export interface PitcherCategoryContribution {
+export interface StreamingCategoryRow {
   statId: number;
   goal: StreamGoal;
   label: string;
@@ -144,7 +144,7 @@ export interface PitcherStreamingRating {
   velocity: PitcherRatingMultiplier;
   platoon: PitcherRatingMultiplier;
   credibility: PitcherCredibility;
-  categories: PitcherCategoryContribution[];
+  categories: StreamingCategoryRow[];
   /** Tier derived from the canonical score via `tierFromScore`. */
   tier: RatingTier;
   confidence: { level: 'high' | 'medium' | 'low'; reason: string; band: number };
@@ -239,7 +239,7 @@ export function scorePitcher(input: PillInput): PitcherStreamingRating {
   const cats = scoredCategories ?? DEFAULT_SCORED_CATS;
   const canonical = ratingV2({ forecast, scoredCategories: cats, focusMap: focusMap ?? {} });
 
-  const tableCats: PitcherCategoryContribution[] = canonical.categories.map(c => {
+  const tableCats: StreamingCategoryRow[] = canonical.categories.map(c => {
     // Map stat_id → StreamGoal. If the rating layer added a category we
     // haven't registered here, fall back to the rating layer's own label
     // for both `goal` and `label` — this keeps the breakdown panel honest
@@ -355,7 +355,7 @@ export function getStreamPills(input: PillInput): StreamPill[] {
   const rating = scorePitcher({ ...input, focusMap: {}, scoredCategories: undefined });
   if (rating.confidence.level === 'low') return pills;
 
-  const byGoal = new Map<StreamGoal, PitcherCategoryContribution>();
+  const byGoal = new Map<StreamGoal, StreamingCategoryRow>();
   for (const c of rating.categories) byGoal.set(c.goal, c);
 
   for (const goal of STREAM_PILL_GOALS) {

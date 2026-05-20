@@ -7,7 +7,7 @@ import {
 } from '@/lib/pitching/display';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 
 interface ScoreBreakdownPanelProps {
   c: ScoredPitcherCtx;

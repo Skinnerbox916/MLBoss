@@ -10,7 +10,7 @@ import type { PitcherTalent } from './talent';
 import { buildGameForecast } from './forecast';
 import { getPitcherRating, type PitcherRating } from './rating';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedGame } from '@/lib/mlb/types';
 
 /**

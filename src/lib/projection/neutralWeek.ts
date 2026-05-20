@@ -23,7 +23,8 @@
 import { buildNeutralGame } from '@/lib/pitching/roster';
 import { buildGameForecast } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
-import { getBatterRating, type Focus } from '@/lib/mlb/batterRating';
+import { getBatterRating } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { MatchupContext } from '@/lib/mlb/matchupContext';
 import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';

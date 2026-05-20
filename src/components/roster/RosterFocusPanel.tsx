@@ -9,7 +9,7 @@ import {
   assignFocusForBattingSide,
   type BattingFocusPlan,
 } from '@/lib/league/forwardFocus';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { SuggestedFocus } from '@/lib/matchup/analysis';
 import {
   FocusSectionTrio,

@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import Panel from '@/components/ui/Panel';
 import Badge from '@/components/ui/Badge';
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 import type { WeekBatterScore } from '@/lib/hooks/useWeekBatterScores';
 import type { FAStreamingValue, SlotAwarePerDay } from '@/lib/projection/slotAware';
 import type { PerDayProjection } from '@/lib/projection/batterTeam';

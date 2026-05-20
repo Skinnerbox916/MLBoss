@@ -27,7 +27,7 @@ import type {
  *    a reasonable first cut; we'll bring pitching into v2 later.
  */
 
-import type { Focus } from '@/lib/mlb/batterRating';
+import type { Focus } from '@/lib/rating/focus';
 
 /**
  * Anchor: user is currently rank 1 or 2 in the cat. In H2H weekly play,

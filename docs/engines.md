@@ -53,6 +53,7 @@ Vacuum-level player skill. No game context.
 Talent × game context. Per-PA and per-game adjustments.
 
 - Pitcher game forecast (`buildGameForecast`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts)
+- Batter per-PA forecast (`buildBatterForecast`) — [src/lib/mlb/batterForecast.ts](../src/lib/mlb/batterForecast.ts)
 - BB compounding penalty (`bbCompoundingPenalty`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts)
 - Park adjustment (`getParkAdjustment`) — [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)
 - Weather score (`getWeatherScore`) — [src/lib/mlb/analysis.ts](../src/lib/mlb/analysis.ts)

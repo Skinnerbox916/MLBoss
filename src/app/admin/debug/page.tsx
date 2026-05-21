@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { getSession } from '@/lib/auth';
 import APIHealthPanel from './APIHealthPanel';
 import RosterDebugPanel from './RosterDebugPanel';

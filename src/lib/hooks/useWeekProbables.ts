@@ -11,6 +11,25 @@ export interface DayProbables {
   starts: MatchedProbable[];
 }
 
+// Game statuses that mean the SP has either already pitched their game or
+// the game won't happen today. Used to drop today's already-completed
+// starts from the "remaining" count and today-strip dot — otherwise a
+// finished 1pm game still inflates oppRemaining at 6pm and the IP gap
+// looks wrong. Past-day games are intentionally NOT filtered (the day
+// strip shows past counts as informational), and future-day games are
+// always scheduled.
+const COMPLETED_TODAY_STATUSES = new Set([
+  'Final',
+  'Game Over',
+  'Completed Early',
+  'Postponed',
+  'Cancelled',
+  'Forfeit',
+]);
+function isGameDoneForToday(status: string): boolean {
+  return COMPLETED_TODAY_STATUSES.has(status) || status.startsWith('Suspended');
+}
+
 interface UseWeekProbablesResult {
   /** Mon..Sun, exactly seven entries. */
   days: WeekDay[];
@@ -71,20 +90,22 @@ export function useWeekProbables(
 
   const myStarts: DayProbables[] = useMemo(
     () =>
-      days.map((day, i): DayProbables => ({
-        day,
-        starts: matchProbableStarts(myRoster, dayResults[i].games as EnrichedGame[]),
-      })),
+      days.map((day, i): DayProbables => {
+        const games = dayResults[i].games as EnrichedGame[];
+        const matchGames = day.isToday ? games.filter(g => !isGameDoneForToday(g.status)) : games;
+        return { day, starts: matchProbableStarts(myRoster, matchGames) };
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [days, myRoster, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games],
   );
 
   const oppStarts: DayProbables[] = useMemo(
     () =>
-      days.map((day, i): DayProbables => ({
-        day,
-        starts: matchProbableStarts(oppRoster, dayResults[i].games as EnrichedGame[]),
-      })),
+      days.map((day, i): DayProbables => {
+        const games = dayResults[i].games as EnrichedGame[];
+        const matchGames = day.isToday ? games.filter(g => !isGameDoneForToday(g.status)) : games;
+        return { day, starts: matchProbableStarts(oppRoster, matchGames) };
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [days, oppRoster, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games],
   );

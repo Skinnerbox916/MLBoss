@@ -168,6 +168,21 @@ No shared table component exists yet — follow these conventions when building 
 ### Alert/Warning Display
 `LineupIssuesCard` pattern: colored left border (3px) + icon + message. Error = red border, warning = accent border.
 
+### App Shell (responsive)
+
+The app chrome (logo, primary nav, account drawer) lives in [`src/components/layout/`](../src/components/layout/) and switches presentation at the `md` (768px) breakpoint:
+
+- **Desktop (`md+`)** — [`DesktopSidebar`](../src/components/layout/DesktopSidebar.tsx): collapsible left rail with logo, nav, and account trigger. Persists `sidebarOpen` to `localStorage`.
+- **Mobile (`<md`)** — [`MobileChrome`](../src/components/layout/MobileChrome.tsx): slim top bar (logo + account trigger) + bottom tab bar (5 destinations, icon + label). Reclaims the full viewport width for content.
+
+Both presentations consume the **same** [`navigation`](../src/components/layout/navigation.ts) array — never duplicate the list. Both anchor the same `AccountMenuContent` panel so the menu can't drift between form factors.
+
+The shell is composed by [`AppLayout`](../src/components/layout/AppLayout.tsx), which is a vertical flex column: `[MobileTopBar, {children's <main>}, MobileBottomNav]`. The mobile bars are `md:hidden` so on desktop the column collapses to just the page's `<main>`. **Pages do not need to know about the mobile bars** — they keep rendering `<main className="flex-1 overflow-y-auto bg-background">` as today; the flex column handles spacing automatically.
+
+When adding a primary destination: add it to `navigation.ts` and it shows up in both places. The bottom tab bar is sized for 5 items (per iOS HIG / Material guidance). If you need a 6th destination, fold it into an existing page or move overflow behind a "More" tab — do not let the bottom bar grow past 5.
+
+**Optimistic active state.** Both nav surfaces use [`usePendingNav`](../src/components/layout/usePendingNav.ts) so the tapped item highlights immediately, even if the destination page is slow to resolve. `usePathname()` doesn't update until the new route commits, so without this the tap looks ignored on slow loads. Any new nav surface should consume the same hook — call `markPending(href)` in `onClick` and use `isActiveOrPending(href)` for the active class. Note this does not help when the main thread is fully blocked (clicks queue regardless); that requires a perf fix on the page, not a nav fix.
+
 ## Anti-Patterns (Don't Do These)
 
 - **Don't create new pill/tag/chip components.** Use `Badge`.
@@ -181,6 +196,8 @@ No shared table component exists yet — follow these conventions when building 
 - **Don't add a new color system.** Use the semantic colors: `primary`, `accent`, `success`, `error`, `muted-foreground`. See `docs/design-system.md`.
 - **Don't create new loading states.** Use `Skeleton` or `DashboardCard`'s built-in `isLoading`.
 - **Don't duplicate tier/verdict color logic.** The pattern is: `success` = good/winning/strong, `error` = bad/losing/weak, `accent` = neutral/notable, `muted` = unknown/inactive.
+- **Don't add a second navigation list** for mobile. Both the desktop sidebar and mobile bottom nav read from `src/components/layout/navigation.ts`. Adding/removing a primary destination = one line in that file.
+- **Don't grow the mobile bottom tab bar past 5 items.** Fold destinations into existing pages or add a "More" sheet — labels stop fitting around 6 items on small phones.
 
 ## When You Actually Need Something New
 

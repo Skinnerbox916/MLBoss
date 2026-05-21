@@ -1,71 +1,62 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
-import { type IconType } from 'react-icons';
-import { GiBaseballGlove, GiThrowingBall } from 'react-icons/gi';
-import { FiHome, FiUsers, FiSettings, FiList, FiChevronLeft, FiChevronRight, FiUser, FiLogOut } from 'react-icons/fi';
-import Icon from '@/components/Icon';
-import { cn } from '@/lib/utils';
-import { Text } from '@/components/typography';
+import DesktopSidebar from './DesktopSidebar';
+import { MobileTopBar, MobileBottomNav } from './MobileChrome';
 
-interface NavItem {
-  name: string;
-  href: string;
-  icon: IconType;
-}
+const SIDEBAR_OPEN_KEY = 'sidebarOpen';
 
-const navigation: NavItem[] = [
-  { name: 'Dashboard', href: '/dashboard', icon: FiHome },
-  { name: 'Lineup', href: '/lineup', icon: FiList },
-  { name: 'Streaming', href: '/streaming', icon: GiThrowingBall },
-  { name: 'Roster', href: '/roster', icon: FiUsers },
-  { name: 'League', href: '/league', icon: GiBaseballGlove },
-];
-
+// App shell. Owns layout state (sidebar collapse, account drawer, logout)
+// and composes the desktop sidebar (md+) with the mobile chrome (<md).
+// Page content is the middle child of the vertical flex column and keeps
+// its own `<main>` with `overflow-y-auto`, so scroll stays inside content
+// regardless of whether the mobile bars are present.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-    // Initialize from localStorage if available, default to true if not
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('sidebarOpen');
-      return saved ? JSON.parse(saved) : true;
-    }
-    return true;
-  });
+  // Default to `true` so SSR and the client's first render agree. The saved
+  // value is restored in the effect below — reading localStorage during
+  // render causes a hydration mismatch (server sees window=undefined → true,
+  // client sees the actual saved value).
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  // Update localStorage when sidebar state changes
+  // Restore saved sidebar state on mount. The width transition is suppressed
+  // until the next frame so the restoration is instant — otherwise users with
+  // a collapsed sidebar would see a 300ms expand→collapse on every page load.
   useEffect(() => {
-    localStorage.setItem('sidebarOpen', JSON.stringify(isSidebarOpen));
-  }, [isSidebarOpen]);
+    try {
+      const saved = localStorage.getItem(SIDEBAR_OPEN_KEY);
+      if (saved !== null) setIsSidebarOpen(JSON.parse(saved));
+    } catch {
+      /* localStorage unavailable or malformed — fall back to default */
+    }
+    const raf = requestAnimationFrame(() => setIsHydrated(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
-  // Close account drawer when clicking outside
+  useEffect(() => {
+    if (!isHydrated) return;
+    localStorage.setItem(SIDEBAR_OPEN_KEY, JSON.stringify(isSidebarOpen));
+  }, [isSidebarOpen, isHydrated]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (isAccountOpen && !(event.target as Element).closest('.account-drawer')) {
         setIsAccountOpen(false);
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isAccountOpen]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
-    
     try {
       const response = await fetch('/api/auth/logout', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
-
       if (response.ok) {
         window.location.href = '/';
       } else {
@@ -77,215 +68,42 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const toggleSidebar = () => setIsSidebarOpen((v: boolean) => !v);
+  const toggleAccount = () => setIsAccountOpen((v) => !v);
+  const closeAccount = () => setIsAccountOpen(false);
+
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar */}
-      <div className={`${isSidebarOpen ? 'w-48' : 'w-16'} bg-surface shadow-lg transition-all duration-300 relative`}>
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className={`flex items-center justify-center border-b border-border transition-all duration-300 ${isSidebarOpen ? 'h-32 px-4' : 'h-16 px-2'}`}>
-            <Link href="/dashboard">
-              {isSidebarOpen ? (
-                <Image
-                  src="/assets/mlboss-logo-light.svg"
-                  alt="MLBoss Logo"
-                  width={128}
-                  height={128}
-                  priority
-                  className="h-24 w-auto transition-all duration-300 transform-gpu"
-                  style={{ transformOrigin: 'center' }}
-                />
-              ) : (
-                <Image
-                  src="/assets/mlboss-icon-light.svg"
-                  alt="MLBoss Icon"
-                  width={32}
-                  height={32}
-                  priority
-                  className="w-8 h-8 object-contain transition-all duration-300 transform-gpu"
-                  style={{ transformOrigin: 'center' }}
-                />
-              )}
-            </Link>
-          </div>
+    <div className="flex h-dvh bg-background">
+      <DesktopSidebar
+        isSidebarOpen={isSidebarOpen}
+        isHydrated={isHydrated}
+        onToggle={toggleSidebar}
+        isAccountOpen={isAccountOpen}
+        onAccountToggle={toggleAccount}
+        onAccountClose={closeAccount}
+        onLogout={handleLogout}
+        isLoggingOut={isLoggingOut}
+      />
 
-          {/* Navigation */}
-          <nav aria-label="Primary" className="flex-1 px-2 py-4 space-y-1">
-            {navigation.map((item) => {
-              const isActive = pathname === item.href;
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  role="menuitem"
-                  title={item.name}
-                  className={cn(
-                    'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
-                    isActive
-                      ? 'bg-accent/10 text-accent-foreground dark:bg-accent/20 border-l-4 border-accent'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                    !isSidebarOpen && 'justify-center'
-                  )}
-                >
-                  <Icon 
-                    icon={item.icon} 
-                    size={18}
-                    className={cn(
-                      'flex-shrink-0',
-                      isActive ? 'text-accent' : 'group-hover:text-foreground'
-                    )} 
-                  />
-                  {isSidebarOpen && (
-                    <span className="font-body text-sm font-semibold truncate">
-                      {item.name}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* Account Section */}
-          <div className="border-t border-border px-2 py-4">
-            <button
-              onClick={() => setIsAccountOpen(!isAccountOpen)}
-              className={cn(
-                'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors w-full',
-                isAccountOpen
-                  ? 'bg-accent/10 text-accent-foreground dark:bg-accent/20 border-l-4 border-accent'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                !isSidebarOpen && 'justify-center'
-              )}
-              title="Account"
-            >
-              <Icon 
-                icon={FiUser} 
-                size={18}
-                className={cn(
-                  'flex-shrink-0',
-                  isAccountOpen ? 'text-accent' : 'group-hover:text-foreground'
-                )} 
-              />
-              {isSidebarOpen && (
-                <span className="font-body text-sm font-semibold truncate">
-                  Account
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Floating Collapse Button */}
-        <button
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="absolute top-6 -right-3 w-6 h-6 bg-surface border border-border rounded-full shadow-md hover:shadow-lg transition-shadow flex items-center justify-center"
-          aria-label={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-        >
-          <Icon
-            icon={isSidebarOpen ? FiChevronLeft : FiChevronRight}
-            size={12}
-            className="text-muted-foreground"
-          />
-        </button>
-      </div>
-
-      {/* Account Drawer */}
-      <div 
-        className={cn(
-          'account-drawer fixed w-48 bg-surface shadow-xl border border-border rounded-lg transition-all duration-300 z-50',
-          isAccountOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
-        )}
-        style={{ 
-          left: isSidebarOpen ? '12.5rem' : '4.5rem',
-          bottom: '1rem',
-          transformOrigin: 'bottom left'
-        }}
-      >
-        <div className="flex flex-col">
-          {/* Drawer Header */}
-          <div className="px-4 py-3 border-b border-border">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-                <Icon icon={FiUser} size={16} className="text-primary" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">Yahoo User</p>
-                <Text variant="caption">Account</Text>
-              </div>
-            </div>
-          </div>
-
-          {/* Drawer Content */}
-          <div className="px-2 py-3 space-y-1">
-            {/* User Actions */}
-            <div className="mb-3">
-              <p className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                User
-              </p>
-              <Link
-                href="/settings"
-                className="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={() => setIsAccountOpen(false)}
-              >
-                <Icon icon={FiSettings} size={16} className="flex-shrink-0 group-hover:text-foreground" />
-                <span>Settings</span>
-              </Link>
-            </div>
-
-            {/* Admin Actions */}
-            <div className="mb-3">
-              <p className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Admin
-              </p>
-              <Link
-                href="/admin"
-                className={cn(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  pathname.startsWith('/admin')
-                    ? 'bg-secondary text-secondary-foreground'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )}
-                onClick={() => setIsAccountOpen(false)}
-              >
-                <Icon 
-                  icon={FiSettings} 
-                  size={16} 
-                  className={cn(
-                    'flex-shrink-0',
-                    pathname.startsWith('/admin') ? 'text-secondary-foreground' : 'group-hover:text-foreground'
-                  )} 
-                />
-                <span>Admin Panel</span>
-              </Link>
-            </div>
-
-            {/* Sign Out */}
-            <div className="pt-2 border-t border-border">
-              <button
-                onClick={handleLogout}
-                disabled={isLoggingOut}
-                className="group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors text-muted-foreground hover:bg-muted hover:text-foreground w-full disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Icon icon={FiLogOut} size={16} className="flex-shrink-0 group-hover:text-foreground" />
-                <span>{isLoggingOut ? 'Signing out...' : 'Sign out'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Overlay */}
       {isAccountOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/20 z-40"
-          onClick={() => setIsAccountOpen(false)}
+          onClick={closeAccount}
+          aria-hidden="true"
         />
       )}
 
-      {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        <MobileTopBar
+          isAccountOpen={isAccountOpen}
+          onAccountToggle={toggleAccount}
+          onAccountClose={closeAccount}
+          onLogout={handleLogout}
+          isLoggingOut={isLoggingOut}
+        />
         {children}
+        <MobileBottomNav />
       </div>
     </div>
   );
-} 
+}

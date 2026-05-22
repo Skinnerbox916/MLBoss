@@ -143,6 +143,18 @@ interface PitcherTalent {
   ipPerStart: number;
   gbRate: number;
 
+  // Role + reliever workload (L1 reliever signals)
+  //   role detection: GS > 0 (current or prior) → 'starter', else any
+  //   appearances → 'reliever', else 'inactive'. Driven by the OVERALL
+  //   season line (starts + relief), not the SP-filtered line.
+  //   appearancesPerWeek / ipPerAppearance are populated only for
+  //   relievers — null for starters and inactive pitchers. Bayesian-
+  //   blended against league means (~2.4 G/week, ~1.05 IP/G).
+  //   Consumed by L2 `buildReliefWeekForecast`.
+  role: 'starter' | 'reliever' | 'inactive';
+  appearancesPerWeek: number | null;
+  ipPerAppearance: number | null;
+
   // Health / decline (talent-level signals)
   fastballVelo: number | null;
   veloTrend: number | null;       // YoY mph delta

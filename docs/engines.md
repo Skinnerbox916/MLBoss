@@ -53,6 +53,7 @@ Vacuum-level player skill. No game context.
 Talent × game context. Per-PA and per-game adjustments.
 
 - Pitcher game forecast (`buildGameForecast`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts)
+- Reliever week forecast (`buildReliefWeekForecast`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts) — per-week IP/K/BB/HR rollup from `PitcherTalent.role === 'reliever'` signals (`appearancesPerWeek`, `ipPerAppearance`). No per-opponent context; the reliever-appearance mix over a week averages neutral.
 - Batter per-PA forecast (`buildBatterForecast`) — [src/lib/mlb/batterForecast.ts](../src/lib/mlb/batterForecast.ts)
 - BB compounding penalty (`bbCompoundingPenalty`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts)
 - Park adjustment (`getParkAdjustment`) — [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)
@@ -74,7 +75,7 @@ Forecast → per-game score. Both engines return an isomorphic `Rating` shape.
 Sum L3 outputs over a window. No new math.
 
 - Batter team projection (`projectBatterPlayer` / `projectBatterTeam`) — [src/lib/projection/batterTeam.ts](../src/lib/projection/batterTeam.ts)
-- Pitcher team projection (`projectPitcherPlayer` / `projectPitcherTeam`) — [src/lib/projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts)
+- Pitcher team projection (`projectPitcherPlayer` / `projectPitcherTeam`) — [src/lib/projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) — routes by `talent.role`: starters via `projectPitcherPlayer` (per probable-start), relievers via `projectRelieverPlayer` (per-week roll-up from L2 `buildReliefWeekForecast`). Team rollup returns `weeklySpIp` / `weeklyRpIp` / `weeklyIp`.
 - Lineup week optimizer (`optimizeWeek`) — [src/lib/lineup/optimizeWeek.ts](../src/lib/lineup/optimizeWeek.ts)
 - Pitcher week optimizer (`optimizePitcherWeek`) — [src/lib/lineup/optimizePitcherWeek.ts](../src/lib/lineup/optimizePitcherWeek.ts)
 - Slot-aware streaming (`streamingValue` per FA) — [src/lib/projection/slotAware.ts](../src/lib/projection/slotAware.ts)

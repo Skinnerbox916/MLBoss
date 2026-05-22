@@ -8,6 +8,31 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-05 — Boss Card pitcher block: daily start-count strip removed
+
+The Boss Card pitcher block used to show a Mon..Sun "day strip" with one circle per day, sized larger for "spike" days where one side had 3+ probable starts. The framing was head-to-head daily ("you have 1 Sunday, opp has 3"), and a `SPIKE_THRESHOLD = 3` constant in `WeekProgress.tsx` drove an emphasized visual.
+
+**Why it shipped:** the original Boss Brief design imagined that "Sunday spike" days were leverage moments where a manager could anticipate a swing in ratios.
+
+**Why we stopped:**
+1. **The framing didn't match the matchup.** Fantasy weeks settle on cumulative weekly totals, not daily counts. A manager doesn't win anything by having more starts on Sunday; they only win when their week-cumulative IP/K/QS lead at week's end. The daily head-to-head visual implied a competition that doesn't exist.
+2. **Relievers were invisible.** Counting probable starts ignored the IP from rostered RPs entirely — a roster with four bullpen arms looked identical to one with zero. The right primary signal is **expected IP remaining (SP + RP)**, not start count.
+3. **Multi-start days clustered illegibly.** A day with 4 SP probables rendered as `✓✓✓✓` jammed into a 20px column, breaking the 7-day visual rhythm and pushing day labels out of alignment with their indicators.
+4. **Today's already-concluded starts double-counted.** A finished 1pm game at 6pm still showed as "remaining" and inflated the count.
+
+**Replaced with:** a bare-IP headline (`~N IP left`) per side, sourced from L4 [`projectPitcherTeam`](../src/lib/projection/pitcherTeam.ts)'s `weeklyIp` (SP + RP). Today's already-concluded games filter out at the [`/api/projection/pitcher-team`](../src/app/api/projection/pitcher-team/route.ts) route via the shared [`isStartConcluded`](../src/lib/mlb/gameState.ts) helper. The SP/RP split lives on a hover-tooltip; per-day schedule context (when starts fall, multi-start days, etc.) moves to the streaming page's `DateStrip` / `StreamingBoard`, where it actually feeds pickup decisions.
+
+**Engine work that landed alongside:**
+- L1 `PitcherTalent` gained `role`, `appearancesPerWeek`, `ipPerAppearance`.
+- L2 [`buildReliefWeekForecast`](../src/lib/pitching/forecast.ts) — per-week IP/K/BB/HR rollup for relievers.
+- L4 `projectPitcherTeam` routes by `talent.role`, adds a `projectRelieverPlayer` per-reliever primitive, reports `weeklySpIp` / `weeklyRpIp` / `weeklyIp`.
+
+**Don't reintroduce:**
+- A start-count headline on the Boss Card pitcher block. Lead with projected IP — that's the cumulative-week signal that drives "can I catch up on K/W/QS".
+- A "spike" emphasis on daily start counts. The matchup isn't head-to-head daily.
+- A pure-SP IP projection that ignores rostered RPs. The reliever engine exists; consume it.
+- A today-completed filter applied only inside `useWeekProbables` — apply it at the projection route so all downstream consumers (corrected-margin pipeline, etc.) benefit. The 2026-05 first attempt to fix this inside the hook alone was reverted for that reason.
+
 ## 2026-05 — Batter L2/L3 split (`buildBatterForecast` extracted)
 
 The batter rating engine was one big function — `getBatterRating()` in `src/lib/mlb/batterRating.ts` inlined the entire per-PA forecast (via `applyMatchupModifier`) alongside the normalization, weighting, composite multipliers, tier mapping, and confidence aggregation. The pitcher side already had a clean two-layer split: `buildGameForecast` (L2 forecast) → `getPitcherRating` (L3 rating). The batter side documented the same architecture but didn't have it in code.

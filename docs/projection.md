@@ -10,8 +10,9 @@ Aggregation of per-game rating outputs over a time window. The window is usually
 |---|---|---|---|
 | `projectBatterPlayer` | [projection/batterTeam.ts](../src/lib/projection/batterTeam.ts) | Per-player per-day batter ratings, aggregated to weekly per-category expected counts | batter |
 | `projectBatterTeam` | [projection/batterTeam.ts](../src/lib/projection/batterTeam.ts) | Team-wide weekly counting-stat totals (sum of `projectBatterPlayer` across active roster) | batter |
-| `projectPitcherPlayer` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Per-start ratings aggregated across all probable starts in the pickup window | pitcher |
-| `projectPitcherTeam` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Team-wide pitcher-cat totals (sum of `projectPitcherPlayer` across rostered SPs) | pitcher |
+| `projectPitcherPlayer` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Per-start ratings aggregated across all probable starts in the pickup window | pitcher (SP) |
+| `projectRelieverPlayer` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Per-week rollup of L2 `buildReliefWeekForecast` (expected appearances, IP, K, BB, HR) spread into the per-cat projection map | pitcher (RP) |
+| `projectPitcherTeam` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Team-wide pitcher-cat totals — routes by `talent.role`, sums SP + RP into one `byCategory` map and reports separate `weeklySpIp` / `weeklyRpIp` / `weeklyIp` totals | pitcher |
 | `slotAware` / `streamingValue` | [projection/slotAware.ts](../src/lib/projection/slotAware.ts) | Per-FA week-long upgrade margin over the user's optimal baseline lineup | batter |
 | `optimizeWeek` | [lineup/optimizeWeek.ts](../src/lib/lineup/optimizeWeek.ts) | Per-day lineup-slot assignment for the user's batters over the matchup week | batter |
 | `optimizePitcherWeek` | [lineup/optimizePitcherWeek.ts](../src/lib/lineup/optimizePitcherWeek.ts) | Per-day pitcher slot decisions over the matchup week | pitcher |
@@ -90,12 +91,18 @@ Returns per-day breakdowns alongside the total so the UI can show "starts at 2B"
 | `GET /api/projection/batter-team?teamKey=&leagueKey=` | `useBatterTeamProjection` | Forward batter-cat projection for a team across the matchup week's remaining days | 5 min |
 | `GET /api/projection/pitcher-team?teamKey=&leagueKey=` | `usePitcherTeamProjection` | Forward pitcher-cat projection (counting cats: K, W, QS, IP) | 5 min |
 
-Both routes filter their input roster (active batters / non-IL pitchers), fan out per-day games via `getGameDay`, and run the corresponding `projectXxxTeam` engine. The pitcher-team route does name-based matching against probable starters in the day's slate via [`isLikelySamePlayer`](../src/lib/pitching/display.tsx) and bails on pitchers whose probable doesn't appear (relievers naturally fall out — they don't probable-start).
+Both routes filter their input roster (active batters / non-IL pitchers), fan out per-day games via `getGameDay`, and run the corresponding `projectXxxTeam` engine.
+
+The pitcher-team route additionally resolves each rostered pitcher to an MLB ID and computes their full `PitcherTalent` (SP-filtered current+prior season lines from [`getPitcherSeasonLines`](../src/lib/mlb/players.ts), plus overall current+prior lines from [`getPitcherOverallLines`](../src/lib/mlb/players.ts), plus current+prior Savant). Talent is passed on `ActivePitcher.talent` so the engine can dispatch by `role`:
+- starters match against probable starters in the day's slate via [`isLikelySamePlayer`](../src/lib/pitching/display.tsx) — pitchers with no probable contribute 0 to the SP path
+- relievers go through [`buildReliefWeekForecast`](../src/lib/pitching/forecast.ts) once per pitcher for the remaining-day window
+
+Today's already-concluded games are filtered out of the per-day slate before projection via the shared [`isStartConcluded`](../src/lib/mlb/gameState.ts) helper — otherwise a finished 1pm game double-counts the SP's expected IP against the cap at 7pm.
 
 `useCorrectedMatchupAnalysis` runs four projections in parallel (my + opp × batter + pitcher counting cats), merges the per-cat projection records into one map per side, and hands them to `composeCorrectedRows`. See [recommendation-system.md](./recommendation-system.md) for what happens after.
 
 ## Limitations
 
-- **SV / HLD / L are not modeled.** No relief-pitcher engine yet. Pitcher projections cover SP only.
+- **SV / HLD / L are not modeled for relievers.** The L1 reliever signals (`appearancesPerWeek`, `ipPerAppearance`) plus L2 `buildReliefWeekForecast` cover **IP, K, BB, HR (WHIP-numerator)** for relievers, summed into the team projection. Wins, holds, and saves require bullpen role tagging (closer / setup / long man) we don't ingest yet — `projectRelieverPlayer` leaves those at zero. Add when streaming-board reliever ranking lands.
 - **K/9 / BB/9 / H/9 stay matchup-to-date-only at the matchup margin.** We don't project these separately; ERA and WHIP do blend (mid-week IP-weighted, or pure-projection on the Sunday pivot). Rate fidelity for the per-9 variants stays at the per-FA per-start view (`scorePitcher`). See [streaming-page.md](./streaming-page.md#pitcher-k9--bb9--h9-are-matchup-to-date-only) for rationale.
 - **Team offense for multi-day starts.** Pitcher tab fetches `useTeamOffense` keyed by tomorrow's slate (D+1) team ids. Multi-day starts against teams not on tomorrow's slate degrade the forecast to neutral opp context. Revisit if rankings feel off mid-week.

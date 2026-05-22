@@ -59,12 +59,14 @@ export default function BossCard() {
   const myStandings = standings.find(s => s.team_key === teamKey);
   const oppStandings = standings.find(s => s.team_key === opponent?.team_key);
 
+  // Still fetched for the Boss Brief synthesis (which talks about
+  // "X starts left vs Y" style narration). The WeekProgress block
+  // itself no longer renders per-day starts.
   const {
     myStarts,
     oppStarts,
     myRemaining,
     oppRemaining,
-    isLoading: probablesLoading,
   } = useWeekProbables(teamKey, opponent?.team_key);
 
   // SP + RP IP projection per team — feeds the headline "IP left" number
@@ -204,11 +206,9 @@ export default function BossCard() {
           />
           <div className="pt-2 border-t border-border-muted">
             <WeekProgress
-              myStarts={myStarts}
-              oppStarts={oppStarts}
               myProjection={myProjection}
               oppProjection={oppProjection}
-              isLoading={probablesLoading || myProjLoading || oppProjLoading}
+              isLoading={myProjLoading || oppProjLoading}
               limits={limits}
               myUsedIp={myUsedIp}
               myUsedGs={myUsedGs}

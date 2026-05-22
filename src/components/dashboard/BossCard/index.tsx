@@ -7,6 +7,7 @@ import { useStandings } from '@/lib/hooks/useStandings';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useLeagueLimits } from '@/lib/hooks/useLeagueLimits';
 import { useWeekProbables } from '@/lib/hooks/useWeekProbables';
+import { usePitcherTeamProjection } from '@/lib/hooks/usePitcherTeamProjection';
 import { buildMatchupRows, tallyMatchupRows } from '@/components/shared/matchupRows';
 import { analyzeMatchup } from '@/lib/matchup/analysis';
 import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
@@ -65,6 +66,14 @@ export default function BossCard() {
     oppRemaining,
     isLoading: probablesLoading,
   } = useWeekProbables(teamKey, opponent?.team_key);
+
+  // SP + RP IP projection per team — feeds the headline "IP left" number
+  // and the SP/RP breakdown subline in the pitcher block. Independent
+  // SWR caches per teamKey; both calls fire in parallel.
+  const { projection: myProjection, isLoading: myProjLoading } =
+    usePitcherTeamProjection(teamKey, leagueKey);
+  const { projection: oppProjection, isLoading: oppProjLoading } =
+    usePitcherTeamProjection(opponent?.team_key, leagueKey);
 
   const { battingRows, pitchingRows, wins, losses, ties, myUsedIp, myUsedGs, oppUsedIp, oppUsedGs } = useMemo(() => {
     if (!userTeam?.stats || !opponent?.stats) {
@@ -197,9 +206,9 @@ export default function BossCard() {
             <WeekProgress
               myStarts={myStarts}
               oppStarts={oppStarts}
-              myRemaining={myRemaining}
-              oppRemaining={oppRemaining}
-              isLoading={probablesLoading}
+              myProjection={myProjection}
+              oppProjection={oppProjection}
+              isLoading={probablesLoading || myProjLoading || oppProjLoading}
               limits={limits}
               myUsedIp={myUsedIp}
               myUsedGs={myUsedGs}

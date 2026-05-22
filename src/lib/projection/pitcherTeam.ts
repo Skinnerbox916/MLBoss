@@ -2,11 +2,11 @@
  * Forward pitcher projection engine.
  *
  * Mirrors `batterTeam.ts` for the pitcher side. The unit of work is a
- * **probable start**, not "every day" — a pitcher with two starts in the
- * pickup window contributes twice; a pitcher with no scheduled starts
- * contributes zero. Aggregation is summed across starts so two-start
- * pitchers naturally outrank single-start pitchers of equal per-start
- * quality (the deliberate streaming-decision bias the user wants).
+ * **probable start** for starters and an **expected appearance** for
+ * relievers — both summed over the matchup-week's remaining days. A
+ * starter with two starts contributes twice; a reliever with ~2.5
+ * appearances/week contributes proportionally to the remaining-day
+ * window. Pitchers with no scheduled contribution drop out cleanly.
  *
  * Used in three places, same shape as the batter side:
  *   1. Project my team's expected pitcher-cat output for the rest of the week
@@ -14,18 +14,20 @@
  *   3. Project free-agent SP candidates for the streaming board
  *
  * Per start the engine uses Layer-2 `buildGameForecast` and Layer-3
- * `getPitcherRating` directly — same primitives the streaming-board
- * single-day score uses, just summed across the window. No new talent
- * math here.
+ * `getPitcherRating` directly; per reliever-week it uses Layer-2
+ * `buildReliefWeekForecast` and rolls into the same `byCategory`
+ * shape. No new talent math at this layer.
  *
- * Limitations (deliberate, per design discussion):
- *   - SV / HLD / L are not modeled (no relief-pitcher engine yet).
+ * Limitations (deliberate):
+ *   - SV / HLD / L are not modeled for relievers yet — requires bullpen
+ *     role tagging we don't ingest. Add when the streaming-board
+ *     reliever tab needs it.
  *   - Ratio-cat numerator/denom is aggregated for completeness but the
  *     corrected-margin pipeline reads only counting cats; ratio fidelity
  *     stays at the per-FA `scorePitcher` per-start view.
  */
 
-import { buildGameForecast } from '@/lib/pitching/forecast';
+import { buildGameForecast, buildReliefWeekForecast } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
 import { isLikelySamePlayer, normalizeTeamAbbr } from '@/lib/pitching/display';
 import type { Focus } from '@/lib/rating/focus';
@@ -34,6 +36,7 @@ import type { TeamOffense } from '@/lib/mlb/teams';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { WeekDay } from '@/lib/dashboard/weekRange';
 import type { PitcherRating } from '@/lib/pitching/rating';
+import type { PitcherTalent } from '@/lib/pitching/talent';
 import type { PerCategoryProjection } from './batterTeam';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +78,12 @@ export interface ActivePitcher {
   mlbId: number;
   name: string;
   teamAbbr: string;
+  /** Optional pre-resolved talent. The SP path can omit this — the
+   *  engine reads talent off the probable-pitcher object stamped on
+   *  each day's slate. The RP path REQUIRES this: relievers don't
+   *  appear on probable-pitcher lists, so the only way to project
+   *  them is via talent passed in directly. */
+  talent?: PitcherTalent | null;
 }
 
 export interface PitcherProjectionDeps {
@@ -145,11 +154,34 @@ export interface PitcherPlayerProjection {
   byCategory: Map<number, PerCategoryProjection>;
 }
 
+export interface RelieverPlayerProjection {
+  mlbId: number;
+  name: string;
+  teamAbbr: string;
+  /** Expected appearances over the projection window (e.g. 1.4 = 1-2
+   *  outings across remaining days). */
+  expectedAppearances: number;
+  /** Expected IP over the projection window — the headline number that
+   *  rolls into the Boss Card "IP left" total. */
+  weeklyIP: number;
+  /** Per-cat counting projections (K mostly; W/HLD/SV deliberately
+   *  unmodeled until bullpen roles arrive). */
+  byCategory: Map<number, PerCategoryProjection>;
+}
+
 export interface PitcherTeamProjection {
-  /** Sum over pitchers for each scored cat. */
+  /** Sum over starters AND relievers for each scored cat. The Boss Card
+   *  reads IP and K from here without caring which role contributed. */
   byCategory: Map<number, PerCategoryProjection>;
   perPitcher: PitcherPlayerProjection[];
-  /** Number of distinct pitchers that contributed at least one start. */
+  perReliever: RelieverPlayerProjection[];
+  /** Total IP across all SP contributions in the window. */
+  weeklySpIp: number;
+  /** Total IP across all RP contributions in the window. */
+  weeklyRpIp: number;
+  /** Sum of SP and RP IP. Equal to `byCategory[STAT_ID_IP].expectedCount`. */
+  weeklyIp: number;
+  /** Number of distinct pitchers (any role) that contributed > 0 IP. */
   contributorCount: number;
 }
 
@@ -327,29 +359,108 @@ export function projectPitcherPlayer(
 }
 
 // ---------------------------------------------------------------------------
+// Per-reliever primitive
+// ---------------------------------------------------------------------------
+
+/**
+ * Project one reliever across the supplied days. Delegates the per-week
+ * math to `buildReliefWeekForecast` (L2) — this function's only job is
+ * to spread the forecast across the per-cat projection map so the
+ * team aggregator and the corrected-margin pipeline read it uniformly
+ * with starter contributions.
+ *
+ * Caller MUST supply `pitcher.talent` with `role === 'reliever'`. The
+ * function returns an all-zero projection (no contribution) for any
+ * pitcher missing talent or whose talent isn't reliever-classified.
+ */
+export function projectRelieverPlayer(
+  pitcher: ActivePitcher,
+  deps: PitcherProjectionDeps,
+): RelieverPlayerProjection {
+  const empty: RelieverPlayerProjection = {
+    mlbId: pitcher.mlbId,
+    name: pitcher.name,
+    teamAbbr: pitcher.teamAbbr,
+    expectedAppearances: 0,
+    weeklyIP: 0,
+    byCategory: new Map(),
+  };
+  const talent = pitcher.talent ?? null;
+  if (!talent || talent.role !== 'reliever') return empty;
+
+  // Days remaining in the projection window. The route filters today's
+  // already-concluded games out at the per-day games map (via
+  // `isStartConcluded`) but for the reliever window we count today as
+  // a full day if any games remain — relievers can still appear in
+  // late games even after a 1pm SP start has finished.
+  const daysRemaining = deps.days.length;
+  if (daysRemaining === 0) return empty;
+
+  const f = buildReliefWeekForecast(talent, daysRemaining);
+
+  const byCategory = new Map<number, PerCategoryProjection>();
+
+  // Counting cats projected by the relief forecast. IP / K are direct;
+  // W / QS are deliberately left at 0 — wins for relievers are too
+  // bullpen-role-dependent to estimate without holds/saves modeling
+  // (which we haven't built). The corrected-margin pipeline reads
+  // these from the team rollup, so omitting W from relievers means
+  // the corrected W projection stays SP-driven (correct for now).
+  byCategory.set(STAT_ID_IP, {
+    statId: STAT_ID_IP,
+    expectedCount: f.expectedIp,
+    expectedDenom: f.expectedAppearances,
+  });
+  byCategory.set(STAT_ID_K, {
+    statId: STAT_ID_K,
+    expectedCount: f.expectedK,
+    expectedDenom: f.expectedIp,
+  });
+  // Ratio numerators for completeness (BB+H for WHIP, no ER for ERA —
+  // we don't model reliever ER without xERA-from-PA chain rebuilt for
+  // RPs; ERA stays SP-driven at the team rollup).
+  byCategory.set(STAT_ID_WHIP, {
+    statId: STAT_ID_WHIP,
+    expectedCount: f.expectedWhipNumerator,
+    expectedDenom: f.expectedIp,
+  });
+
+  return {
+    mlbId: pitcher.mlbId,
+    name: pitcher.name,
+    teamAbbr: pitcher.teamAbbr,
+    expectedAppearances: f.expectedAppearances,
+    weeklyIP: f.expectedIp,
+    byCategory,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Team aggregator
 // ---------------------------------------------------------------------------
 
 /**
- * Project a team's pitcher-cat output across the supplied days. Calls
- * `projectPitcherPlayer` per active SP and sums per-cat counts.
+ * Project a team's pitcher-cat output across the supplied days. Routes
+ * each pitcher by role:
+ *   - starter (or no talent supplied) → `projectPitcherPlayer` (probable-
+ *     start based, talent read off probable-pitcher object in slate)
+ *   - reliever → `projectRelieverPlayer` (per-week roll-up from L2)
  *
  * The caller is responsible for filtering `activePitchers` to actually
- * rostered, non-IL starting pitchers before passing them in. Relievers
- * pass through harmlessly — they just won't match as probable starters
- * on any day, so contribute nothing.
+ * rostered, non-IL pitchers and supplying `talent` on each one (so the
+ * engine can dispatch). When `talent` is missing, the pitcher is sent
+ * down the SP path and contributes only if they appear as a probable.
  */
 export function projectPitcherTeam(
   activePitchers: ActivePitcher[],
   deps: PitcherProjectionDeps,
 ): PitcherTeamProjection {
   const perPitcher: PitcherPlayerProjection[] = [];
+  const perReliever: RelieverPlayerProjection[] = [];
   const teamByCat = new Map<number, PerCategoryProjection>();
 
-  for (const pitcher of activePitchers) {
-    const proj = projectPitcherPlayer(pitcher, deps);
-    perPitcher.push(proj);
-    for (const [statId, cat] of proj.byCategory) {
+  const rollIntoTeam = (catMap: Map<number, PerCategoryProjection>) => {
+    for (const [statId, cat] of catMap) {
       const prior = teamByCat.get(statId);
       if (prior) {
         prior.expectedCount += cat.expectedCount;
@@ -358,11 +469,33 @@ export function projectPitcherTeam(
         teamByCat.set(statId, { ...cat });
       }
     }
+  };
+
+  for (const pitcher of activePitchers) {
+    if (pitcher.talent?.role === 'reliever') {
+      const proj = projectRelieverPlayer(pitcher, deps);
+      perReliever.push(proj);
+      rollIntoTeam(proj.byCategory);
+    } else {
+      const proj = projectPitcherPlayer(pitcher, deps);
+      perPitcher.push(proj);
+      rollIntoTeam(proj.byCategory);
+    }
   }
+
+  const weeklySpIp = perPitcher.reduce((s, p) => s + p.weeklyIP, 0);
+  const weeklyRpIp = perReliever.reduce((s, p) => s + p.weeklyIP, 0);
+  const contributorCount =
+    perPitcher.filter(p => p.expectedStarts > 0).length
+    + perReliever.filter(p => p.weeklyIP > 0).length;
 
   return {
     byCategory: teamByCat,
     perPitcher,
-    contributorCount: perPitcher.filter(p => p.expectedStarts > 0).length,
+    perReliever,
+    weeklySpIp,
+    weeklyRpIp,
+    weeklyIp: weeklySpIp + weeklyRpIp,
+    contributorCount,
   };
 }

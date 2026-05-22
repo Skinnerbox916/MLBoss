@@ -7,11 +7,16 @@ export {
   findGroup,
   aggregateLastN,
   parsePitchingLine,
+  parsePitchingOverallLine,
   aggregatePitcherRecentForm,
   parsePitcherAppearances,
 } from './playerStats';
 
-export type { PitcherSeasonLine, PitcherAppearance } from './playerStats';
+export type {
+  PitcherSeasonLine,
+  PitcherOverallLine,
+  PitcherAppearance,
+} from './playerStats';
 
 export {
   applyPitcherStatsLine,

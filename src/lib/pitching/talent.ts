@@ -27,7 +27,7 @@
  */
 
 import { computePitcherTalentXwobaAllowed, blendRate } from '@/lib/mlb/talentModel';
-import type { PitcherSeasonLine } from '@/lib/mlb/model';
+import type { PitcherOverallLine, PitcherSeasonLine } from '@/lib/mlb/model';
 import type { StatcastPitcher } from '@/lib/mlb/types';
 
 // ---------------------------------------------------------------------------
@@ -69,8 +69,27 @@ export interface PitcherTalent {
   /** Home runs per ball-in-play (HR / contact). Bayesian-blended against
    *  the league HR/contact rate (≈ .035) with a 200-BIP prior. */
   hrPerContact: number;
-  /** Average innings per start. Drives QS odds and total PA per game. */
+  /** Average innings per start. Drives QS odds and total PA per game.
+   *  For pure relievers this is essentially the league anchor (no
+   *  starts to learn from); use `ipPerAppearance` for their workload. */
   ipPerStart: number;
+  /** Role classification driven by current-season usage with prior-year
+   *  fallback. `starter` = has at least one current-season GS (or one
+   *  prior-season GS when current is empty); `reliever` = has appearances
+   *  but no starts in either season; `inactive` = no MLB appearances in
+   *  either season (rookie pre-debut, etc.). The relief projection path
+   *  (`buildReliefWeekForecast`) reads from this. */
+  role: 'starter' | 'reliever' | 'inactive';
+  /** Bayesian-blended appearances per calendar week. Null for `starter`
+   *  role (they're projected per probable start, not per appearance) and
+   *  for `inactive` (no usable sample). Anchored to a league-mean of
+   *  ~2.5 G/week for an average MLB reliever with a soft prior of
+   *  25 prior appearances of trust. */
+  appearancesPerWeek: number | null;
+  /** Bayesian-blended IP per appearance for relievers. Null for
+   *  `starter` / `inactive`. Anchored to a league mean of ~1.05 IP/G
+   *  (typical one-inning RP) with a soft 30-G prior. */
+  ipPerAppearance: number | null;
   /** Ground-ball rate. Mediates HR-park vulnerability in `forecast.ts`:
    *  a 60%-GB arm gets half the HR-park bump; a 30%-GB arm gets the full
    *  bump. Maps gbRate ∈ [.30, .60] → gbBoost ∈ [0, 0.5], applied as
@@ -357,6 +376,24 @@ const LEAGUE_HR_PER_CONTACT_PRIOR_BIP = 200;
 const LEAGUE_IP_PER_START = 5.4;
 const LEAGUE_IP_PER_START_PRIOR_GS = 6;
 
+/** League-mean reliever workload anchors. Sourced from 2024 MLB season:
+ *  a typical RP makes ~62 G over ~180 calendar days = ~2.4 G/week, with
+ *  ~1.05 IP per appearance. Prior strengths are deliberately soft — a
+ *  reliever's pattern is volatile enough that we want the current
+ *  sample to dominate by mid-season. See [[reference-mlboss-deployment]]
+ *  for where this anchors the Boss Card "IP left" forecast. */
+const LEAGUE_RP_APPEARANCES_PER_WEEK = 2.4;
+const LEAGUE_RP_APPEARANCES_PRIOR_G = 25;
+const LEAGUE_RP_IP_PER_APPEARANCE = 1.05;
+const LEAGUE_RP_IP_PER_APPEARANCE_PRIOR_G = 30;
+
+/** Conventional regular-season span used to back out the "weeks elapsed
+ *  so far" for current-season pace calculations. MLB plays ~180 days
+ *  Mar→Oct, so an "average" current-season week of usage is
+ *  current_G / (days_since_opening_day / 7) — see `weeksElapsedThrough`. */
+const SEASON_OPENING_DAY_MONTH = 2;  // March (0-indexed)
+const SEASON_OPENING_DAY_DAY = 27;   // late March anchor
+
 /** League-average GB rate (anchor). */
 const LEAGUE_GB_RATE = 0.435;
 const LEAGUE_GB_PRIOR_PA = 150;
@@ -600,6 +637,21 @@ export interface ComputeTalentArgs {
   currentSavant: StatcastPitcher | null;
   /** Savant pitcher row, prior season. */
   priorSavant: StatcastPitcher | null;
+  /** Stats-API OVERALL line, current season (all appearances — starts +
+   *  relief). Drives role detection and the reliever workload signals
+   *  (`appearancesPerWeek`, `ipPerAppearance`). Optional — when null the
+   *  role falls back to GS-based inference from the starter lines and
+   *  reliever fields stay null. SP-only callers (schedule-time probable
+   *  enrichment) can omit this safely; the FA-pool and projection-route
+   *  paths supply it. */
+  currentOverall?: PitcherOverallLine | null;
+  /** Stats-API OVERALL line, prior season — same purpose. Falls back to
+   *  prior-season usage when current is too thin. */
+  priorOverall?: PitcherOverallLine | null;
+  /** Season day for current-season usage rate calculations. Lets the
+   *  reliever workload signal know how many calendar weeks of sample
+   *  the current `gamesPitched` is spread over. Defaults to "today". */
+  asOfDate?: Date;
 }
 
 /**
@@ -612,6 +664,9 @@ export function computePitcherTalent(args: ComputeTalentArgs): PitcherTalent {
     mlbId, throws, currentLine, priorLine,
     currentSavant, priorSavant,
   } = args;
+  const currentOverall = args.currentOverall ?? null;
+  const priorOverall = args.priorOverall ?? null;
+  const asOfDate = args.asOfDate ?? new Date();
 
   // ----- Regime-shift probe -----------------------------------------------
   // Detects when leading indicators (K%, BB%, whiff%, barrel%, velo) move
@@ -645,6 +700,21 @@ export function computePitcherTalent(args: ComputeTalentArgs): PitcherTalent {
 
   // ----- ipPerStart (Bayesian blend across current + prior + league) -----
   const ipPerStart = blendIpPerStart(currentLine, priorLine);
+
+  // ----- Role + reliever workload (overall lines, not starter-filtered) ---
+  // Role detection is binary (starter/reliever/inactive) based on whether
+  // the pitcher has any current-season starts (with prior-season fallback
+  // for IL stashes / late call-ups). Reliever workload signals are null
+  // for starters — the SP path projects via probable-starts, not via
+  // per-week appearance rate. See `buildReliefWeekForecast` for the
+  // forecast contract these fields satisfy.
+  const role = detectPitcherRole(currentOverall, priorOverall);
+  const appearancesPerWeek = role === 'reliever'
+    ? blendAppearancesPerWeek(currentOverall, priorOverall, asOfDate)
+    : null;
+  const ipPerAppearance = role === 'reliever'
+    ? blendIpPerAppearance(currentOverall, priorOverall)
+    : null;
 
   // ----- gbRate (Bayesian blend) ------------------------------------------
   const gbRate = blendGbRate(currentLine, priorLine);
@@ -761,6 +831,9 @@ export function computePitcherTalent(args: ComputeTalentArgs): PitcherTalent {
     contactXwoba,
     hrPerContact,
     ipPerStart,
+    role,
+    appearancesPerWeek,
+    ipPerAppearance,
     gbRate,
     fastballVelo,
     veloTrend,
@@ -851,6 +924,113 @@ function blendIpPerStart(
     priorCap: 30,
   });
   return blend.value;
+}
+
+/**
+ * Calendar weeks of regular-season play elapsed through `asOfDate`.
+ * Floored at 1.0 so a Day-1 sample doesn't divide by zero. Used to
+ * convert a reliever's current-season `gamesPitched` into a per-week
+ * rate for Bayesian blending against the league mean.
+ */
+function weeksElapsedThrough(asOfDate: Date): number {
+  const year = asOfDate.getFullYear();
+  const openingDay = new Date(year, SEASON_OPENING_DAY_MONTH, SEASON_OPENING_DAY_DAY);
+  const ms = asOfDate.getTime() - openingDay.getTime();
+  const weeks = ms / (1000 * 60 * 60 * 24 * 7);
+  return Math.max(1, weeks);
+}
+
+/**
+ * Reliever appearances per calendar week, Bayesian-blended toward the
+ * league reliever mean. Anchored to `LEAGUE_RP_APPEARANCES_PER_WEEK`
+ * with a soft prior of `LEAGUE_RP_APPEARANCES_PRIOR_G` games. Prior
+ * season is folded in as a second "current" with weight = its own G,
+ * capped to avoid a Cy-Young 2019 reliever still anchoring 2026.
+ *
+ * Returns null when neither current nor prior has any appearances —
+ * the role detector will classify this pitcher as `inactive` and
+ * downstream projections will skip them.
+ */
+function blendAppearancesPerWeek(
+  currentOverall: PitcherOverallLine | null,
+  priorOverall: PitcherOverallLine | null,
+  asOfDate: Date,
+): number | null {
+  const currentG = currentOverall?.gamesPitched ?? 0;
+  const priorG = priorOverall?.gamesPitched ?? 0;
+  if (currentG === 0 && priorG === 0) return null;
+
+  const currentWeeks = weeksElapsedThrough(asOfDate);
+  const currentRate = currentG > 0 ? currentG / currentWeeks : null;
+  // Prior-season pace assumes a full 26-week regular season as the
+  // denominator. 2-year-old data shouldn't dominate so cap prior
+  // weight at 40 G of trust.
+  const priorRate = priorG > 0 ? priorG / 26 : null;
+
+  const blend = blendRate({
+    current: currentRate,
+    currentN: currentG,
+    prior: priorRate,
+    priorN: priorG,
+    leagueMean: LEAGUE_RP_APPEARANCES_PER_WEEK,
+    leaguePriorN: LEAGUE_RP_APPEARANCES_PRIOR_G,
+    priorCap: 40,
+  });
+  return blend.value;
+}
+
+/**
+ * Reliever IP per appearance, Bayesian-blended toward the league mean
+ * for one-inning relievers. Long men / multi-inning arms float above
+ * the mean once sample warrants; closers and one-out specialists float
+ * below. Falls back to null only when there are no appearances at all.
+ */
+function blendIpPerAppearance(
+  currentOverall: PitcherOverallLine | null,
+  priorOverall: PitcherOverallLine | null,
+): number | null {
+  const currentG = currentOverall?.gamesPitched ?? 0;
+  const priorG = priorOverall?.gamesPitched ?? 0;
+  if (currentG === 0 && priorG === 0) return null;
+
+  const currentRate = currentG > 0 ? (currentOverall!.ip / currentG) : null;
+  const priorRate = priorG > 0 ? (priorOverall!.ip / priorG) : null;
+
+  const blend = blendRate({
+    current: currentRate,
+    currentN: currentG,
+    prior: priorRate,
+    priorN: priorG,
+    leagueMean: LEAGUE_RP_IP_PER_APPEARANCE,
+    leaguePriorN: LEAGUE_RP_IP_PER_APPEARANCE_PRIOR_G,
+    priorCap: 50,
+  });
+  return blend.value;
+}
+
+/**
+ * Role detector. Order of precedence:
+ *   1. Current-season GS > 0 → starter.
+ *   2. Current-season any appearance with GS = 0 → reliever.
+ *   3. No current sample; prior-season GS > 0 → starter (probable
+ *      starter stashed on IL / not yet returned).
+ *   4. No current sample; prior-season any appearance → reliever.
+ *   5. No usable sample either season → inactive.
+ *
+ * Binarizes swingmen by the current-season majority. Refine when a
+ * proper "swingman" role lands.
+ */
+function detectPitcherRole(
+  currentOverall: PitcherOverallLine | null,
+  priorOverall: PitcherOverallLine | null,
+): 'starter' | 'reliever' | 'inactive' {
+  const currentG = currentOverall?.gamesPitched ?? 0;
+  const currentGS = currentOverall?.gamesStarted ?? 0;
+  if (currentG > 0) return currentGS > 0 ? 'starter' : 'reliever';
+  const priorG = priorOverall?.gamesPitched ?? 0;
+  const priorGS = priorOverall?.gamesStarted ?? 0;
+  if (priorG > 0) return priorGS > 0 ? 'starter' : 'reliever';
+  return 'inactive';
 }
 
 /**

@@ -433,6 +433,10 @@ export function projectPitcherTeamNeutral(
   return {
     byCategory: teamByCat,
     perPitcher: [],
+    perReliever: [],
+    weeklySpIp: 0,
+    weeklyRpIp: 0,
+    weeklyIp: 0,
     contributorCount,
   };
 }

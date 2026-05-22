@@ -11,25 +11,6 @@ export interface DayProbables {
   starts: MatchedProbable[];
 }
 
-// Game statuses that mean the SP has either already pitched their game or
-// the game won't happen today. Used to drop today's already-completed
-// starts from the "remaining" count and today-strip dot — otherwise a
-// finished 1pm game still inflates oppRemaining at 6pm and the IP gap
-// looks wrong. Past-day games are intentionally NOT filtered (the day
-// strip shows past counts as informational), and future-day games are
-// always scheduled.
-const COMPLETED_TODAY_STATUSES = new Set([
-  'Final',
-  'Game Over',
-  'Completed Early',
-  'Postponed',
-  'Cancelled',
-  'Forfeit',
-]);
-function isGameDoneForToday(status: string): boolean {
-  return COMPLETED_TODAY_STATUSES.has(status) || status.startsWith('Suspended');
-}
-
 interface UseWeekProbablesResult {
   /** Mon..Sun, exactly seven entries. */
   days: WeekDay[];
@@ -88,12 +69,17 @@ export function useWeekProbables(
     oppRosterLoading ||
     dayResults.some(d => d.isLoading);
 
+  // Pass all games through to the matcher — including today's already-
+  // concluded ones. The Boss Card day strip wants completed starts
+  // visible (rendered as ✓ via `MatchedProbable.hasPitched`), and the
+  // remaining-count is now driven by IP projections (route-side) rather
+  // than start counts. See [[reference-mlboss-deployment]] for the
+  // redesign that motivates this.
   const myStarts: DayProbables[] = useMemo(
     () =>
       days.map((day, i): DayProbables => {
         const games = dayResults[i].games as EnrichedGame[];
-        const matchGames = day.isToday ? games.filter(g => !isGameDoneForToday(g.status)) : games;
-        return { day, starts: matchProbableStarts(myRoster, matchGames) };
+        return { day, starts: matchProbableStarts(myRoster, games) };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [days, myRoster, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games],
@@ -103,19 +89,21 @@ export function useWeekProbables(
     () =>
       days.map((day, i): DayProbables => {
         const games = dayResults[i].games as EnrichedGame[];
-        const matchGames = day.isToday ? games.filter(g => !isGameDoneForToday(g.status)) : games;
-        return { day, starts: matchProbableStarts(oppRoster, matchGames) };
+        return { day, starts: matchProbableStarts(oppRoster, games) };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [days, oppRoster, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games],
   );
 
+  // "Remaining" excludes past days entirely (they're informational only)
+  // AND today's already-concluded starts (game's been played). The strip
+  // still renders all of them — this count is just for the headline.
   const myRemaining = myStarts
     .filter(d => d.day.isRemaining)
-    .reduce((sum, d) => sum + d.starts.length, 0);
+    .reduce((sum, d) => sum + d.starts.filter(s => !s.hasPitched).length, 0);
   const oppRemaining = oppStarts
     .filter(d => d.day.isRemaining)
-    .reduce((sum, d) => sum + d.starts.length, 0);
+    .reduce((sum, d) => sum + d.starts.filter(s => !s.hasPitched).length, 0);
 
   return {
     days,

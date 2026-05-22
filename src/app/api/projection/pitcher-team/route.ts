@@ -11,6 +11,11 @@ import {
   type ActivePitcher,
   type PitcherProjectionDeps,
 } from '@/lib/projection/pitcherTeam';
+import { isStartConcluded } from '@/lib/mlb/gameState';
+import { resolveMLBId } from '@/lib/mlb/identity';
+import { getPitcherSeasonLines, getPitcherOverallLines } from '@/lib/mlb/players';
+import { fetchStatcastPitchers } from '@/lib/mlb/savant';
+import { computePitcherTalent } from '@/lib/pitching/talent';
 import type { EnrichedGame } from '@/lib/mlb/types';
 
 /**
@@ -70,6 +75,10 @@ export async function GET(request: Request) {
         daysElapsed,
         byCategory: {},
         perPlayer: [],
+        perReliever: [],
+        weeklySpIp: 0,
+        weeklyRpIp: 0,
+        weeklyIp: 0,
         contributorCount: 0,
       });
     }
@@ -98,27 +107,72 @@ export async function GET(request: Request) {
         daysElapsed,
         byCategory: {},
         perPlayer: [],
+        perReliever: [],
+        weeklySpIp: 0,
+        weeklyRpIp: 0,
+        weeklyIp: 0,
         contributorCount: 0,
       });
     }
 
-    // Build per-day game lookup with park resolution.
+    // Build per-day game lookup with park resolution. For TODAY's slate
+    // we drop any games whose SP has already concluded (or won't happen)
+    // so the projection doesn't double-count IP that's already booked or
+    // forever-zero. See [[reference-mlboss-deployment]] for the Boss
+    // Card design that motivates this filter.
     const gamesByDate = new Map<string, EnrichedGame[]>();
     remaining.forEach((d, i) => {
       const enriched = (gameDayResults[i] ?? []).map(g => ({
         ...g,
         park: getParkByVenueId(g.venue.mlbId) ?? null,
       })) as EnrichedGame[];
-      gamesByDate.set(d.date, enriched);
+      const filtered = d.isToday
+        ? enriched.filter(g => !isStartConcluded(g.status))
+        : enriched;
+      gamesByDate.set(d.date, filtered);
     });
 
-    // Name-based matching means we don't need MLB IDs up front. Pass 0
-    // as a placeholder; the engine never reads it for matching.
-    const activePitchers: ActivePitcher[] = activeRoster.map(p => ({
-      mlbId: 0,
-      name: p.name,
-      teamAbbr: p.editorial_team_abbr,
-    }));
+    // Resolve per-pitcher talent up front. Starters DON'T strictly need
+    // this (the projection engine reads their talent off the probable
+    // pitcher object stamped on each day's slate), but relievers do —
+    // they never appear as probables and the only way to project them
+    // is via talent supplied in `ActivePitcher.talent`. Doing this for
+    // all pitchers unifies the talent path and lets the engine route by
+    // `talent.role` cleanly. Falls back to no-talent (engine handles as
+    // SP-via-probable) when resolution fails.
+    const season = new Date().getFullYear();
+    const [savantCurrent, savantPrior] = await Promise.all([
+      fetchStatcastPitchers(season),
+      fetchStatcastPitchers(season - 1),
+    ]);
+    const activePitchers: ActivePitcher[] = await Promise.all(
+      activeRoster.map(async (p): Promise<ActivePitcher> => {
+        const identity = await resolveMLBId(p.name, p.editorial_team_abbr);
+        if (!identity) {
+          return { mlbId: 0, name: p.name, teamAbbr: p.editorial_team_abbr };
+        }
+        const [seasonLines, overallLines] = await Promise.all([
+          getPitcherSeasonLines(identity.mlbId, season),
+          getPitcherOverallLines(identity.mlbId, season),
+        ]);
+        const talent = computePitcherTalent({
+          mlbId: identity.mlbId,
+          throws: (identity.throws ?? 'R') as 'L' | 'R' | 'S',
+          currentLine: seasonLines.current,
+          priorLine: seasonLines.prior,
+          currentSavant: savantCurrent.get(identity.mlbId) ?? null,
+          priorSavant: savantPrior.get(identity.mlbId) ?? null,
+          currentOverall: overallLines.current,
+          priorOverall: overallLines.prior,
+        });
+        return {
+          mlbId: identity.mlbId,
+          name: p.name,
+          teamAbbr: p.editorial_team_abbr,
+          talent,
+        };
+      }),
+    );
 
     const deps: PitcherProjectionDeps = {
       days: remaining,
@@ -164,6 +218,20 @@ export async function GET(request: Request) {
       };
     });
 
+    const perReliever = projection.perReliever.map(p => {
+      const byCat: Record<number, { expectedCount: number; expectedDenom: number }> = {};
+      for (const [statId, cat] of p.byCategory) {
+        byCat[statId] = { expectedCount: cat.expectedCount, expectedDenom: cat.expectedDenom };
+      }
+      return {
+        name: p.name,
+        teamAbbr: p.teamAbbr,
+        expectedAppearances: p.expectedAppearances,
+        weeklyIP: p.weeklyIP,
+        byCategory: byCat,
+      };
+    });
+
     return NextResponse.json({
       teamKey,
       weekStart,
@@ -171,6 +239,10 @@ export async function GET(request: Request) {
       daysElapsed,
       byCategory: byCategoryRecord,
       perPlayer,
+      perReliever,
+      weeklySpIp: projection.weeklySpIp,
+      weeklyRpIp: projection.weeklyRpIp,
+      weeklyIp: projection.weeklyIp,
       contributorCount: projection.contributorCount,
     });
   } catch (error) {

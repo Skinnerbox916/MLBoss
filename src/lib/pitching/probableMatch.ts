@@ -1,6 +1,7 @@
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { ProbablePitcher } from '@/lib/mlb/types';
 import { normalizeTeamAbbr, isPitcher, isLikelySamePlayer } from '@/lib/pitching/display';
+import { isStartConcluded } from '@/lib/mlb/gameState';
 
 /**
  * Minimal game shape needed for matching a rostered pitcher to a probable
@@ -12,6 +13,10 @@ export interface ProbableMatchGame {
   awayTeam: { abbreviation: string };
   homeProbablePitcher: ProbablePitcher | null;
   awayProbablePitcher: ProbablePitcher | null;
+  /** MLB `detailedState` (`Scheduled` / `In Progress` / `Final` / etc.).
+   *  Optional for callers without it; when absent, `hasPitched` defaults
+   *  to false (treat as upcoming). */
+  status?: string;
 }
 
 export interface MatchedProbable {
@@ -21,6 +26,11 @@ export interface MatchedProbable {
   isHome: boolean;
   /** Opposing team abbreviation (the team the pitcher is throwing against). */
   opponentAbbr: string;
+  /** True when this start has already concluded (game Final, postponed,
+   *  etc.) — derived from the matched game's `status` via
+   *  `isStartConcluded`. Day-strip renderers use this to distinguish
+   *  "already pitched" (✓) from "upcoming" (◦). */
+  hasPitched: boolean;
 }
 
 /**
@@ -65,6 +75,7 @@ export function matchProbableStarts<G extends ProbableMatchGame>(
         pitcher: pp,
         isHome,
         opponentAbbr: isHome ? g.awayTeam.abbreviation : g.homeTeam.abbreviation,
+        hasPitched: g.status != null && isStartConcluded(g.status),
       });
       matchedPlayerKeys.add(player.player_key);
       break;

@@ -29,6 +29,17 @@ export interface ProjectedPitcher {
   perStart: ProjectedPerStart[];
 }
 
+export interface ProjectedReliever {
+  name: string;
+  teamAbbr: string;
+  /** Expected appearances over the projection window. */
+  expectedAppearances: number;
+  /** Expected IP over the projection window — the headline contribution
+   *  to the team's RP IP total. */
+  weeklyIP: number;
+  byCategory: Record<number, ProjectedCategory>;
+}
+
 export interface PitcherTeamProjectionResponse {
   teamKey: string;
   weekStart?: string;
@@ -36,6 +47,15 @@ export interface PitcherTeamProjectionResponse {
   daysElapsed: number;
   byCategory: Record<number, ProjectedCategory>;
   perPlayer: ProjectedPitcher[];
+  perReliever: ProjectedReliever[];
+  /** Total expected IP from probable starts (SP path). */
+  weeklySpIp: number;
+  /** Total expected IP from reliever appearances (RP path). */
+  weeklyRpIp: number;
+  /** Sum of weeklySpIp + weeklyRpIp. Boss Card uses this for the
+   *  headline "IP left" number; UI may surface the breakdown via the
+   *  separate SP/RP fields. */
+  weeklyIp: number;
   contributorCount: number;
 }
 

@@ -642,3 +642,92 @@ function bbCompoundingPenalty(bbPerPA: number): number {
   const CAP = 1.0;
   return clamp((bbPerPA - LEAGUE_BB) * SLOPE, 0, CAP);
 }
+
+// ---------------------------------------------------------------------------
+// Reliever per-week forecast
+//
+// Mirrors `buildGameForecast` for the reliever side. Where the SP forecast
+// is per-start (one probable, opponent + park + weather context), the
+// reliever forecast is per-week (no per-opponent context — relievers can
+// throw in any game). The unit of work is "calendar week" because that's
+// the cadence the matchup-week IP/GS caps measure against.
+//
+// Inputs:
+//   - PitcherTalent with role='reliever' (callers should gate before
+//     invoking; behavior on a non-reliever talent is well-defined —
+//     returns all-zero — but semantically meaningless).
+//   - daysRemaining in the matchup window (1..7).
+//
+// Output: rollup of expected IP + counting cats over the window. Counting
+// cats use the same per-PA rates that drive the SP forecast (kPerPA,
+// bbPerPA, hrPerContact); ratios (ERA, WHIP) aren't projected per-window
+// for relievers (the corrected-margin pipeline reads only counting cats
+// from L4, matching SP behavior).
+//
+// What's deliberately NOT modeled here:
+//   - Holds, Saves, Losses: requires bullpen role tagging (closer / setup /
+//     long man) we don't have a data source for yet. Add when streaming-
+//     board reliever tab lands.
+//   - Opponent quality: relievers face whoever's up; over a week the
+//     opponent mix averages to neutral. Park/weather similarly average
+//     out over the week of appearances.
+//   - Multi-inning leverage: if a reliever is used in 2-IP outings vs
+//     1-IP, `ipPerAppearance` already captures that empirically.
+// ---------------------------------------------------------------------------
+
+export interface ReliefWeekForecast {
+  pitcher: PitcherTalent;
+  daysRemaining: number;
+  expectedAppearances: number;
+  expectedIp: number;
+  expectedK: number;
+  expectedBb: number;
+  expectedHr: number;
+  /** Expected hits + walks (the WHIP numerator) — included so callers
+   *  doing a "what's my total WHIP exposure" can sum across pitchers. */
+  expectedWhipNumerator: number;
+}
+
+export function buildReliefWeekForecast(
+  pitcher: PitcherTalent,
+  daysRemaining: number,
+): ReliefWeekForecast {
+  const days = clamp(daysRemaining, 0, 7);
+  const appsPerWeek = pitcher.appearancesPerWeek ?? 0;
+  const ipPerApp = pitcher.ipPerAppearance ?? 0;
+
+  // Expected appearances over the remaining window. Linear scaling on
+  // the per-week rate — no day-of-week effects (relievers don't have
+  // them — they pitch whenever the game calls them).
+  const expectedAppearances = appsPerWeek * (days / 7);
+  const expectedIp = expectedAppearances * ipPerApp;
+
+  // Counting-cat projections: same per-PA rates as the SP path, applied
+  // to the reliever's expected PA window. PA/inning anchor is 4.3 — the
+  // same constant `buildGameForecast` uses for the league-mean opponent
+  // case (relievers face a mix of opponents that averages neutral).
+  const PA_PER_INNING = 4.3;
+  const expectedPa = expectedIp * PA_PER_INNING;
+  const expectedK = expectedPa * pitcher.kPerPA;
+  const expectedBb = expectedPa * pitcher.bbPerPA;
+  // HR/PA = HR/contact × contact_rate. Same shape as SP path (talent.ts'
+  // `talentHrPerPA` would give the same number).
+  const contactRate = Math.max(0, 1 - pitcher.kPerPA - pitcher.bbPerPA);
+  const expectedHr = expectedPa * pitcher.hrPerContact * contactRate;
+  // Hits = PA × (1 − BB/PA) × BAA; same identity as the SP per-game
+  // chain above. BAA derived from contactXwoba via the same factor.
+  const baa = pitcher.contactXwoba / 1.5;
+  const expectedH = expectedPa * (1 - pitcher.bbPerPA) * baa;
+  const expectedWhipNumerator = expectedH + expectedBb;
+
+  return {
+    pitcher,
+    daysRemaining: days,
+    expectedAppearances,
+    expectedIp,
+    expectedK,
+    expectedBb,
+    expectedHr,
+    expectedWhipNumerator,
+  };
+}

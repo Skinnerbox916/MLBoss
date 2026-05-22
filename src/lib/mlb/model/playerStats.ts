@@ -150,6 +150,44 @@ export interface PitcherSeasonLine {
   gbRate: number | null;
 }
 
+/**
+ * A pitcher's OVERALL season line — all appearances (starts + relief), no
+ * sit-code filter applied. Used by the reliever-projection path in
+ * `computePitcherTalent` to compute appearances-per-week and IP-per-
+ * appearance for relievers. Distinct from `PitcherSeasonLine` (SP-filtered)
+ * so a caller can't accidentally feed one into the talent-as-starter math.
+ */
+export interface PitcherOverallLine {
+  /** Total games appeared in (G). For pure relievers, equals appearances. */
+  gamesPitched: number;
+  /** Subset of `gamesPitched` that were starts (GS). For swingman role
+   *  resolution: GS=0 → reliever, GS>0 → starter (current binarization;
+   *  refine when swingman handling is needed). */
+  gamesStarted: number;
+  /** Total IP across all appearances. For relievers, drives
+   *  ipPerAppearance = ip / gamesPitched. */
+  ip: number;
+  /** Overall ERA — distinct from the SP-filtered ERA in PitcherSeasonLine
+   *  (which is starts-only). Carried for breakdown/debug surfaces. */
+  era: number | null;
+}
+
+/** Parse a pitcher's OVERALL season line from the season-group response.
+ *  Companion to `parsePitchingLine` but for the unfiltered season split. */
+export function parsePitchingOverallLine(raw: RawStat): PitcherOverallLine {
+  const n = (v: string | undefined) => {
+    if (!v) return null;
+    const f = parseFloat(v);
+    return isNaN(f) ? null : f;
+  };
+  return {
+    gamesPitched: raw.gamesPlayed ?? 0,
+    gamesStarted: raw.gamesStarted ?? 0,
+    ip: n(raw.inningsPitched) ?? 0,
+    era: n(raw.era),
+  };
+}
+
 /** Parse a pitching season line from the MLB Stats API raw shape. */
 export function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
   const n = (v: string | undefined) => {

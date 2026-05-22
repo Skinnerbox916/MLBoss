@@ -28,9 +28,11 @@ import {
   findByCode,
   findGroup,
   parsePitchingLine,
+  parsePitchingOverallLine,
   parsePitcherAppearances,
   parseSplitLine,
   type PitcherAppearance,
+  type PitcherOverallLine,
   type PitcherSeasonLine,
 } from './model';
 import { fetchPlayerName, resolveMLBId } from './identity';
@@ -190,6 +192,30 @@ export async function fetchPitcherOverallSeasonEra(
   return isNaN(era) ? null : era;
 }
 
+/**
+ * Fetch the pitcher's OVERALL season line (all appearances) and parse it
+ * into the role-detection / RP-usage shape. The SP-side talent path uses
+ * `fetchPitcherSeasonLine` (sp-filtered); this is its peer for the relief
+ * path, supplying gamesPitched / gamesStarted / total IP that
+ * `computePitcherTalent` needs to populate `appearancesPerWeek` and
+ * `ipPerAppearance` for relievers.
+ *
+ * Returns null when the season group is missing (rookie / pre-debut / API
+ * outage). Callers should pass null into `computePitcherTalent` in that
+ * case; the role defaults to 'inactive' and the RP fields stay null.
+ */
+export async function fetchPitcherOverallSeasonLine(
+  mlbId: number,
+  season: number,
+): Promise<PitcherOverallLine | null> {
+  const raw = await fetchPitcherOverallLine(mlbId, season);
+  if (!raw) return null;
+  const seasonGroup = findGroup(raw, 'season');
+  const first = seasonGroup[0];
+  if (!first) return null;
+  return parsePitchingOverallLine(first.stat);
+}
+
 // ---------------------------------------------------------------------------
 // Pitcher platoon + recent form
 // ---------------------------------------------------------------------------
@@ -264,6 +290,24 @@ export async function getPitcherSeasonLines(
   const [current, prior] = await Promise.all([
     fetchPitcherSeasonLine(mlbId, season),
     fetchPitcherSeasonLine(mlbId, season - 1),
+  ]);
+  return { current, prior };
+}
+
+/**
+ * Fetch a pitcher's OVERALL season lines (all appearances — starts +
+ * relief) for current and prior season. Mirrors `getPitcherSeasonLines`
+ * for the relief-projection path: `computePitcherTalent` reads these
+ * for role detection and the reliever-workload signals
+ * (`appearancesPerWeek`, `ipPerAppearance`).
+ */
+export async function getPitcherOverallLines(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<{ current: PitcherOverallLine | null; prior: PitcherOverallLine | null }> {
+  const [current, prior] = await Promise.all([
+    fetchPitcherOverallSeasonLine(mlbId, season),
+    fetchPitcherOverallSeasonLine(mlbId, season - 1),
   ]);
   return { current, prior };
 }

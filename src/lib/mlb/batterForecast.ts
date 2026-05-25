@@ -292,8 +292,7 @@ function applyMatchupModifier(
       const blended = blendLog5(baseline, spBaaR, rpBaaR, LEAGUE_AVG, spShare);
       const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
-      if (spBaaR != null && spBaaR <= 0.225) hints.push(`sub-${spBaaR.toFixed(3)} BAA SP`);
-      else if (spBaaR != null && spBaaR >= 0.260) hints.push(`${spBaaR.toFixed(3)} BAA SP`);
+      if (spBaaR != null) hints.push(`${spBaaR.toFixed(3)} BAA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
@@ -307,8 +306,7 @@ function applyMatchupModifier(
       const blendedMod = blendRatioMult(spHr, rpHr, LEAGUE_HR_PER_PA, PITCHER_SWING_HR, spShare);
       const expected = baseline * blendedMod * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
-      if (spHr != null && spHr >= 0.045) hints.push('HR-prone SP');
-      else if (spHr != null && spHr <= 0.025) hints.push('HR-suppressing SP');
+      if (spHr != null) hints.push(`${spHr.toFixed(3)} HR/PA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       if (weatherMult >= 1.04) hints.push('wind-boost');
       else if (weatherMult <= 0.96) hints.push('wind-suppress');
@@ -338,6 +336,7 @@ function applyMatchupModifier(
       const expected = baseline * handMult * teamSbMult;
       const hints: string[] = [];
       if (sp?.throws === 'R') hints.push('RHP (easier to run)');
+      else if (sp?.throws === 'L') hints.push('LHP');
       if (teamSbHint) hints.push(teamSbHint);
       return { expected, modifierHint: hints.join(' · ') };
     }
@@ -356,8 +355,7 @@ function applyMatchupModifier(
       const blendedMod = blendRatioMult(expEra, rpEra, 4.0, PITCHER_SWING_RUNS, spShare);
       const expected = baseline * blendedMod * parkAdj.multiplier * orderMod * weatherMult;
       const hints: string[] = [];
-      if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
-      else if (expEra != null && expEra <= 3.20) hints.push(`${expEra.toFixed(2)} xERA SP`);
+      if (expEra != null) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('top of order');
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
@@ -376,8 +374,7 @@ function applyMatchupModifier(
       const blendedMod = blendRatioMult(expEra, rpEra, 4.0, PITCHER_SWING_RUNS, spShare);
       const expected = baseline * blendedMod * parkAdj.multiplier * orderMod * weatherMult;
       const hints: string[] = [];
-      if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
-      else if (expEra != null && expEra <= 3.20) hints.push(`${expEra.toFixed(2)} xERA SP`);
+      if (expEra != null) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('middle of order');
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
@@ -389,8 +386,7 @@ function applyMatchupModifier(
       const blended = blendLog5(baseline, spKRate, rpKRate, LEAGUE_K_PER_PA, spShare);
       const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
-      if (spKRate != null && spKRate >= 0.27) hints.push(`high-K SP (${(spKRate * 100).toFixed(0)}%)`);
-      else if (spKRate != null && spKRate <= 0.18) hints.push(`low-K SP (${(spKRate * 100).toFixed(0)}%)`);
+      if (spKRate != null) hints.push(`${(spKRate * 100).toFixed(0)}% K SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
@@ -401,8 +397,7 @@ function applyMatchupModifier(
       const blended = blendLog5(baseline, spHits, rpHits, LEAGUE_H_PER_PA, spShare);
       const expected = blended * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
-      if (spHits != null && spHits >= 0.235) hints.push(`hit-prone SP (${spHits.toFixed(3)} H/PA)`);
-      else if (spHits != null && spHits <= 0.195) hints.push(`hit-suppressing SP (${spHits.toFixed(3)} H/PA)`);
+      if (spHits != null) hints.push(`${spHits.toFixed(3)} H/PA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
@@ -412,7 +407,10 @@ function applyMatchupModifier(
       const rpHits = oppRp?.hitsPerPA ?? null;
       const blended = blendLog5(baseline, spHits, rpHits, LEAGUE_H_PER_PA, spShare);
       const expected = blended * parkAdj.multiplier * weatherMult;
-      return { expected, modifierHint: parkAdj.hint };
+      const hints: string[] = [];
+      if (spHits != null) hints.push(`${spHits.toFixed(3)} H/PA SP`);
+      if (parkAdj.hint) hints.push(parkAdj.hint);
+      return { expected, modifierHint: hints.join(' · ') };
     }
 
     case 18: { // BB — log5 blend (SP, bullpen BB/PA) + park.
@@ -421,8 +419,7 @@ function applyMatchupModifier(
       const blended = blendLog5(baseline, spBb, rpBb, LEAGUE_BB_PER_PA, spShare);
       const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
-      if (spBb != null && spBb >= 0.10) hints.push(`high-BB SP (${(spBb * 100).toFixed(0)}%)`);
-      else if (spBb != null && spBb <= 0.06) hints.push(`low-BB SP (${(spBb * 100).toFixed(0)}%)`);
+      if (spBb != null) hints.push(`${(spBb * 100).toFixed(0)}% BB SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }

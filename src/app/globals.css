@@ -165,7 +165,9 @@ body {
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display), system-ui, sans-serif;
     font-weight: 400;
-    line-height: 1.2;
+    /* Pacifico has dramatic descenders (y, g, p, j). 1.2 lets them clip
+     * into sibling text below; 1.35 reserves enough vertical room. */
+    line-height: 1.35;
   }
 
   /* Scale tuned for Pacifico (display font reads ~20% larger than a comparable

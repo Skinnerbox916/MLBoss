@@ -16,7 +16,7 @@ export function formatStatValue(value: number | null | string, name: string): st
   if (isRateStat(name)) return num.toFixed(3).replace(/^0\./, '.');
   if (isTwoDecimalStat(name)) return num.toFixed(2);
   if (name === 'IP') return num.toFixed(1);
-  return Number.isInteger(num) ? num.toString() : num.toFixed(2);
+  return Number.isInteger(num) ? num.toString() : num.toFixed(1);
 }
 
 export function formatStatDelta(delta: number, name: string): string {
@@ -28,5 +28,5 @@ export function formatStatDelta(delta: number, name: string): string {
   const sign = delta > 0 ? '+' : '';
   if (isTwoDecimalStat(name)) return sign + delta.toFixed(2);
   if (name === 'IP') return sign + delta.toFixed(1);
-  return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(3));
+  return sign + (Number.isInteger(delta) ? delta.toString() : delta.toFixed(1));
 }

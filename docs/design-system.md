@@ -127,6 +127,8 @@ const monoFont = JetBrains_Mono({
 ### Typography Scale
 Base typography is automatically applied to HTML elements. The scale is tuned for **Pacifico**, a decorative script font that visually reads ~20% larger than a comparable sans-serif at the same px — `h2`/`h3` are deliberately compact so card and panel titles don't dominate their surfaces.
 
+All headings use `line-height: 1.35`. Pacifico has dramatic descenders (`y`, `g`, `p`, `j`) and a tighter value (e.g. 1.2) lets them clip into any sibling text positioned immediately below the heading. If a future design ever introduces a sans-serif heading variant, give it its own line-height — 1.35 is Pacifico-specific, not a universal heading default.
+
 | Element | Font | Size | Role |
 |---------|------|------|------|
 | `h1` | Pacifico | `clamp(2rem, 5vw, 3rem)` | Page titles (32-48px) |

@@ -57,7 +57,7 @@ export default function DivergingRow({
           {oppVal}
         </span>
       )}
-      <span className={`${deltaWidth} text-[11px] text-right font-bold shrink-0 tabular-nums font-mono ${deltaColor}`}>
+      <span className={`${deltaWidth} text-[11px] text-right font-bold shrink-0 tabular-nums font-mono border-l border-border ml-1 pl-2 ${deltaColor}`}>
         {deltaStr}
       </span>
     </div>

@@ -12,8 +12,8 @@ Anchors the batter talent regression in [talentModel.ts](../src/lib/mlb/talentMo
 
 | Constant | File | Anchor |
 |---|---|---|
-| `LEAGUE_K_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | 2024 MLB-wide K%. Updated each offseason from FanGraphs leaderboards. |
-| `LEAGUE_BB_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | 2024 MLB-wide BB%. |
+| `LEAGUE_K_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | MLB-wide K-per-PA. Refresh from MLB Stats API (current season) or FanGraphs. Same value drives both batter and pitcher regressions (zero-sum). Last refreshed 2026 mid-season — see [history.md](./history.md#2026-05--league-rate-calibration-refresh). |
+| `LEAGUE_BB_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | MLB-wide BB-per-PA. Last refreshed 2026 mid-season. |
 | `LEAGUE_XWOBACON` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average xwOBA on contact (batter). The component blended toward population for thin BIP samples. |
 | `LEAGUE_HARD_HIT` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average Hard-Hit % (EV ≥ 95 mph). |
 | `LEAGUE_XWOBA` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | End-result composite clamp. Anchors the assembled component-blended xwOBA back to a sane range. |
@@ -29,9 +29,7 @@ Anchors the pitcher talent regression in [pitching/talent.ts](../src/lib/pitchin
 
 | Constant | File | Anchor |
 |---|---|---|
-| `LEAGUE_K_RATE` (pitcher) | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Pitcher-side K-per-PA league mean. Same value as the batter side by construction (matchups are zero-sum). |
-| `LEAGUE_BB_RATE` (pitcher) | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Pitcher-side BB-per-PA league mean. |
-| `LEAGUE_XWOBACON_PITCHER` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average xwOBA-allowed on contact. Same value as the batter side. |
+| `LEAGUE_XWOBACON_PITCHER` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average xwOBA-allowed on contact. Same value as the batter side. (Note: pitcher-side K-per-PA and BB-per-PA share the single `LEAGUE_K_RATE` / `LEAGUE_BB_RATE` definition in `talentModel.ts` — there is no separate pitcher-side copy.) |
 | `LEAGUE_HR_PER_CONTACT` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average HR per ball in play. ~3.5% MLB-wide. |
 | `LEAGUE_HR_PER_CONTACT_PRIOR_BIP` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Regression strength for HR/contact. HR per BIP is the most volatile component; heavy prior. |
 | `LEAGUE_IP_PER_START` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average IP per starter game. Drives expected workload in the forecast layer. |
@@ -42,15 +40,15 @@ Anchors the pitcher talent regression in [pitching/talent.ts](../src/lib/pitchin
 
 ## League rate priors (per-category)
 
-Used by [batterRating.ts](../src/lib/mlb/batterRating.ts) for log5 calculations on batter stats that aren't in the talent vector directly.
+Used by [batterForecast.ts](../src/lib/mlb/batterForecast.ts) for log5 calculations on batter stats that aren't in the talent vector directly. (Constants moved from `batterRating.ts` to `batterForecast.ts` in the 2026-05 L2/L3 split — see [history.md](./history.md#2026-05--batter-l2l3-split-buildbatterforecast-extracted).)
 
 | Constant | File | Anchor |
 |---|---|---|
-| `LEAGUE_AVG` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | League-average batting average. Used for log5 of AVG against SP BAA. |
-| `LEAGUE_K_PER_PA` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Same as the talent-side rate; used for log5 of batter K against SP K%. |
-| `LEAGUE_BB_PER_PA` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Used for log5 of batter BB against SP BB%. |
-| `LEAGUE_H_PER_PA` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Hits per PA. Used for log5 of H and TB against SP BAA-proxy via `talentHitsPerPA`. |
-| `LEAGUE_HR_PER_PA` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | HR per PA. Used for `PITCHER_SWING_HR`-bounded multiplicative ratio (HR is contact-quality, not a clean log5 stat). |
+| `LEAGUE_AVG` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | League-average batting average. Used for log5 of AVG against SP BAA AND the bullpen BAA blend. |
+| `LEAGUE_K_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Same as the talent-side rate; used for log5 of batter K against the SP/RP-blended K%. |
+| `LEAGUE_BB_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Used for log5 of batter BB against the SP/RP-blended BB%. |
+| `LEAGUE_H_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Hits per PA. Used for log5 of H and TB against the SP/RP-blended hits/PA via `talentHitsPerPA`. |
+| `LEAGUE_HR_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | HR per PA. Used for `PITCHER_SWING_HR`-bounded multiplicative ratio (HR is contact-quality, not a clean log5 stat). |
 
 The pitcher-side and batter-side league means agree by construction. MLB is zero-sum: every PA is one batter outcome and one pitcher outcome. If a future change tunes one side, the other side must move in lockstep.
 

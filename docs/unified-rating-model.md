@@ -460,8 +460,8 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | Per-cat weather (HR / R-RBI / H-TB) | [batterRating.ts](../src/lib/mlb/batterRating.ts) | ±8% / ±4% / ±2% magnitudes mirror pitcher-side |
 | `PITCHER_SWING_HR` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Tango/Clemens 2018→19: extreme pitcher edge ≈ 2% per PA. Bound absorbs noise around small empirical effect |
 | `PITCHER_SWING_RUNS` (R, RBI) | [batterRating.ts](../src/lib/mlb/batterRating.ts) | R/RBI per-PA flow through team offense + 8 unrelated PAs; pitcher's per-PA share is a fraction of ERA share |
-| BB log5 | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Rate-on-rate vs `LEAGUE_BB_PER_PA`. BB is 3-true-outcome; pitcher-controlled, log5 derives magnitude |
-| H / TB log5 | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Rate-on-rate vs `LEAGUE_H_PER_PA` using `talentHitsPerPA`. Keeps H↔AVG↔TB consistent — previously H/TB had no SP signal while AVG did |
+| BB log5 | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Rate-on-rate vs `LEAGUE_BB_PER_PA`. BB is 3-true-outcome; pitcher-controlled, log5 derives magnitude |
+| H / TB log5 | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Rate-on-rate vs `LEAGUE_H_PER_PA` using `talentHitsPerPA`. Keeps H↔AVG↔TB consistent — previously H/TB had no SP signal while AVG did |
 | `bbCompoundingPenalty` slope / cap | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Additive ERA penalty for BB% above league mean (.085). Calibrated to empirical BB%-vs-(ERA−xERA) relationship in MLB starter data |
 | Regime probe (`REGIME_SD_*`, `REGIME_SIGNIFICANT_Z`, slope, floor) | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Per-metric Y-Y noise bands and z-score threshold for the probe; slope/floor map from \|score\| to prior-cap multiplier |
 | `LEAGUE_XBA`, `LEAGUE_XSLG` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) | 2024 MLB averages from Savant expected-statistics leaderboard (.243 / .404). xBA tracks AVG closely; xSLG is meaningfully higher than league SLG because Savant credits hard contact that becomes outs at the .240 league-avg BAA rate |

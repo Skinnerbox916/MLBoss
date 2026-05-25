@@ -342,28 +342,45 @@ function buildOppMultiplier(
 
 /**
  * Bullpen multiplier — used ONLY inside Wins probability. Bad bullpens
- * blow leads; good bullpens lock them. Currently uses team staff ERA
- * as a proxy for relief ERA (~0.7 correlation in practice).
+ * blow leads; good bullpens lock them. Reads real RP-only ERA from the
+ * team staff splits when available; falls back to overall staffEra
+ * when the splits are missing (e.g. first cold start of the season).
+ *
+ * Anchor: 5.00 ERA → -8% on W odds; 3.40 ERA → +8% on W odds. Bullpen
+ * ERA scale runs slightly hotter than overall staff ERA, but the
+ * clamp range absorbs the small offset and the per-team baseline is
+ * still ~4.10-4.20 — same calibration as the staffEra path.
+ *
+ * TODO: opposing-team bullpen for the user's pitcher's P(W). A weak
+ * opposing pen makes late-inning run support more likely for the
+ * user's team, lifting W odds by ~2-3%. Real but needs co-modeling
+ * of the user's team's offense quality (currently assumed average in
+ * P(W)). See docs/history.md "2026-05 — Batter forecast SP/RP blend"
+ * for the scoping rationale.
  */
 function buildBullpenMultiplier(game: EnrichedGame, isHome: boolean): ContextMultiplier {
-  const ownStaffEra = (isHome ? game.homeTeam.staffEra : game.awayTeam.staffEra) ?? null;
-  if (ownStaffEra == null) {
+  const ownTeam = isHome ? game.homeTeam : game.awayTeam;
+  const rpEra = ownTeam.staffSplits?.rp?.era ?? null;
+  const fallbackEra = ownTeam.staffEra ?? null;
+  const era = rpEra ?? fallbackEra;
+
+  if (era == null) {
     return {
       multiplier: 1.0, deltaPct: 0, display: '—',
       summary: 'No bullpen data', available: false,
     };
   }
-  // 5.00 ERA = -8% on W odds, 3.40 ERA = +8% on W odds.
-  const multiplier = clamp(1 - (ownStaffEra - 4.20) * 0.10, 0.90, 1.10);
+
+  const multiplier = clamp(1 - (era - 4.20) * 0.10, 0.90, 1.10);
   const summary =
-    ownStaffEra <= 3.60 ? 'Elite bullpen'
-    : ownStaffEra >= 4.60 ? 'Shaky bullpen'
+    era <= 3.60 ? 'Elite bullpen'
+    : era >= 4.60 ? 'Shaky bullpen'
     : 'Average bullpen';
 
   return {
     multiplier,
     deltaPct: (multiplier - 1) * 100,
-    display: `${ownStaffEra.toFixed(2)}`,
+    display: era.toFixed(2),
     summary,
     available: true,
   };
@@ -688,6 +705,13 @@ export interface ReliefWeekForecast {
   expectedWhipNumerator: number;
 }
 
+// TODO: closer SV-opportunity projection. `team.staffSplits` (and the
+// underlying MLB Stats API statSplits response) carries saves,
+// saveOpportunities, blownSaves, holds per role per team. A team with
+// high SV-opp rate generates more save chances for its closer; the
+// current forecast doesn't use this. Not load-bearing until there's a
+// reliever-streaming surface that surfaces SV as a decision variable.
+// See docs/history.md "2026-05 — Batter forecast SP/RP blend".
 export function buildReliefWeekForecast(
   pitcher: PitcherTalent,
   daysRemaining: number,

@@ -72,13 +72,15 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
   - `xwobaAllowed` ← linear-weights composition (BB·0.69 + nonHrContact·nonHrXwoba + HR·1.97)
   - `expectedERA` ← `xwobaToXera(xwobaAllowed)` — park / opp / weather aware end-to-end.
 - **Batter side** (`buildBatterForecast` in [batterForecast.ts](../src/lib/mlb/batterForecast.ts)):
-  - AVG cat ← log5(talent.avg, SP BAA) × parkAVG
-  - K cat ← log5(talent.K%, SP K%) × parkSO
-  - HR cat ← talent.HR-rate × SP HR-prone factor × parkHR × weather
-  - R cat ← talent.R-rate × SP xERA × parkR × staffERA × battingOrderMod × weather
-  - RBI cat ← talent.RBI-rate × SP xERA × parkR × battingOrderMod × weather
-  - SB cat ← talent.SB-rate × hand bump
-  - BB cat ← talent.BB-rate × parkBB
+  Every per-PA modifier is an **SP/RP blend** (see [§SP/RP blend](#sprp-blend) below).
+  - AVG cat ← `spShare`-weighted log5(talent.avg, SP BAA) + `(1-spShare)`-weighted log5(talent.avg, bullpen BAA) × parkAVG
+  - K cat ← spShare blend of log5(talent.K%, SP K%) and log5(talent.K%, bullpen K%) × parkSO
+  - HR cat ← talent.HR-rate × blended-pitcher-factor(SP HR/PA, bullpen HR/PA) × parkHR × weather
+  - R cat ← talent.R-rate × blended-pitcher-factor(SP xERA, bullpen ERA) × parkR × battingOrderMod × weather
+  - RBI cat ← talent.RBI-rate × blended-pitcher-factor(SP xERA, bullpen ERA) × parkR × battingOrderMod × weather
+  - SB cat ← talent.SB-rate × RHP-hand-bump × team-SB-allowed multiplier
+  - BB cat ← spShare blend of log5(talent.BB%, SP BB%) and log5(talent.BB%, bullpen BB%) × parkBB
+  - H, TB cat ← spShare blend of log5(talent.hits/PA, SP hits/PA) and log5 vs bullpen hits/PA × park × weather
 
   Both sides have a clean L2/L3 split: forecast is a pure function from talent + `MatchupContext` to per-PA expected values; rating consumes the forecast and adds normalization, weighting, focus, composite multipliers, tier mapping, and confidence aggregation. `getBatterRating` internally calls `buildBatterForecast` (extracted in 2026-05); pre-2026-05 the two layers were inlined in one function.
 
@@ -102,6 +104,45 @@ The batter side reads per-category talent rates out of [mlb/categoryBaselines.ts
 HR and TB will move to the talent path once we expose xSLG-derived signals via a follow-up commit; the regression is in place (`talent.xslg`), only the per-cat consumer isn't using it yet. R / RBI / SB stay on the raw path indefinitely — they're lineup-context-dominated, not pure batter skill.
 
 Both consumers of `blendedBaselineForCategory` — the matchup-aware `getBatterRating` (L3) and the season-long `blendedCategoryScore` (L3 roster) — pick up the talent path automatically.
+
+## SP/RP blend
+
+Every per-PA modifier in `buildBatterForecast` blends the opposing **starter** and **bullpen** signals. An average SP pitches ~5.3 of 9 IP; treating the SP's per-PA rates as if they applied to all of the batter's PAs systematically overweights the SP signal by ~40% per game on average. The blend corrects this — and matters most when bullpen quality diverges sharply from rotation quality (the Reds-style 2025 profile in the batter-streaming examples).
+
+**The math.** For each per-PA cat:
+
+```
+spShareBase  = clamp(sp.talent.ipPerStart / 9, 0.30, 0.85)
+rpConfidence = clamp(team.rp.ip / 100, 0, 1)
+spShare      = spShareBase + (1 - spShareBase) × (1 - rpConfidence)
+rpShare      = 1 - spShare
+
+# log5 cats (AVG, K, BB, H, TB):
+expectedRate = spShare × log5(baseline, spRate, leagueRate)
+             + rpShare × log5(baseline, rpRate, leagueRate)
+
+# ratio-clamp cats (HR, R, RBI):
+spMod = pitcherRatioClamp(spRate, leagueRate, swing)
+rpMod = pitcherRatioClamp(rpRate, leagueRate, swing)
+expectedRate = baseline × (spShare × spMod + rpShare × rpMod)
+
+# SB (multiplicative, independent dimensions):
+teamSbRate   = spShare × team.sp.sbAllowedPerIp + rpShare × team.rp.sbAllowedPerIp
+teamSbMult   = clamp(teamSbRate / leagueSbAllowedPerIp, 0.80, 1.25)
+expected     = baseline × (RHP-hand-bump) × teamSbMult
+```
+
+`computeSpShare` and the `blendLog5` / `blendRatioMult` helpers live in [batterForecast.ts](../src/lib/mlb/batterForecast.ts).
+
+**Why `ipPerStart` per-pitcher and not a constant 0.6.** An ace going 6.5 IP weights bullpen exposure to ~28%; a 5th starter going 4 IP weights it to ~56%; an opener at 3 IP weights it to ~67%. The exposure profile is the right driver, and `talent.ipPerStart` is already Bayesian-blended against the league prior (`LEAGUE_IP_PER_START = 5.4`) in the talent layer.
+
+**Why shrinkage toward SP-only.** Team bullpen aggregates are thin early-season (cold start, ~10 IP at week 1). `rpConfidence` linearly scales the bullpen weight: 0 IP → spShare = 1.0 (full SP-only fallback); 100+ IP → spShare = spShareBase. No NaN risk when data is missing — when `team.staffSplits` is null, `rpConfidence = 0` and the forecast reduces to the pre-blend behavior.
+
+**Data source.** [`fetchTeamStaffSplits`](../src/lib/mlb/schedule.ts) hits MLB Stats API `/teams/stats?stats=statSplits&group=pitching&sitCodes=sp,rp` once per season (STATIC-tier cache). One call returns all 30 teams × 2 roles. Each role line includes IP, BF, K, BB, H, HR, BAA, ERA, WHIP, SBs — used directly without derivation. The league-mean SB-allowed-per-IP is computed from the same response (sum SBs / sum IPs across all splits) and exposed via `getLeagueSbAllowedPerIp` for the SB cat modifier.
+
+**What this replaced.** A standalone `staffMod = sqrt(staffEra / 4.2)` ratio clamp applied only to the R cat (not RBI). That code double-counted the SP (which is included in team-total ERA) and asymmetrically excluded RBI. The blend captures both rotation and bullpen contributions in one pass; the old staffMod is gone. Per the doc-discipline rules, see also the [history.md entry](./history.md) for this change.
+
+**Same plumbing, parallel pitcher-side win.** The W-probability bullpen multiplier in [pitching/forecast.ts](../src/lib/pitching/forecast.ts) used `staffEra` as a proxy for relief-only ERA ("~0.7 correlation in practice"); after this change it reads `team.staffSplits.rp.era` directly with `staffEra` as a fallback. Same data, no proxy.
 
 ## Pitcher-side three layers
 
@@ -195,7 +236,7 @@ interface GameForecast {
 
 - `expectedPerPA` — adjusted for opposing offense (log5 against opp K-rate-vs-hand, HR-park, etc.). The **batter side** consumes this for log5 calculations against the opposing SP.
 - `expectedPerGame` — projected IP, K, BB, ER, H, HR for the start. Drives the per-category score windows in Layer 3.
-- `probabilities` — P(QS), P(W). Bullpen quality (`MLBGame.{home,away}Team.staffEra` as a proxy, halved before applying since bullpen pitches ~3 of 9 IP) and opposing-SP talent fold into P(W).
+- `probabilities` — P(QS), P(W). Bullpen quality (`MLBGame.{home,away}Team.staffSplits.rp.era` for real RP-only ERA, with `staffEra` as the fallback when splits are missing) and opposing-SP talent fold into P(W). See `buildBullpenMultiplier` in `pitching/forecast.ts`.
 - `multipliers` — surfaced for breakdown UI. Bullpen is the only one that doesn't fold into the Layer 3 composite (it only affects W odds). The `park` multiplier comes from `getParkAdjustment` — shared with the batter-side rating.
 
 ### Layer 3 — `PitcherRating`
@@ -426,6 +467,9 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | `LEAGUE_XBA`, `LEAGUE_XSLG` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) | 2024 MLB averages from Savant expected-statistics leaderboard (.243 / .404). xBA tracks AVG closely; xSLG is meaningfully higher than league SLG because Savant credits hard contact that becomes outs at the .240 league-avg BAA rate |
 | `PRIOR_XBA_PA`, `PRIOR_XSLG_PA` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) | Half-stabilisation points for xBA / xSLG, both PA-denominated. Faster than full-xwOBA composition (~150 BIP) but slower than K%/BB% — empirically 100/120 PA respectively |
 | `TALENT_GATE_EFFECTIVE_PA` | [mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) | Effective-PA gate that switches AVG / H / K / BB per-cat baselines from raw-rate blend to talent-derived rate. Below 100 effective PA the talent regression is league-prior-dominated; above 100 it strips BABIP/luck noise meaningfully. ~30 GP for a regular |
+| `SP_SHARE_CLAMP` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Floor/ceiling on SP IP share — opener (0.30) and rare complete-game (0.85). See [§SP/RP blend](#sprp-blend). |
+| `RP_FULL_TRUST_IP` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | RP IP at full bullpen-aggregate confidence; below this `rpConfidence` shrinks linearly. 100 ≈ one month of team RP play. See [§SP/RP blend](#sprp-blend). |
+| `SB_SWING` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Clamp on team-aggregate SB-allowed multiplier. Tight bounds since runner skill and base-state dominate SB variance. |
 
 For league-mean priors used across many engines (`LEAGUE_K_RATE`, etc.) see [league-baselines.md](./league-baselines.md).
 

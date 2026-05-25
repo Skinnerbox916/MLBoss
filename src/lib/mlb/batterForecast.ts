@@ -14,12 +14,14 @@
  * `docs/unified-rating-model.md`.
  */
 
-import type { BatterSeasonStats } from './types';
+import type { BatterSeasonStats, TeamStaffSplits } from './types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { type MatchupContext, getWeatherScore } from './analysis';
 import { blendedBaselineForCategory, supportsStatId } from './categoryBaselines';
 import { getParkAdjustment } from './parkAdjustment';
+import { getLeagueSbAllowedPerIp } from './leagueRates';
 import {
+  LEAGUE_IP_PER_START,
   talentExpectedEra,
   talentBaa as talentBaaPrimitive,
   talentHrPerPA as talentHrPerPAPrimitive,
@@ -61,6 +63,86 @@ const PITCHER_SWING_HR = { lo: 0.85, hi: 1.18 };
  *  baserunning, and 8+ unrelated PAs. Pitcher's per-PA R contribution
  *  is a fraction of their ERA share. ±20% bounds the indirect effect. */
 const PITCHER_SWING_RUNS = { lo: 0.85, hi: 1.20 };
+
+/** SB-allowed team multiplier: team SB/IP ratio to league mean. Tight
+ *  bounds — SB success rate variance across staffs is small relative
+ *  to runner skill and base-state. ±25% absorbs the team-aggregate
+ *  signal without overstating its predictive weight. */
+const SB_SWING = { lo: 0.80, hi: 1.25 };
+
+// ---------------------------------------------------------------------------
+// SP/RP blend — every per-PA modifier the batter sees is a weighted mix
+// of the opposing SP (for `spShare` of the PAs) and the opposing
+// bullpen (for the rest). Without this blend the forecast assumes the
+// SP pitches all 9 IP, which overweights the SP signal by ~40% per game
+// on average and silently distorts forecasts for teams whose bullpen
+// quality diverges from their rotation (the Reds-style profile in the
+// 2025 batter-streaming examples).
+//
+// See docs/unified-rating-model.md "SP/RP blend".
+// ---------------------------------------------------------------------------
+
+/** Per-pitcher IP share clamp. Opener floor (~3.0) and rare
+ *  complete-game ceiling (~7.5) — anchors what's physically plausible
+ *  for `ipPerStart`-derived SP-share. */
+const SP_SHARE_CLAMP = { lo: 0.30, hi: 0.85 };
+
+/** RP IP at which we fully trust the team bullpen aggregate. Below
+ *  this, the blend shrinks back toward SP-only via `rpConfidence`.
+ *  ~100 IP is ~1 month of team bullpen play — past the early-season
+ *  noise window, and individual rates within the aggregate are
+ *  well-stabilized at the relevant PA counts. */
+const RP_FULL_TRUST_IP = 100;
+
+/**
+ * Effective SP-share of the batter's PAs in the game, with
+ * thin-sample shrinkage. Returns 1.0 when there's no usable bullpen
+ * aggregate (early season, missing data) — clean fallback to SP-only.
+ *
+ * Formula:
+ *   spShareBase = clamp(sp.ipPerStart / 9, 0.30, 0.85)
+ *   rpConfidence = clamp(rpIp / 100, 0, 1)
+ *   spShare = spShareBase + (1 - spShareBase) × (1 - rpConfidence)
+ */
+function computeSpShare(
+  sp: { talent?: { ipPerStart: number } | null } | null | undefined,
+  oppStaffSplits: TeamStaffSplits | null | undefined,
+): number {
+  const ipPerStart = sp?.talent?.ipPerStart ?? LEAGUE_IP_PER_START;
+  const spShareBase = clamp(ipPerStart / 9, SP_SHARE_CLAMP.lo, SP_SHARE_CLAMP.hi);
+  const rpIp = oppStaffSplits?.rp?.ip ?? 0;
+  const rpConfidence = clamp(rpIp / RP_FULL_TRUST_IP, 0, 1);
+  return spShareBase + (1 - spShareBase) * (1 - rpConfidence);
+}
+
+/** Blend two per-PA log5 results by SP-share weight. When the RP
+ *  rate is missing, the rpShare term contributes baseline (no
+ *  modifier) — which is mathematically a no-op when `spShare = 1.0`
+ *  (the only state in which RP data is missing in practice). */
+function blendLog5(
+  baseline: number,
+  spRate: number | null,
+  rpRate: number | null,
+  leagueRate: number,
+  spShare: number,
+): number {
+  const spEffective = spRate != null ? log5(baseline, spRate, leagueRate) : baseline;
+  const rpEffective = rpRate != null ? log5(baseline, rpRate, leagueRate) : baseline;
+  return spShare * spEffective + (1 - spShare) * rpEffective;
+}
+
+/** Blend two pitcher-ratio-clamped multipliers by SP-share weight. */
+function blendRatioMult(
+  spRate: number | null,
+  rpRate: number | null,
+  leagueRate: number,
+  swing: { lo: number; hi: number },
+  spShare: number,
+): number {
+  const spMod = spRate != null ? pitcherRatioClamp(spRate, leagueRate, swing) : 1.0;
+  const rpMod = rpRate != null ? pitcherRatioClamp(rpRate, leagueRate, swing) : 1.0;
+  return spShare * spMod + (1 - spShare) * rpMod;
+}
 
 // ---------------------------------------------------------------------------
 // SP-perspective wrappers around the canonical talent-math primitives in
@@ -159,7 +241,12 @@ interface ExpectedRate {
 
 /**
  * Apply the category-specific matchup modifier on top of the baseline
- * rate. Categories not handled here pass through baseline-only.
+ * rate. Every per-PA modifier blends the opposing SP and bullpen
+ * contributions by `spShare`. When the opposing team's bullpen
+ * aggregate is missing or thin, `spShare` shrinks back toward 1.0 so
+ * the forecast cleanly falls back to SP-only.
+ *
+ * Categories not handled here pass through baseline-only.
  */
 function applyMatchupModifier(
   statId: number,
@@ -170,6 +257,14 @@ function applyMatchupModifier(
 ): ExpectedRate {
   const sp = ctx?.opposingPitcher ?? null;
   const weatherMult = weatherCatFactor(ctx, statId);
+
+  // Opposing-team staff splits drive the bullpen side of every blend.
+  // `computeSpShare` returns 1.0 when these are missing or thin, so
+  // the SP-only fallback is automatic.
+  const opposingTeam = ctx?.isHome ? ctx.game.awayTeam : ctx?.game.homeTeam ?? null;
+  const oppStaffSplits = opposingTeam?.staffSplits ?? null;
+  const oppRp = oppStaffSplits?.rp ?? null;
+  const spShare = computeSpShare(sp, oppStaffSplits);
 
   // Shared `getParkAdjustment` call for any stat with park signal — the
   // primitive picks the right field by `statId`, resolves switch hitters
@@ -184,55 +279,75 @@ function applyMatchupModifier(
   });
 
   switch (statId) {
-    case 3: { // AVG — log5 against SP BAA + park.
-      const baa = spBaa(sp);
-      const useLog5 = baa != null;
-      const expected = useLog5
-        ? log5(baseline, baa, LEAGUE_AVG) * parkAdj.multiplier
-        : baseline * parkAdj.multiplier;
+    case 3: { // AVG — log5 blend (SP BAA, bullpen BAA) + park.
+      const spBaaR = spBaa(sp);
+      const rpBaaR = oppRp?.baa ?? null;
+      const blended = blendLog5(baseline, spBaaR, rpBaaR, LEAGUE_AVG, spShare);
+      const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
-      if (useLog5 && baa! <= 0.225) hints.push(`sub-${baa!.toFixed(3)} BAA SP`);
-      else if (useLog5 && baa! >= 0.260) hints.push(`${baa!.toFixed(3)} BAA SP`);
+      if (spBaaR != null && spBaaR <= 0.225) hints.push(`sub-${spBaaR.toFixed(3)} BAA SP`);
+      else if (spBaaR != null && spBaaR >= 0.260) hints.push(`${spBaaR.toFixed(3)} BAA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 12: { // HR — pitcher HR/PA from talent vector + park HR + weather.
+    case 12: { // HR — ratio-clamp blend (SP, bullpen HR/PA) + park + weather.
       // Pitcher swing tightened to literature: HR variance is dominated
       // by batter and park; the empirical extreme-pitcher edge per-PA is
       // ~2% (Tango/Clemens). PITCHER_SWING_HR caps at ±18%.
-      const hrPerPA = spHrPerPA(sp);
-      const spMod = hrPerPA != null ? pitcherRatioClamp(hrPerPA, LEAGUE_HR_PER_PA, PITCHER_SWING_HR) : 1.0;
-      const expected = baseline * spMod * parkAdj.multiplier * weatherMult;
+      const spHr = spHrPerPA(sp);
+      const rpHr = oppRp?.hrPerPA ?? null;
+      const blendedMod = blendRatioMult(spHr, rpHr, LEAGUE_HR_PER_PA, PITCHER_SWING_HR, spShare);
+      const expected = baseline * blendedMod * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
-      if (hrPerPA != null && hrPerPA >= 0.045) hints.push('HR-prone SP');
-      else if (hrPerPA != null && hrPerPA <= 0.025) hints.push('HR-suppressing SP');
+      if (spHr != null && spHr >= 0.045) hints.push('HR-prone SP');
+      else if (spHr != null && spHr <= 0.025) hints.push('HR-suppressing SP');
       if (parkAdj.hint) hints.push(parkAdj.hint);
       if (weatherMult >= 1.04) hints.push('wind-boost');
       else if (weatherMult <= 0.96) hints.push('wind-suppress');
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 16: { // SB — small bump vs RHP (slide step not SP's focus)
-      const vsRhpBump = sp?.throws === 'R' ? 1.05 : 1.0;
-      const hints = sp?.throws === 'R' ? ['RHP (easier to run)'] : [];
-      return { expected: baseline * vsRhpBump, modifierHint: hints.join(' · ') };
+    case 16: { // SB — RHP hand bump + team SB-allowed-per-IP blend.
+      // RHP bump is an SP-specific signal (slide step not the SP's
+      // focus). Team SB-allowed blend captures opposing-staff
+      // tendencies (catcher arm, pitcher times-to-plate). Both
+      // multiply, not additive — independent dimensions.
+      const handMult = sp?.throws === 'R' ? 1.05 : 1.0;
+
+      const leagueSbRate = getLeagueSbAllowedPerIp();
+      const oppSp = oppStaffSplits?.sp ?? null;
+      let teamSbMult = 1.0;
+      let teamSbHint = '';
+      if (leagueSbRate > 0 && (oppSp || oppRp)) {
+        const spRate = oppSp?.sbAllowedPerIp ?? leagueSbRate;
+        const rpRate = oppRp?.sbAllowedPerIp ?? leagueSbRate;
+        const blendedRate = spShare * spRate + (1 - spShare) * rpRate;
+        teamSbMult = clamp(blendedRate / leagueSbRate, SB_SWING.lo, SB_SWING.hi);
+        if (teamSbMult >= 1.10) teamSbHint = 'SB-permissive staff';
+        else if (teamSbMult <= 0.90) teamSbHint = 'SB-stingy staff';
+      }
+
+      const expected = baseline * handMult * teamSbMult;
+      const hints: string[] = [];
+      if (sp?.throws === 'R') hints.push('RHP (easier to run)');
+      if (teamSbHint) hints.push(teamSbHint);
+      return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 7: { // R — SP quality + park + staff ERA + batting order + weather.
+    case 7: { // R — ratio-clamp blend (SP xERA, bullpen ERA) + park + order + weather.
       // R/PA flows through team offense; per-PA pitcher contribution is
       // a fraction of their ERA share. PITCHER_SWING_RUNS caps at ±20%.
-      // Express SP modifier as a normalized ratio (xERA / 4.0) so the
-      // clamp is the single source of truth on swing magnitude.
+      // The SP+RP blend captures both rotation and bullpen quality,
+      // replacing the previous orphan `staffEra` clamp that
+      // double-counted the SP and asymmetrically excluded RBI.
       const orderMod = battingOrder && battingOrder >= 1 && battingOrder <= 3 ? 1.05
                      : battingOrder && battingOrder >= 7 ? 0.92
                      : 1.0;
       const expEra = spExpectedEra(sp);
-      const spMod = expEra != null ? pitcherRatioClamp(expEra, 4.0, PITCHER_SWING_RUNS) : 1.0;
-      const opposingTeam = ctx?.isHome ? ctx.game.awayTeam : ctx?.game.homeTeam ?? null;
-      const staffEra = opposingTeam?.staffEra ?? null;
-      const staffMod = staffEra != null ? clamp(Math.sqrt(staffEra / 4.2), 0.85, 1.2) : 1.0;
-      const expected = baseline * spMod * parkAdj.multiplier * staffMod * orderMod * weatherMult;
+      const rpEra = oppRp?.era ?? null;
+      const blendedMod = blendRatioMult(expEra, rpEra, 4.0, PITCHER_SWING_RUNS, spShare);
+      const expected = baseline * blendedMod * parkAdj.multiplier * orderMod * weatherMult;
       const hints: string[] = [];
       if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
       else if (expEra != null && expEra <= 3.20) hints.push(`${expEra.toFixed(2)} xERA SP`);
@@ -241,16 +356,18 @@ function applyMatchupModifier(
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 13: { // RBI — SP quality + park + middle-of-order + weather. (Staff-
-              //       ERA intentionally NOT applied: RBI scoring depends on
-              //       SP and own batters in front, not the relief pen.)
-      // Same swing bounds as R — RBI per-PA is similarly team-mediated.
+    case 13: { // RBI — ratio-clamp blend (SP xERA, bullpen ERA) + park + order + weather.
+      // Same blend pattern as R — RBI per-PA is similarly team-mediated.
+      // RBI now picks up bullpen contribution (it didn't before, when
+      // staffEra was R-only); this is a correctness fix, not a tuning
+      // change.
       const orderMod = battingOrder && battingOrder >= 3 && battingOrder <= 5 ? 1.08
                      : battingOrder && battingOrder >= 8 ? 0.9
                      : 1.0;
       const expEra = spExpectedEra(sp);
-      const spMod = expEra != null ? pitcherRatioClamp(expEra, 4.0, PITCHER_SWING_RUNS) : 1.0;
-      const expected = baseline * spMod * parkAdj.multiplier * orderMod * weatherMult;
+      const rpEra = oppRp?.era ?? null;
+      const blendedMod = blendRatioMult(expEra, rpEra, 4.0, PITCHER_SWING_RUNS, spShare);
+      const expected = baseline * blendedMod * parkAdj.multiplier * orderMod * weatherMult;
       const hints: string[] = [];
       if (expEra != null && expEra >= 4.5) hints.push(`${expEra.toFixed(2)} xERA SP`);
       else if (expEra != null && expEra <= 3.20) hints.push(`${expEra.toFixed(2)} xERA SP`);
@@ -259,11 +376,11 @@ function applyMatchupModifier(
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 21: { // K — log5 against SP K/PA + park SO factor.
+    case 21: { // K — log5 blend (SP K/PA, bullpen K/PA) + park SO factor.
       const spKRate = sp?.talent?.kPerPA ?? null;
-      const expected = (spKRate != null
-        ? log5(baseline, spKRate, LEAGUE_K_PER_PA)
-        : baseline) * parkAdj.multiplier;
+      const rpKRate = oppRp?.kPerPA ?? null;
+      const blended = blendLog5(baseline, spKRate, rpKRate, LEAGUE_K_PER_PA, spShare);
+      const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
       if (spKRate != null && spKRate >= 0.27) hints.push(`high-K SP (${(spKRate * 100).toFixed(0)}%)`);
       else if (spKRate != null && spKRate <= 0.18) hints.push(`low-K SP (${(spKRate * 100).toFixed(0)}%)`);
@@ -271,39 +388,31 @@ function applyMatchupModifier(
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 8: { // H — log5 against pitcher hits-per-PA + park + weather.
-      // Previously park-only, which left H asymmetrically uncalibrated
-      // vs AVG (AVG got a log5 SP modifier; H didn't). Same primitive
-      // applied here keeps AVG ↔ H consistent.
-      const hitsPerPA = spHitsPerPA(sp);
-      const log5Mod = hitsPerPA != null ? log5(baseline, hitsPerPA, LEAGUE_H_PER_PA) / baseline : 1.0;
-      const expected = baseline * log5Mod * parkAdj.multiplier * weatherMult;
+    case 8: { // H — log5 blend (SP, bullpen hits/PA) + park + weather.
+      const spHits = spHitsPerPA(sp);
+      const rpHits = oppRp?.hitsPerPA ?? null;
+      const blended = blendLog5(baseline, spHits, rpHits, LEAGUE_H_PER_PA, spShare);
+      const expected = blended * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
-      if (hitsPerPA != null && hitsPerPA >= 0.235) hints.push(`hit-prone SP (${hitsPerPA.toFixed(3)} H/PA)`);
-      else if (hitsPerPA != null && hitsPerPA <= 0.195) hints.push(`hit-suppressing SP (${hitsPerPA.toFixed(3)} H/PA)`);
+      if (spHits != null && spHits >= 0.235) hints.push(`hit-prone SP (${spHits.toFixed(3)} H/PA)`);
+      else if (spHits != null && spHits <= 0.195) hints.push(`hit-suppressing SP (${spHits.toFixed(3)} H/PA)`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       return { expected, modifierHint: hints.join(' · ') };
     }
 
-    case 23: { // TB — log5 against pitcher hits-per-PA + park + weather.
-      // TB tracks H + extra bases. Hits-per-PA captures the contact
-      // dimension; HR-specific power is already separately credited in
-      // the HR cat. Using the same hit-allowance primitive keeps H ↔ TB
-      // moving together (a hit-suppressing SP suppresses both).
-      const hitsPerPA = spHitsPerPA(sp);
-      const log5Mod = hitsPerPA != null ? log5(baseline, hitsPerPA, LEAGUE_H_PER_PA) / baseline : 1.0;
-      const expected = baseline * log5Mod * parkAdj.multiplier * weatherMult;
+    case 23: { // TB — log5 blend (SP, bullpen hits/PA) + park + weather.
+      const spHits = spHitsPerPA(sp);
+      const rpHits = oppRp?.hitsPerPA ?? null;
+      const blended = blendLog5(baseline, spHits, rpHits, LEAGUE_H_PER_PA, spShare);
+      const expected = blended * parkAdj.multiplier * weatherMult;
       return { expected, modifierHint: parkAdj.hint };
     }
 
-    case 18: { // BB — log5 against pitcher BB/PA + park.
-      // BB is one of the three true outcomes (K, BB, HR) and the most
-      // pitcher-controlled rate after K. log5 is the right primitive
-      // here; previously BB had only a park modifier, leaving the
-      // pitcher's BB-prone tendency uncredited.
+    case 18: { // BB — log5 blend (SP, bullpen BB/PA) + park.
       const spBb = sp?.talent?.bbPerPA ?? null;
-      const log5Mod = spBb != null ? log5(baseline, spBb, LEAGUE_BB_PER_PA) / baseline : 1.0;
-      const expected = baseline * log5Mod * parkAdj.multiplier;
+      const rpBb = oppRp?.bbPerPA ?? null;
+      const blended = blendLog5(baseline, spBb, rpBb, LEAGUE_BB_PER_PA, spShare);
+      const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
       if (spBb != null && spBb >= 0.10) hints.push(`high-BB SP (${(spBb * 100).toFixed(0)}%)`);
       else if (spBb != null && spBb <= 0.06) hints.push(`low-BB SP (${(spBb * 100).toFixed(0)}%)`);

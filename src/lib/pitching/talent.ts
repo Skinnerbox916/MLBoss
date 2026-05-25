@@ -372,8 +372,11 @@ export const LEAGUE_OPS = 0.710;
 const LEAGUE_HR_PER_CONTACT = 0.035;
 const LEAGUE_HR_PER_CONTACT_PRIOR_BIP = 200;
 
-/** League-average IP/start. Anchors `ipPerStart` for thin samples. */
-const LEAGUE_IP_PER_START = 5.4;
+/** League-average IP/start. Anchors `ipPerStart` for thin samples
+ *  in the talent regression, and is exported as the fallback when
+ *  `talent` is missing on a stub SP (e.g. ID resolution failed) for
+ *  consumers that derive an SP-share from `ipPerStart`. */
+export const LEAGUE_IP_PER_START = 5.4;
 const LEAGUE_IP_PER_START_PRIOR_GS = 6;
 
 /** League-mean reliever workload anchors. Sourced from 2024 MLB season:

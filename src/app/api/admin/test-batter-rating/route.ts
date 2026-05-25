@@ -29,7 +29,10 @@ import { getSession } from '@/lib/auth';
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/matchupContext';
-import type { ProbablePitcher, EnrichedGame, GameWeather, ParkData } from '@/lib/mlb/types';
+import type {
+  ProbablePitcher, EnrichedGame, GameWeather, ParkData,
+  RolePitchingLine, TeamStaffSplits,
+} from '@/lib/mlb/types';
 import type { PitcherTalent } from '@/lib/pitching/talent';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { Focus } from '@/lib/rating/focus';
@@ -208,18 +211,44 @@ const PITCHER_PARK: ParkData = park({
   tendency: 'pitcher',
 });
 
+/**
+ * Build a `RolePitchingLine` with sensible defaults. Pass overrides for
+ * the specific role aggregate values the test profile cares about. All
+ * fields are independently set so a tester can construct extreme SP-vs-
+ * RP divergences (e.g. average SP line + shaky bullpen) without
+ * synthesizing a full team season.
+ */
+function roleLine(overrides: Partial<RolePitchingLine>): RolePitchingLine {
+  return {
+    ip: 600, battersFaced: 2500,
+    kPerPA: 0.225, bbPerPA: 0.080, hitsPerPA: 0.215, hrPerPA: 0.034,
+    baa: 0.243, era: 4.20, sbAllowedPerIp: 0.075,
+    ...overrides,
+  };
+}
+
 function game(opts: {
   park: ParkData | null;
   weather?: GameWeather;
   homeStaffEra?: number;
   awayStaffEra?: number;
+  homeStaffSplits?: TeamStaffSplits;
+  awayStaffSplits?: TeamStaffSplits;
 }): EnrichedGame {
   return {
     gamePk: 999,
     gameDate: '2026-06-15T19:10:00Z',
     status: 'Scheduled',
-    homeTeam: { mlbId: 1, name: 'Home', abbreviation: 'HOM', staffEra: opts.homeStaffEra ?? 4.20 },
-    awayTeam: { mlbId: 2, name: 'Away', abbreviation: 'AWY', staffEra: opts.awayStaffEra ?? 4.30 },
+    homeTeam: {
+      mlbId: 1, name: 'Home', abbreviation: 'HOM',
+      staffEra: opts.homeStaffEra ?? 4.20,
+      staffSplits: opts.homeStaffSplits,
+    },
+    awayTeam: {
+      mlbId: 2, name: 'Away', abbreviation: 'AWY',
+      staffEra: opts.awayStaffEra ?? 4.30,
+      staffSplits: opts.awayStaffSplits,
+    },
     venue: { mlbId: opts.park?.mlbVenueId ?? 100, name: opts.park?.name ?? 'Test Venue' },
     weather: opts.weather ?? NEUTRAL_WEATHER,
     homeProbablePitcher: null,
@@ -279,7 +308,10 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 2,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [45, 65],
+    // Above-average batter vs league-mean SP → SP modifiers are all
+    // ~neutral; the score reflects baseline talent + batting-order
+    // opportunity (1.06×) − platoon (0.97×). Lands near 67.
+    expectedScoreRange: [55, 75],
   },
   {
     name: 'strong-vs-ace',
@@ -323,7 +355,10 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 1,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [30, 55],
+    // Coors + wind-out + leadoff + HR-prone hit-allowing SP stacks the
+    // R/H/TB/HR cats heavily — the weak baseline gets dragged way up.
+    // R, H, TB hit normalize ceiling 1.0; HR cat lifts to 0.43.
+    expectedScoreRange: [55, 80],
   },
   {
     name: 'switch-hitter-pitchers-park',
@@ -360,7 +395,10 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 3,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [45, 65],
+    // No SP → all per-PA modifiers reduce to baseline. Score = strong
+    // baseline × batting-order opportunity (1.04×) × no platoon
+    // adjustment (no hand to platoon against). Lands near 70.
+    expectedScoreRange: [60, 80],
   },
   {
     name: 'no-game',
@@ -405,7 +443,11 @@ const PROFILES: Profile[] = [
       12: 'chase', 7: 'chase', 13: 'chase',
       16: 'punt', 21: 'punt',
     },
-    expectedScoreRange: [40, 70],
+    // Power-batter × Coors × wind-out × HR-prone SP × chased cats (HR,
+    // R, RBI) × punted negatives (K, SB). Every chase cat hits the
+    // normalize ceiling 1.0; weighted-sum-with-chase-x2 maxes out the
+    // composite. Score saturates near 96-100 — this is a ceiling test.
+    expectedScoreRange: [85, 100],
   },
   {
     name: 'thin-sample',
@@ -427,6 +469,70 @@ const PROFILES: Profile[] = [
     battingOrder: 7,
     focusMap: NEUTRAL_FOCUS,
     expectedScoreRange: [30, 55],
+  },
+  {
+    // SP/RP divergence: average SP against a shaky bullpen. The blend
+    // should land between SP-only and RP-only forecasts — the
+    // batter benefits from the weak bullpen for ~40% of PAs even
+    // though the SP is league-average.
+    name: 'reds-style-bullpen',
+    desc: 'Strong RHB vs avg SP + shaky bullpen (high BB / high BAA / high ERA), neutral park',
+    stats: batter({}),
+    context: ctx({
+      game: game({
+        park: NEUTRAL_PARK,
+        awayStaffSplits: {
+          sp: roleLine({}),
+          rp: roleLine({
+            era: 5.20, baa: 0.260, kPerPA: 0.190,
+            bbPerPA: 0.110, hitsPerPA: 0.245, hrPerPA: 0.045,
+            sbAllowedPerIp: 0.115, ip: 250,
+          }),
+        },
+      }),
+      isHome: true,
+      opposingPitcher: sp({ throws: 'R' }),
+      hand: 'R',
+      battingOrder: 3,
+    }),
+    battingOrder: 3,
+    focusMap: NEUTRAL_FOCUS,
+    // spShare ≈ 0.61 → bullpen contributes ~39% of every modifier.
+    // The shaky RP lifts R, RBI, BB, H, SB above their SP-only baselines.
+    // Score should land meaningfully above strong-vs-average (~67) — the
+    // soft bullpen is the entire point of the test.
+    expectedScoreRange: [70, 90],
+  },
+  {
+    // Opener: SP exits after ~3 IP, so spShare drops to ~0.33 and the
+    // bullpen dominates the forecast. With a neutral bullpen this
+    // mostly washes out — the test value here is verifying the blend
+    // actually shifts the spShare via `ipPerStart`.
+    name: 'opener-game',
+    desc: 'Strong RHB vs opener (ipPerStart=3.0) + neutral bullpen, neutral park',
+    stats: batter({}),
+    context: ctx({
+      game: game({
+        park: NEUTRAL_PARK,
+        awayStaffSplits: {
+          sp: roleLine({}),
+          rp: roleLine({ ip: 300 }),
+        },
+      }),
+      isHome: true,
+      opposingPitcher: sp({
+        throws: 'R',
+        talent: pitcherTalent({ ipPerStart: 3.0, kPerPA: 0.30, contactXwoba: 0.310 }),
+      }),
+      hand: 'R',
+      battingOrder: 3,
+    }),
+    battingOrder: 3,
+    focusMap: NEUTRAL_FOCUS,
+    // Opener has ace-level per-PA rates but only 3 IP — bullpen pulls
+    // toward league-average. Score lands above the no-blend score
+    // (where ace rates would dominate 9 IP).
+    expectedScoreRange: [40, 65],
   },
   {
     name: 'all-punt',

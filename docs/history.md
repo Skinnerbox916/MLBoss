@@ -8,6 +8,34 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-05 — Batter forecast SP/RP blend (orphan `staffEra` clamp removed)
+
+`buildBatterForecast` treated every batter PA as though it was against the opposing starter — log5 against `sp.talent.kPerPA`, `sp.baa`, etc. applied to all 9 innings. In practice an average SP pitches ~5.3 of 9 IP, so ~40% of a batter's PAs in a typical game are against the bullpen. The SP-only model systematically overweighted the SP signal and silently misforecast batters facing teams where bullpen quality diverged from rotation quality (Reds-style 2025 profile: average-ish SP, soft bullpen).
+
+The only opposing-team-pitching signal the forecast layer used was `staffEra` (overall team ERA) as a `sqrt(staffEra / 4.2)` ratio clamp applied **only to the R cat**, not RBI. That code (a) double-counted the SP since team-total ERA includes SP innings, (b) asymmetrically excluded RBI despite RBI per-PA being similarly team-mediated, and (c) used the wrong signal (overall, not RP-only) for what it was trying to capture (bullpen contribution).
+
+**Replaced with:** every per-PA modifier in `buildBatterForecast` now blends SP and bullpen signals weighted by `spShare`. The blend covers AVG, K, BB, H, TB, HR, R, RBI, and SB. The orphan `staffMod` clamp on R is gone — the blend captures both rotation and bullpen contributions in one pass.
+
+Mechanics:
+- `spShareBase = clamp(sp.talent.ipPerStart / 9, 0.30, 0.85)` — per-pitcher, driven by talent-layer-regressed `ipPerStart` (anchored to `LEAGUE_IP_PER_START = 5.4`)
+- `rpConfidence = clamp(team.rp.ip / 100, 0, 1)` — shrinks the bullpen weight when the team RP aggregate is thin (early-season cold start, etc.)
+- `spShare = spShareBase + (1 - spShareBase) × (1 - rpConfidence)` — falls back to 1.0 (SP-only) when there's no usable bullpen data; full bullpen contribution at 100+ team RP IP
+
+Data layer: new `fetchTeamStaffSplits` in [schedule.ts](../src/lib/mlb/schedule.ts) hits MLB Stats API `statSplits` with `sitCodes=sp,rp` — one call returns all 30 teams × 2 roles with K/BB/H/HR/SB/IP/BF/BAA/ERA per role. Stamped onto `MLBGame.{home,away}Team.staffSplits` alongside the existing `staffEra` field. STATIC-tier cache.
+
+Parallel pitcher-side win in same change: [`buildBullpenMultiplier`](../src/lib/pitching/forecast.ts) (used by W-probability) used `staffEra` as a proxy for relief-only ERA with an in-code comment acknowledging the ~0.7 correlation cost. After this change it reads `team.staffSplits.rp.era` directly, with `staffEra` as a fallback only when splits are missing.
+
+SB cat: previously a flat `1.05` bump vs RHP and nothing else (with a `batterRating.ts` line-47 comment noting "no per-pitcher SB-allowed signal"). The hand-bump is retained as SP-specific signal; layered on top is now a team-aggregate SB-allowed-per-IP multiplier blended SP/RP and clamped to `[0.80, 1.25]`. League SB-allowed-per-IP is computed from the same `statSplits` response (sum SBs / sum IPs) and exposed via `getLeagueSbAllowedPerIp`.
+
+**Don't reintroduce:**
+- The standalone `staffMod = sqrt(staffEra / 4.2)` clamp on R only. It was double-counting + asymmetric. The blend is correct.
+- Treating the SP's per-PA rates as if they covered all 9 IP. The bullpen contributes ~40% of PAs and has measurably different rates on many teams; ignoring it is a known-sized error.
+- A separate "opposing bullpen pill" UI. The opposing-staff pill in [analysis.ts](../src/lib/mlb/analysis.ts) is intentionally an overall-staff-at-a-glance verdict and reads `staffEra`, not the splits — both fields are populated and serve different purposes.
+
+**Deliberately out of scope** (with `// TODO` markers for the next pass):
+- **Opposing bullpen in pitcher W probability.** A bad opposing bullpen makes late-inning run support more likely for the user's team. ~±2-3% W effect; needs co-modeling of the user's team's offense, which is broader work.
+- **Closer SV-opportunity projection.** `statSplits` returns saves / save opportunities / blown saves / holds per role per team; could improve `buildReliefWeekForecast`. No reliever-streaming surface exists yet, so the data isn't load-bearing for any decision.
+
 ## 2026-05 — Boss Card pitcher block: daily start-count strip removed
 
 The Boss Card pitcher block used to show a Mon..Sun "day strip" with one circle per day, sized larger for "spike" days where one side had 3+ probable starts. The framing was head-to-head daily ("you have 1 Sunday, opp has 3"), and a `SPIKE_THRESHOLD = 3` constant in `WeekProgress.tsx` drove an emphasized visual.

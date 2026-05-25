@@ -61,6 +61,17 @@ Used by [pitching/talent.ts](../src/lib/pitching/talent.ts) and [pitching/foreca
 | Constant | File | Anchor |
 |---|---|---|
 | `LEAGUE_OPS` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average team OPS. Anchor for the opposing-offense factor in forecast layer (a team with .750 OPS vs .710 league mean inflates BB and contact-xwOBA). |
+| `LEAGUE_SB_ALLOWED_PER_IP_FALLBACK` | [mlb/leagueRates.ts](../src/lib/mlb/leagueRates.ts) | Fallback league SB-allowed per team-IP rate used when the team staff-splits fetch fails or returns empty. The runtime value is **derived from the same call as the per-team data** (sum SBs / sum IPs across all returned splits) by `fetchTeamStaffSplits` in [schedule.ts](../src/lib/mlb/schedule.ts) and stored via `setLeagueSbAllowedPerIp`; `buildBatterForecast` reads via `getLeagueSbAllowedPerIp`. The constant only fires when there's no live data. Anchor: ~0.075 (2024-2025 MLB). |
+
+## SP/RP blend (batter forecast)
+
+Calibration for the SP/RP blend in [batterForecast.ts](../src/lib/mlb/batterForecast.ts). See [unified-rating-model.md](./unified-rating-model.md#sprp-blend) for the design rationale.
+
+| Constant | File | Anchor |
+|---|---|---|
+| `SP_SHARE_CLAMP` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Floor / ceiling on the SP IP share of the batter's PAs. `[0.30, 0.85]` anchors to opener-style appearances (low) and rare complete-game starts (high). The midpoint matches league-average SP IP/start ≈ 5.4 → spShare ≈ 0.60. |
+| `RP_FULL_TRUST_IP` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Team RP innings at which the bullpen aggregate is fully trusted. `100` ≈ ~1 month of team bullpen play; below this, `rpConfidence` shrinks linearly toward 0 and the blend pulls back to SP-only. K%/BB% are well-stabilized at the implied PA counts (~430 PAs at 100 IP). |
+| `SB_SWING` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Clamp on the team-aggregate SB-allowed multiplier on the batter's SB rate. `[0.80, 1.25]` absorbs the team-level signal without overweighting it; runner skill and base-state dominate SB variance, so the team contribution is real but bounded. |
 
 ## Recommendation-layer thresholds
 

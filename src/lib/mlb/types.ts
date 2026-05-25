@@ -94,6 +94,31 @@ export interface LineupEntry {
   position: string;             // e.g. 'SS', 'CF', 'DH'
 }
 
+/**
+ * Per-role pitching aggregate for one team-season. Sourced from MLB
+ * Stats API `statSplits` with `sitCodes=sp,rp` — one call per season,
+ * cached STATIC. Both the batter forecast (SP/RP blend) and the pitcher
+ * W-probability multiplier consume this. See
+ * docs/unified-rating-model.md "SP/RP blend".
+ */
+export interface RolePitchingLine {
+  ip: number;
+  battersFaced: number;
+  kPerPA: number;
+  bbPerPA: number;
+  hitsPerPA: number;
+  hrPerPA: number;
+  baa: number;
+  era: number;
+  /** Stolen bases allowed per IP — used by the SB cat blend. */
+  sbAllowedPerIp: number;
+}
+
+export interface TeamStaffSplits {
+  sp: RolePitchingLine | null;
+  rp: RolePitchingLine | null;
+}
+
 export interface MLBGame {
   gamePk: number;
   gameDate: string;             // ISO datetime
@@ -103,12 +128,14 @@ export interface MLBGame {
     name: string;
     abbreviation: string;
     staffEra?: number;
+    staffSplits?: TeamStaffSplits;
   };
   awayTeam: {
     mlbId: number;
     name: string;
     abbreviation: string;
     staffEra?: number;
+    staffSplits?: TeamStaffSplits;
   };
   venue: GameVenue;
   weather: GameWeather;

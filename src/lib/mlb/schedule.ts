@@ -18,7 +18,14 @@ import { fetchStatcastPitchers } from './savant';
 import { computePitcherTalent } from '../pitching/talent';
 import { fetchESPNScoreboard, extractPitchersFromEvent } from '../espn/client';
 import { recordPostedLineup } from './lineupSpots';
-import type { MLBGame, ProbablePitcher, GameWeather, LineupEntry } from './types';
+import type {
+  MLBGame, ProbablePitcher, GameWeather, LineupEntry,
+  RolePitchingLine, TeamStaffSplits,
+} from './types';
+import {
+  LEAGUE_SB_ALLOWED_PER_IP_FALLBACK,
+  setLeagueSbAllowedPerIp,
+} from './leagueRates';
 
 // ---------------------------------------------------------------------------
 // MLB Stats API response shapes (internal — not exported)
@@ -292,6 +299,121 @@ async function fetchTeamStaffEra(
 }
 
 // ---------------------------------------------------------------------------
+// Team SP/RP split aggregates
+// ---------------------------------------------------------------------------
+
+interface RawRoleStat {
+  inningsPitched?: string;
+  battersFaced?: number;
+  strikeOuts?: number;
+  baseOnBalls?: number;
+  hits?: number;
+  homeRuns?: number;
+  stolenBases?: number;
+  avg?: string;
+  era?: string;
+}
+
+interface RawTeamStaffSplitsResponse {
+  stats?: Array<{
+    type?: { displayName: string };
+    splits: Array<{
+      team: { id: number; name: string };
+      split?: { code?: string };
+      stat: RawRoleStat;
+    }>;
+  }>;
+}
+
+/**
+ * Parse "865.2" (innings.outs) into 865.667 decimal IP. MLB API uses
+ * baseball notation for innings — the digit after the decimal is OUTS
+ * (0, 1, or 2) not tenths.
+ */
+function parseInnings(ip: string | undefined): number {
+  if (!ip) return 0;
+  const [whole, outs] = ip.split('.');
+  return parseInt(whole, 10) + (outs ? parseInt(outs, 10) / 3 : 0);
+}
+
+function parseRoleLine(stat: RawRoleStat): RolePitchingLine | null {
+  const ip = parseInnings(stat.inningsPitched);
+  const bf = stat.battersFaced ?? 0;
+  if (ip <= 0 || bf <= 0) return null;
+  const baa = stat.avg ? parseFloat(stat.avg) : 0;
+  const era = stat.era ? parseFloat(stat.era) : 0;
+  return {
+    ip,
+    battersFaced: bf,
+    kPerPA: (stat.strikeOuts ?? 0) / bf,
+    bbPerPA: (stat.baseOnBalls ?? 0) / bf,
+    hitsPerPA: (stat.hits ?? 0) / bf,
+    hrPerPA: (stat.homeRuns ?? 0) / bf,
+    baa: isNaN(baa) ? 0 : baa,
+    era: isNaN(era) ? 0 : era,
+    sbAllowedPerIp: (stat.stolenBases ?? 0) / ip,
+  };
+}
+
+/**
+ * Result of fetching team SP/RP splits — the per-team map plus the
+ * league-wide SB-allowed-per-IP mean derived from totals across all
+ * splits. The SB cat modifier reads `leagueSbAllowedPerIp` so the
+ * league anchor is sourced from the same call as the team data
+ * rather than from a hardcoded constant that goes stale.
+ */
+interface TeamStaffSplitsResult {
+  byTeam: Map<number, TeamStaffSplits>;
+  leagueSbAllowedPerIp: number;
+}
+
+/**
+ * Fetch all MLB teams' SP/RP-split pitching aggregates in a single
+ * `statSplits` call. Cached 24h. Returns per-team SP and RP role lines
+ * plus the league-wide SB-allowed-per-IP mean used by the SB cat
+ * modifier.
+ *
+ * The MLB Stats API `statSplits` endpoint with `sitCodes=sp,rp`
+ * returns 60 rows (30 teams × 2 roles). Limit set high to avoid the
+ * default page truncation.
+ */
+async function fetchTeamStaffSplits(
+  season: number = new Date().getFullYear(),
+): Promise<TeamStaffSplitsResult> {
+  const byTeam = new Map<number, TeamStaffSplits>();
+  let totalSb = 0;
+  let totalIp = 0;
+  try {
+    const raw = await mlbFetchTeamStats<RawTeamStaffSplitsResponse>(
+      `/teams/stats?stats=statSplits&group=pitching&sportId=1&season=${season}&sitCodes=sp,rp&gameType=R&limit=100`,
+      `team-staff-splits:${season}`,
+    );
+    const group = raw.stats?.find(g => g.type?.displayName === 'statSplits');
+    if (group) {
+      for (const split of group.splits) {
+        const code = split.split?.code;
+        if (code !== 'sp' && code !== 'rp') continue;
+        const line = parseRoleLine(split.stat);
+        if (!line) continue;
+        const existing = byTeam.get(split.team.id) ?? { sp: null, rp: null };
+        if (code === 'sp') existing.sp = line;
+        else existing.rp = line;
+        byTeam.set(split.team.id, existing);
+        totalSb += (split.stat.stolenBases ?? 0);
+        totalIp += line.ip;
+      }
+    }
+  } catch (err) {
+    console.error('fetchTeamStaffSplits failed:', err);
+  }
+  const leagueSbAllowedPerIp = totalIp > 0
+    ? totalSb / totalIp
+    : LEAGUE_SB_ALLOWED_PER_IP_FALLBACK;
+  return { byTeam, leagueSbAllowedPerIp };
+}
+
+
+// ---------------------------------------------------------------------------
 // ESPN pitcher-name lookup (single source of truth for probable-pitcher names)
 //
 // MLB's /schedule endpoint only fills `probablePitcher` for games ~2-3 days
@@ -395,7 +517,7 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
   // Fetch MLB schedule + ESPN scoreboard + slate-wide context in parallel.
   // ESPN is the source of truth for who's pitching; MLB owns the game shell.
   const currentYear = new Date().getFullYear();
-  const [raw, espn, savantMap, priorSavantMap, teamEraMap] = await Promise.all([
+  const [raw, espn, savantMap, priorSavantMap, teamEraMap, staffSplitsResult] = await Promise.all([
     mlbFetchSchedule<RawScheduleResponse>(path, date),
     fetchESPNScoreboard(date, date).catch(err => {
       console.error('ESPN scoreboard fetch failed; pitcher names will be missing:', err);
@@ -404,7 +526,9 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
     fetchStatcastPitchers(currentYear),
     fetchStatcastPitchers(currentYear - 1),
     fetchTeamStaffEra(),
+    fetchTeamStaffSplits(),
   ]);
+  setLeagueSbAllowedPerIp(staffSplitsResult.leagueSbAllowedPerIp);
 
   const dateEntry = raw.dates?.[0];
   if (!dateEntry) return [];
@@ -477,11 +601,15 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
     }),
   );
 
-  // Attach team staff ERA for the opposing-staff pill (today batting),
-  // batter rating's bullpen modifier, and forecast.ts ownStaffEra reads.
+  // Attach team staff ERA for the opposing-staff pill (today batting)
+  // and the W-probability bullpen multiplier when SP/RP splits are
+  // missing. Attach the SP/RP splits for the batter SP/RP blend and
+  // the W-probability bullpen multiplier's real-RP-ERA path.
   for (const game of games) {
     game.homeTeam.staffEra = teamEraMap.get(game.homeTeam.mlbId);
     game.awayTeam.staffEra = teamEraMap.get(game.awayTeam.mlbId);
+    game.homeTeam.staffSplits = staffSplitsResult.byTeam.get(game.homeTeam.mlbId);
+    game.awayTeam.staffSplits = staffSplitsResult.byTeam.get(game.awayTeam.mlbId);
   }
 
   // Fire-and-forget: record any posted lineup spots so the forward-projection

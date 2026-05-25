@@ -65,9 +65,10 @@ export interface CategoryBaselineConfig {
  * happening this year).
  */
 export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = {
-  3: { // AVG
+  3: { // AVG — leagueMean refreshed 2026 mid-season from MLB Stats API
+       //       (was 0.243 from 2024; reality is ~0.239 in 2026).
     label: 'AVG',
-    leagueMean: 0.243,
+    leagueMean: 0.239,
     leaguePriorN: 100,
     priorCap: 250,
     getCurrent: s => s.avg,
@@ -85,9 +86,9 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     normRange: [0.090, 0.155],
     betterIs: 'higher',
   },
-  8: { // H
+  8: { // H — leagueMean refreshed 2026 (was 0.215).
     label: 'H',
-    leagueMean: 0.215,
+    leagueMean: 0.212,
     leaguePriorN: 100,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.hits / s.pa : null),
@@ -95,9 +96,10 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     normRange: [0.195, 0.265],
     betterIs: 'higher',
   },
-  12: { // HR
+  12: { // HR — leagueMean refreshed 2026 (was 0.028). HR rates have
+        //      compressed; the 2026 league HR/PA is ~0.0275.
     label: 'HR',
-    leagueMean: 0.028,
+    leagueMean: 0.0275,
     leaguePriorN: 100,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.hr / s.pa : null),
@@ -125,9 +127,10 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     normRange: [0.005, 0.050],
     betterIs: 'higher',
   },
-  18: { // BB — stabilises ~120 PA
+  18: { // BB — stabilises ~120 PA. leagueMean refreshed 2026 (was 0.084).
+        //      BB rate has climbed notably; 2026 league BB/PA is ~0.094.
     label: 'BB',
-    leagueMean: 0.084,
+    leagueMean: 0.094,
     leaguePriorN: 80,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.walks / s.pa : null),
@@ -135,9 +138,10 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     normRange: [0.055, 0.140],
     betterIs: 'higher',
   },
-  21: { // K — stabilises ~60 PA; tighter prior cap so a diverging current K% isn't drowned
+  21: { // K — stabilises ~60 PA; tighter prior cap so a diverging current K% isn't drowned.
+        //     leagueMean refreshed 2026 (was 0.223 → 0.221, essentially stable).
     label: 'K',
-    leagueMean: 0.223,
+    leagueMean: 0.221,
     leaguePriorN: 50,
     priorCap: 150,
     getCurrent: s => (s.pa > 0 ? s.strikeouts / s.pa : null),

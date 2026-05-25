@@ -8,6 +8,41 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-05 — League rate calibration refresh (revealed by SP/RP blend)
+
+After the SP/RP blend shipped, every batter rating in the lineup optimizer dropped systematically — most visibly on the AVG cat (chase-AVG panels flipped from "lead" to "narrow deficit" across the board). Root cause was not the blend itself but **stale league rate constants** that the blend exposed.
+
+The log5 anchors (`LEAGUE_AVG`, `LEAGUE_K_PER_PA`, `LEAGUE_BB_PER_PA`, `LEAGUE_H_PER_PA`, `LEAGUE_HR_PER_PA` in batterForecast.ts) were set in 2024. Pre-blend, log5 fired once per cat against the SP rate alone — if both the anchor and the SP rate were slightly off in the same direction, log5 still landed near the batter's baseline (the anchor error mostly cancelled). With the blend, log5 fires *twice* (SP + RP) and pulls toward both pitcher rates; the anchor error compounded.
+
+Worked example for a .275 batter facing average matchup with stale anchor (0.243) vs refreshed (0.239):
+
+| | SP log5 | RP log5 | Blended |
+|---|---|---|---|
+| Stale anchor | 0.268 | 0.259 | 0.265 |
+| Refreshed anchor | 0.273 | 0.263 | 0.269 |
+
+The 0.004 gap is exactly the user-visible "post-deploy drift" — refreshing the anchor mathematically cancels it.
+
+**HR was even worse:** stale `LEAGUE_HR_PER_PA = 0.034` vs reality 0.0275. The ratio-clamp (`pitcherRatioClamp(rate / 0.034, 0.85, 1.18)`) was below 1.0 even for an average pitcher; the floor 0.85 was biting for the RP side. Refresh moved the league multiplier from ~0.86 to ~1.0 — a real HR-projection lift that should have been there all along.
+
+**Refreshed values** (all sourced from `/api/v1/teams/stats?stats=season&group=pitching` for the current season, mid-2026):
+
+| Constant | Was | Now |
+|---|---|---|
+| `LEAGUE_AVG` (and `categoryBaselines.ts` stat 3 `leagueMean`, `talentModel.ts` `LEAGUE_XBA`) | 0.243 | 0.239 |
+| `LEAGUE_H_PER_PA` (and stat 8 `leagueMean`) | 0.215 | 0.212 |
+| `LEAGUE_K_PER_PA` (and stat 21 `leagueMean`, `talentModel.ts` `LEAGUE_K_RATE`) | 0.223 | 0.221 |
+| `LEAGUE_BB_PER_PA` (and stat 18 `leagueMean`, `talentModel.ts` `LEAGUE_BB_RATE`) | 0.084 | 0.094 |
+| `LEAGUE_HR_PER_PA` (and stat 12 `leagueMean`) | 0.034 | 0.0275 |
+
+The zero-sum constraint (every pitcher PA equals one batter PA) means batter-side and pitcher-side anchors must agree; all three locations updated in lockstep.
+
+**Don't reintroduce:**
+- A 2024-anchored league rate constant if you're tuning for the current season. These need an annual offseason refresh (see [league-baselines.md](./league-baselines.md#updating-these)).
+- A constant called "LEAGUE_X" without a comment dating its source. The fact that some of these said "2024 MLB average" in a 2026 codebase is what let the drift hide.
+
+**Deliberately out of scope:** `LEAGUE_HR_PER_CONTACT` (HR per ball in play, used in pitcher talent regression — not the same as HR/PA), `LEAGUE_XSLG`, `LEAGUE_XWOBACON`. These need a separate Savant-side probe; not refreshing them here keeps the blast radius contained.
+
 ## 2026-05 — Batter forecast SP/RP blend (orphan `staffEra` clamp removed)
 
 `buildBatterForecast` treated every batter PA as though it was against the opposing starter — log5 against `sp.talent.kPerPA`, `sp.baa`, etc. applied to all 9 innings. In practice an average SP pitches ~5.3 of 9 IP, so ~40% of a batter's PAs in a typical game are against the bullpen. The SP-only model systematically overweighted the SP signal and silently misforecast batters facing teams where bullpen quality diverged from rotation quality (Reds-style 2025 profile: average-ish SP, soft bullpen).

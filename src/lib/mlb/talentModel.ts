@@ -41,19 +41,25 @@ import type { StatcastBatter, StatcastPitcher } from './types';
 // 50% on the population mean — the classic Bayesian regression setup.
 // ---------------------------------------------------------------------------
 
-const LEAGUE_K_RATE = 0.223;          // 2024 MLB average
-const LEAGUE_BB_RATE = 0.084;
+// League rates refreshed 2026 mid-season from MLB Stats API. Must agree
+// with batter-side LEAGUE_AVG / LEAGUE_K_PER_PA / LEAGUE_BB_PER_PA in
+// batterForecast.ts and leagueMean values in categoryBaselines.ts — MLB
+// is zero-sum, both sides must agree. See docs/history.md "2026-05 —
+// League rate calibration refresh".
+const LEAGUE_K_RATE = 0.221;
+const LEAGUE_BB_RATE = 0.094;
 const LEAGUE_XWOBACON = 0.368;        // batter xwOBA on contact
 const LEAGUE_XWOBACON_PITCHER = 0.368; // pitcher-allowed xwOBA on contact
 const LEAGUE_HARD_HIT = 0.40;         // MLB average Hard-Hit % (EV ≥ 95 mph)
 
 const LEAGUE_XWOBA = 0.320;           // for the end-result composite clamp
-// 2024 MLB averages from Savant expected-stats leaderboard. xBA tracks AVG
-// closely (it's the no-luck deserved version of AVG); xSLG is meaningfully
-// higher than league SLG because Savant's per-BBE expected outcomes credit
-// hard contact that becomes outs at the .240 league-average BAA rate.
+// xBA tracks AVG closely (it's the no-luck deserved version of AVG); xSLG
+// is meaningfully higher than league SLG because Savant's per-BBE expected
+// outcomes credit hard contact that becomes outs at the league-average
+// BAA rate. xBA refreshed 2026 (0.243 → 0.239); xSLG left at 0.404 pending
+// a separate Savant probe.
 // See docs/unified-rating-model.md#per-cat-batter-baselines for usage.
-const LEAGUE_XBA = 0.243;
+const LEAGUE_XBA = 0.239;
 const LEAGUE_XSLG = 0.404;
 
 const PRIOR_K_PA = 60;

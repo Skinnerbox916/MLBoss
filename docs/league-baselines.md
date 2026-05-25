@@ -85,11 +85,13 @@ These aren't league baselines but they ARE cross-engine — every advice surface
 
 ## Updating these
 
-Annual offseason refresh from FanGraphs / Statcast leaderboards. When you do an update:
+Annual offseason refresh from FanGraphs / Statcast leaderboards, OR mid-season when an SP/RP-blend-style architecture change reveals that a stale anchor is no longer cancelling against the data path. When you do an update:
 
-1. Source the value from a public leaderboard (FanGraphs leaders → Standard or Advanced; Statcast Search). Note the season and URL in the commit message.
-2. Run the pitcher smoke harness at `src/app/api/admin/test-pitcher-eval/route.ts` — it asserts that canonical archetypes (Skubal, Houser, Montero, Roupp) land in their expected score/tier bands.
-3. Spot-check the batter side by opening a few rated players on the today page and confirming the rating moved the way you expected.
-4. Add a [history.md](./history.md) entry for the update, since rebalancing every rating in the system is the kind of change a later LLM would want to know the reason for.
+1. Source the value. The cleanest path is direct from MLB Stats API for the current season — `/api/v1/teams/stats?stats=season&group=pitching&sportId=1&season={year}` returns all 30 teams' aggregate lines; sum across them for the league mean. FanGraphs / Statcast work too. Note the source and date in the commit message.
+2. Update **every location** the constant appears. The five log5 anchors in `batterForecast.ts`, the matching `leagueMean` values in `categoryBaselines.ts`, and the pitcher-side `LEAGUE_K_RATE` / `LEAGUE_BB_RATE` / `LEAGUE_XBA` in `talentModel.ts` MUST stay in sync — MLB is zero-sum.
+3. Run the pitcher smoke harness at `src/app/api/admin/test-pitcher-eval/route.ts` — it asserts that canonical archetypes (Skubal, Houser, Montero, Roupp) land in their expected score/tier bands.
+4. Run the batter smoke harness at `src/app/api/admin/test-batter-rating/route.ts` — same role; the expected score ranges there are calibration anchors.
+5. Spot-check on the today page by opening a few rated players and confirming the rating moved the way you expected.
+6. Add a [history.md](./history.md) entry — rebalancing every rating in the system is the kind of change a later LLM would want to know the reason for.
 
 Touching one of these without the smoke check is the fastest way to ship a regression that takes weeks to notice.

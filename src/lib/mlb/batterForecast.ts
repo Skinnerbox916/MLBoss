@@ -29,15 +29,22 @@ import {
 } from '@/lib/pitching/talent';
 
 // ---------------------------------------------------------------------------
-// Shared league constants (must match categoryBaselines.ts leagueMean values)
+// Shared league constants (must match categoryBaselines.ts leagueMean values
+// AND pitcher-side LEAGUE_K_RATE / LEAGUE_BB_RATE / LEAGUE_XBA in
+// talentModel.ts — MLB is zero-sum, both sides must agree). Refreshed
+// 2026 mid-season from /api/v1/teams/stats?stats=season&group=pitching;
+// see docs/history.md "2026-05 — League rate calibration refresh".
 // ---------------------------------------------------------------------------
 
-const LEAGUE_AVG = 0.243;
-const LEAGUE_K_PER_PA = 0.223;
-const LEAGUE_BB_PER_PA = 0.084;
-const LEAGUE_H_PER_PA = 0.215;
-/** League-average HR per plate appearance. ~0.034 across MLB pitchers. */
-const LEAGUE_HR_PER_PA = 0.034;
+const LEAGUE_AVG = 0.239;
+const LEAGUE_K_PER_PA = 0.221;
+const LEAGUE_BB_PER_PA = 0.094;
+const LEAGUE_H_PER_PA = 0.212;
+/** League-average HR per plate appearance. 2026 MLB rate is ~0.028
+ *  (notably lower than the 2024 anchor 0.034). HR is the constant most
+ *  sensitive to era — the dead-ball-ish 2026 environment means HR
+ *  ratio-clamp anchors were systematically pessimistic at 0.034. */
+const LEAGUE_HR_PER_PA = 0.0275;
 
 // ---------------------------------------------------------------------------
 // Pitcher share-of-variance bounds — anchored to published research, not

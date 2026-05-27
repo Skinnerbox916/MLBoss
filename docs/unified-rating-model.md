@@ -86,7 +86,7 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
 
 **Composite layer.** Only matchup-wide signals that genuinely scale every category proportionally:
 - **Pitcher:** platoon (the SP's weak-handed side stack vs this lineup). Velocity moved out of the composite into the talent-layer regime probe (2026-05) — see [history.md](./history.md#2026-05--velocity-multiplier-moved-to-talent-layer-regime-probe).
-- **Batter:** platoon (this batter vs this SP's hand, regressed), opportunity (PA count from batting order).
+- **Batter:** opportunity (PA count from batting order). Platoon is **not** a composite multiplier — it's applied per-category in the forecast as a population component model (large on K, small on AVG/H, negligible on HR); see the canonical table and [history.md](./history.md#2026-05--per-category-platoon).
 
 **Surface layer.** Park, weather, opposing-lineup quality. Computed and shown in the breakdown UI so the user can see WHY their per-cat numbers landed where they did. **NOT** applied to the composite — already in the per-cat numbers. See [architecture.md](./architecture.md#4-per-category-adjustments-before-composite) for why.
 
@@ -340,7 +340,7 @@ interface BatterRating {
   netVsNeutral: number;
   tier: 'great' | 'good' | 'neutral' | 'poor' | 'bad';
   categories: CategoryContribution[];   // batter-side shape
-  platoon: RatingMultiplier;            // composite — applied to score
+  platoon: RatingMultiplier;            // display summary — per-cat in forecast (2026-05)
   opportunity: RatingMultiplier;        // composite — applied to score
   weather: RatingMultiplier;            // surface — already in cats
   confidence: { level; reason; band };
@@ -366,7 +366,7 @@ interface PitcherRating {
 
 Per-engine tier vocabularies (pitcher: ace/tough/avg/weak/bad; batter: great/good/neutral/poor/bad) reflect that "ace" carries pitcher-specific meaning. Tier is always derived from `score` via a single classifier per engine — `batterTierFromScore` in `batterRating.ts`, `tierFromScore` in `pitching/rating.ts` — no separate rule-based tier system.
 
-**Composite vs surface enforcement.** The split is enforced by *which fields the composite formula multiplies*. As of 2026-05, that's `platoon` on both sides plus `opportunity` on batter. Everything else is surface (already folded in at the per-PA layer; rendered in the breakdown panel for transparency).
+**Composite vs surface enforcement.** The split is enforced by *which fields the composite formula multiplies*. As of 2026-05 that's `platoon` on the **pitcher** side, and `opportunity` on the batter side. Batter platoon moved to the per-cat layer (population component structure — see below); its `platoon` field is now a display-only summary. Everything else is surface (already folded in at the per-PA layer; rendered in the breakdown panel for transparency).
 
 There's a third pitcher rating shape — `PitcherStreamingRating` — produced by `scorePitcher()` in [pitching/scoring.ts](../src/lib/pitching/scoring.ts). It wraps `getPitcherRating` and reshapes the output into the table-shaped form the streaming board consumes (0–1 score scale for back-compat with table widgets; `subScore` per category instead of `expected`/`normalized`/`betterIs`). The streaming board, today-page pitcher rows, and the pitcher `ScoreBreakdownPanel` all consume that shape, not `PitcherRating` directly.
 
@@ -402,7 +402,7 @@ Edge case math primitives. These are subtle pieces that need to be where they ar
 | `getParkAdjustment` | [parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) | Single primitive for "given park + stat + hand + weather, what multiplier?". Per-stat tracks (HR, SO, BB, RUNS, OVERALL, 2B, 3B). Wind amplification fires only in `windSensitivity: 'high'` parks (Wrigley/Oracle/Sutter Health). Defensive: missing factor fields fall back to neutral 100, never NaN. |
 | `formatParkBadge` | [parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) | Single helper for the park badge — picks the more-extreme of overall PF vs HR PF. Both StreamingBoard and TodayPitchers consume this; no inline `parkFactor*` reads in feature code. |
 | `gbBoost` (in `forecast.ts`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Gates park HR effect by GB rate. A 60%-GB arm gets half the HR-park bump; a 30%-GB arm gets the full bump. The single best predictor of HR-park insulation. |
-| `getPlatoonAdjustedTalent` | [mlb/analysis.ts](../src/lib/mlb/analysis.ts) | Hand-asymmetric Bayesian regression of split OPS toward population norms. RHB-vs-LHP=2200 PA (very slow), RHB-vs-RHP=700 PA (fast), LHB-vs-LHP=1000 PA, LHB-vs-RHP=500 PA, switch=500. Dominant-hand-faster asymmetry comes from FanGraphs platoon-skill research. |
+| `platoonFactor` | [mlb/platoon.ts](../src/lib/mlb/platoon.ts) | Per-category platoon multiplier. Bayesian-regresses the batter's OWN observed vs-hand ratio (`ratiosVsL/ratiosVsR`, plumbed from `getBatterSplits`) toward a population target keyed on (bats, facingHand), weighted by his PA on that side. Per-cat `PRIOR` reflects stabilization (K/BB ~450 PA, AVG ~1000, TB/HR 1300–1500). Applied per-cat inside `buildBatterForecast`, NOT as a composite multiplier. Switch hitters: population target ~1.0, so their observed side-gap regresses against neutral (no special case). Large on K, small on AVG/H, damped on HR; SB has none. Replaced the OPS-based composite `getPlatoonAdjustedTalent` (2026-05). See file header + history.md for sourcing. |
 | `getWeatherScore` | [mlb/analysis.ts](../src/lib/mlb/analysis.ts) | 0-1 scalar of weather offense friendliness. 0.5 = neutral. Wind out + warm = 1.0; wind in + cold = 0.0. Domes return 0.5. Folded into per-cat weather factors on both sides. |
 | `weatherCatFactor` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Per-cat weather adjustment: HR ±8%, R/RBI ±4%, H/TB ±2%, K/BB/SB unchanged. Mirrors the pitcher-side `weatherHrFactor` / `weatherContactFactor` for symmetry. |
 | `isLikelySamePlayer` | [pitching/display.tsx](../src/lib/pitching/display.tsx) | The single canonical name matcher for FA → probable starter and roster → probable starter. Requires either full normalized name match OR last-name match + first-initial agreement. Solves the same-team-same-surname collision (Lopez × 2, Ureña × 2). |

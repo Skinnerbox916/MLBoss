@@ -341,12 +341,14 @@ export function buildRiskSummary(
     risks.push(`${pp.inningsPerStart.toFixed(1)} IP/GS`);
   }
 
-  const oppOps = pp.throws === 'L'
-    ? opp?.vsLeft?.ops ?? opp?.ops ?? null
-    : opp?.vsRight?.ops ?? opp?.ops ?? null;
+  const oppOps =
+    pp.throws === 'L' ? opp?.vsLeft?.ops ?? opp?.ops ?? null
+    : pp.throws === 'R' ? opp?.vsRight?.ops ?? opp?.ops ?? null
+    : opp?.ops ?? null;
   if (oppOps !== null && oppOps !== undefined && oppOps >= 0.770) {
     const fmt = oppOps.toFixed(3).replace(/^0\./, '.');
-    risks.push(`${fmt} OPS vs ${pp.throws}HP`);
+    const handNote = pp.throws === 'L' || pp.throws === 'R' ? ` vs ${pp.throws}HP` : '';
+    risks.push(`${fmt} OPS${handNote}`);
   }
 
   // Opposing-starter pitching duel — flag when our guy is going against

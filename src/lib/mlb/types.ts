@@ -10,7 +10,7 @@
 export interface ProbablePitcher {
   mlbId: number;
   name: string;
-  throws: 'L' | 'R' | 'S'; // handedness
+  throws: 'L' | 'R' | 'S' | null; // handedness; null when identity didn't resolve a hand
   era: number | null;
   whip: number | null;
   wins: number;
@@ -221,8 +221,10 @@ export interface MLBPlayerIdentity {
   mlbId: number;
   fullName: string;
   currentTeamAbbr: string;
-  bats: 'L' | 'R' | 'S';
-  throws: 'L' | 'R' | 'S';
+  // null when the MLB record carries no batSide/pitchHand. Consumers must
+  // treat null as "unknown" (neutral), never silently as 'R'.
+  bats: 'L' | 'R' | 'S' | null;
+  throws: 'L' | 'R' | 'S' | null;
   primaryPosition: string;
   active: boolean;
 }
@@ -301,6 +303,14 @@ export interface BatterSeasonStats {
   opsVsR: number | null;
   /** Plate appearances vs RHP (0 when unknown). */
   paVsR: number;
+  /** Per-category observed platoon ratios vs LHP — the batter's own
+   *  vs-hand rate / overall rate for each scored stat_id (keyed by
+   *  stat_id; e.g. {3: 0.92} = hits AVG 8% below his overall vs lefties).
+   *  Drives the per-cat Bayesian platoon regression (see platoon.ts).
+   *  PA basis is `paVsL`. Null/missing entries → fall back to population. */
+  ratiosVsL: Partial<Record<number, number>> | null;
+  /** Per-category observed platoon ratios vs RHP. PA basis is `paVsR`. */
+  ratiosVsR: Partial<Record<number, number>> | null;
   /** Prior-season counting line (always populated when available, regardless
    *  of whether the primary `line` fell back to prior-year). Used by the
    *  category-pill Bayesian blend to anchor per-PA rates in April. */
@@ -424,6 +434,10 @@ export interface PlayerPlatoonSplits {
   paVsL: number;
   opsVsR: number | null;
   paVsR: number;
+  /** Per-category observed platoon ratios (vs-hand rate / overall rate),
+   *  keyed by stat_id. Drives the per-cat Bayesian platoon regression. */
+  ratiosVsL: Partial<Record<number, number>> | null;
+  ratiosVsR: Partial<Record<number, number>> | null;
 }
 
 /**

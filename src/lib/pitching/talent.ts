@@ -53,7 +53,7 @@ import type { StatcastPitcher } from '@/lib/mlb/types';
  */
 export interface PitcherTalent {
   mlbId: number;
-  throws: 'L' | 'R' | 'S';
+  throws: 'L' | 'R' | 'S' | null;
 
   // =========================================================================
   // Forecast contract (read by buildGameForecast / batterRating)
@@ -630,7 +630,7 @@ function computeConfidence(args: {
 
 export interface ComputeTalentArgs {
   mlbId: number;
-  throws: 'L' | 'R' | 'S';
+  throws: 'L' | 'R' | 'S' | null;
   /** Stats-API starter line, current season. */
   currentLine: PitcherSeasonLine | null;
   /** Stats-API starter line, prior season — used for ipPerStart anchor

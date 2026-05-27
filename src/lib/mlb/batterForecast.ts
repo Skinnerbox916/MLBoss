@@ -17,6 +17,7 @@
 import type { BatterSeasonStats, TeamStaffSplits } from './types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { type MatchupContext, getWeatherScore } from './analysis';
+import { platoonFactor, facingHandFrom } from './platoon';
 import { blendedBaselineForCategory, supportsStatId } from './categoryBaselines';
 import { getParkAdjustment } from './parkAdjustment';
 import { getLeagueSbAllowedPerIp } from './leagueRates';
@@ -358,6 +359,8 @@ function applyMatchupModifier(
       if (expEra != null) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('top of order');
       if (parkAdj.hint) hints.push(parkAdj.hint);
+      if (weatherMult >= 1.03) hints.push('wind-boost');
+      else if (weatherMult <= 0.97) hints.push('wind-suppress');
       return { expected, modifierHint: hints.join(' · ') };
     }
 
@@ -377,6 +380,8 @@ function applyMatchupModifier(
       if (expEra != null) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('middle of order');
       if (parkAdj.hint) hints.push(parkAdj.hint);
+      if (weatherMult >= 1.03) hints.push('wind-boost');
+      else if (weatherMult <= 0.97) hints.push('wind-suppress');
       return { expected, modifierHint: hints.join(' · ') };
     }
 
@@ -472,6 +477,13 @@ export function buildBatterForecast(
   scoredCategories: EnrichedLeagueStatCategory[],
 ): BatterForecast {
   const perCategory: Record<number, BatterCategoryForecast> = {};
+  // Per-category platoon (per-cat) — applied after the SP/park/weather
+  // modifier. Multiplicative, so order vs the pitcher modifier doesn't
+  // matter. Regresses the batter's own vs-hand split toward the population
+  // target, weighted by his PA on that side; see platoon.ts.
+  const facingHand = facingHandFrom(ctx?.opposingPitcher?.throws);
+  const handRatios = facingHand === 'L' ? stats.ratiosVsL : facingHand === 'R' ? stats.ratiosVsR : null;
+  const handPA = facingHand === 'L' ? stats.paVsL : facingHand === 'R' ? stats.paVsR : 0;
   for (const cat of scoredCategories) {
     const statId = cat.stat_id;
     if (!supportsStatId(statId)) continue;
@@ -484,11 +496,20 @@ export function buildBatterForecast(
       ctx,
       battingOrder,
     );
+    const obsRatio = handRatios?.[statId];
+    const obs = obsRatio != null ? { ratio: obsRatio, pa: handPA } : null;
+    const platoonMult = platoonFactor(statId, stats.bats, facingHand, obs);
+    let hint = modifierHint;
+    if (facingHand && Math.abs(platoonMult - 1) >= 0.02) {
+      const pct = Math.round((platoonMult - 1) * 100);
+      const token = `vs ${facingHand}HP ${pct >= 0 ? '+' : ''}${pct}%`;
+      hint = hint ? `${hint} · ${token}` : token;
+    }
     perCategory[statId] = {
       baseline: baselineResult.rate,
-      expected,
+      expected: expected * platoonMult,
       effectivePA: baselineResult.effectivePA,
-      modifierHint,
+      modifierHint: hint,
     };
   }
   return { perCategory };

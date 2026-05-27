@@ -123,15 +123,11 @@ function driverSentence(
   if (down) parts.push(`${down.label.toLowerCase()} pulls it down`);
   if (parts.length === 0) parts.push('all scored categories near neutral');
 
+  // Platoon and weather act per-category (they show up in `parts` above via
+  // the category contributions). Only PA opportunity is a composite tilt.
   const tilts: string[] = [];
-  if (rating.platoon.available && Math.abs(rating.platoon.deltaPct) >= 2) {
-    tilts.push(`platoon ${pctSigned(rating.platoon.deltaPct)}`);
-  }
   if (rating.opportunity.available && Math.abs(rating.opportunity.deltaPct) >= 2) {
     tilts.push(`order ${pctSigned(rating.opportunity.deltaPct)}`);
-  }
-  if (rating.weather.available && Math.abs(rating.weather.deltaPct) >= 2) {
-    tilts.push(`weather ${pctSigned(rating.weather.deltaPct)}`);
   }
 
   const tilt = tilts.length > 0 ? ` — ${tilts.join(', ')}` : '';
@@ -416,15 +412,18 @@ function MultiplierRow({
 }
 
 function MultipliersSection({ rating }: { rating: BatterRating }) {
+  // Only PA opportunity is a composite multiplier on the score. Platoon and
+  // weather act per-category (folded into each category's expected rate and
+  // shown on the category rows as "vs LHP -5%" / "wind-boost" hints), so
+  // they are NOT shown here as standalone multipliers — that framing implied
+  // a headline adjustment that isn't applied. See docs/history.md.
   return (
     <div>
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-        Context <span className="normal-case text-muted-foreground/70">(multipliers)</span>
+        Composite <span className="normal-case text-muted-foreground/70">(multiplier)</span>
       </p>
       <div className="space-y-1">
-        <MultiplierRow label="Platoon" mult={rating.platoon} />
         <MultiplierRow label="PA opportunity" mult={rating.opportunity} />
-        <MultiplierRow label="Weather" mult={rating.weather} />
       </div>
     </div>
   );

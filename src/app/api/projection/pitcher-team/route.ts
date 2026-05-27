@@ -157,7 +157,7 @@ export async function GET(request: Request) {
         ]);
         const talent = computePitcherTalent({
           mlbId: identity.mlbId,
-          throws: (identity.throws ?? 'R') as 'L' | 'R' | 'S',
+          throws: identity.throws,
           currentLine: seasonLines.current,
           priorLine: seasonLines.prior,
           currentSavant: savantCurrent.get(identity.mlbId) ?? null,

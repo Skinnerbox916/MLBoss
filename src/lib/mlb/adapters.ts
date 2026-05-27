@@ -66,6 +66,8 @@ export function toBatterSeasonStats(line: PlayerStatLine): BatterSeasonStats {
       paVsL: line.splits?.paVsL ?? 0,
       opsVsR: line.splits?.opsVsR ?? null,
       paVsR: line.splits?.paVsR ?? 0,
+      ratiosVsL: line.splits?.ratiosVsL ?? null,
+      ratiosVsR: line.splits?.ratiosVsR ?? null,
       priorSeason: null,
     };
   }
@@ -118,6 +120,8 @@ export function toBatterSeasonStats(line: PlayerStatLine): BatterSeasonStats {
     paVsL: line.splits?.paVsL ?? 0,
     opsVsR: line.splits?.opsVsR ?? null,
     paVsR: line.splits?.paVsR ?? 0,
+    ratiosVsL: line.splits?.ratiosVsL ?? null,
+    ratiosVsR: line.splits?.ratiosVsR ?? null,
     priorSeason,
   };
 }
@@ -198,6 +202,8 @@ export function fromBatterSeasonStats(stats: BatterSeasonStats): PlayerStatLine 
             paVsL: stats.paVsL,
             opsVsR: stats.opsVsR,
             paVsR: stats.paVsR,
+            ratiosVsL: stats.ratiosVsL,
+            ratiosVsR: stats.ratiosVsR,
           }
         : null,
   };

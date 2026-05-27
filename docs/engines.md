@@ -58,7 +58,7 @@ Talent × game context. Per-PA and per-game adjustments.
 - BB compounding penalty (`bbCompoundingPenalty`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts)
 - Park adjustment (`getParkAdjustment`) — [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)
 - Weather score (`getWeatherScore`) — [src/lib/mlb/analysis.ts](../src/lib/mlb/analysis.ts)
-- Platoon adjustment (`getPlatoonAdjustedTalent`) — [src/lib/mlb/analysis.ts](../src/lib/mlb/analysis.ts)
+- Batter platoon, per-category (`platoonFactor`) — [src/lib/mlb/platoon.ts](../src/lib/mlb/platoon.ts) — Bayesian regression of the batter's own vs-hand split toward a population component target, weighted by PA on that side; applied per-cat inside `buildBatterForecast`, not a composite multiplier. Replaced the OPS-based composite `getPlatoonAdjustedTalent` (2026-05).
 - Matchup context resolver — [src/lib/mlb/matchupContext.ts](../src/lib/mlb/matchupContext.ts)
 
 ## L3 — Rating  →  see [unified-rating-model.md](./unified-rating-model.md)

@@ -36,7 +36,7 @@ If the projection disagrees with the per-game score, the per-game score is what 
 
 Park, weather, and opponent quality act on different categories differently. Coors suppresses K (parkSO 90) and inflates HR (parkHR 107). A composite-level park multiplier flattens those distinctions and double-counts: K and BB get a park hit at the per-PA layer AND at the composite layer, while ERA only gets the composite hit.
 
-The rule: matchup-wide signals that scale every category proportionally (platoon, opportunity / PA count) multiply the composite. Everything else lives at the per-PA / per-cat layer where it can shape each stat independently. See [unified-rating-model.md](./unified-rating-model.md) for the full breakdown.
+The rule: only signals that genuinely scale every category proportionally multiply the composite — pitcher platoon (the opposing lineup's OPS-vs-hand against the SP) and batting-order opportunity (PA count). Everything else lives at the per-PA / per-cat layer where it can shape each stat independently. **Batter platoon is per-category, not composite** (2026-05): its effect is concentrated in K, small on AVG/H, ~flat on HR, so a single proportional multiplier both overstated AVG and understated K. See [unified-rating-model.md](./unified-rating-model.md) for the full breakdown.
 
 ### 5. Bayesian talent with prior shrinkage
 

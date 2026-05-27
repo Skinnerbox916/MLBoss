@@ -97,6 +97,10 @@ export interface ProjectionDeps {
    *  user's chase / neutral / punt weights (used by the FA aggregator).
    *  When omitted, default to all-neutral. */
   focusMap?: Record<number, Focus>;
+  /** Optional numeric pivotality weights. When provided, override the
+   *  focus-derived weighting in the per-day score. See
+   *  docs/pivotality-migration.md. */
+  categoryWeights?: Record<number, number>;
 }
 
 export interface PerDayProjection {
@@ -263,6 +267,7 @@ export function projectBatterPlayer(
       stats,
       scoredCategories: deps.scoredCategories,
       focusMap,
+      categoryWeights: deps.categoryWeights,
       battingOrder: spotUsed,
     });
 

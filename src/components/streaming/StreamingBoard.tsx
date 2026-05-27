@@ -37,6 +37,7 @@ interface StreamingBoardProps {
   loading: boolean;
   scoredPitcherCategories?: EnrichedLeagueStatCategory[];
   focusMap?: Record<number, Focus>;
+  categoryWeights?: Record<number, number>;
   /** Optional helper text rendered under the panel header. */
   helper?: string;
 }
@@ -220,6 +221,7 @@ interface RowProps {
   teamOffense: Record<number, TeamOffense>;
   scoredPitcherCategories?: EnrichedLeagueStatCategory[];
   focusMap?: Record<number, Focus>;
+  categoryWeights?: Record<number, number>;
   /** When set, the row is being rendered inside a by-day section. The
    *  score column shows that day's per-start score (not the week sum)
    *  and the matching day pill is highlighted. */
@@ -228,7 +230,7 @@ interface RowProps {
 
 function Row({
   candidate, rank, isExpanded, onToggleExpand,
-  teamOffense, scoredPitcherCategories, focusMap, activeDate,
+  teamOffense, scoredPitcherCategories, focusMap, categoryWeights, activeDate,
 }: RowProps) {
   const c = candidate;
   const startCount = c.starts.length;
@@ -346,6 +348,7 @@ function Row({
                   teamOffense={teamOffense}
                   scoredCategories={scoredPitcherCategories}
                   focusMap={focusMap}
+                  categoryWeights={categoryWeights}
                 />
               </div>
             );
@@ -402,6 +405,7 @@ export default function StreamingBoard({
   loading,
   scoredPitcherCategories,
   focusMap,
+  categoryWeights,
   helper,
 }: StreamingBoardProps) {
   const candidates = useMemo(() => buildCandidates(weekScores), [weekScores]);
@@ -481,6 +485,7 @@ export default function StreamingBoard({
               teamOffense={teamOffense}
               scoredPitcherCategories={scoredPitcherCategories}
               focusMap={focusMap}
+              categoryWeights={categoryWeights}
             />
           ))}
         </div>
@@ -504,6 +509,7 @@ export default function StreamingBoard({
                     teamOffense={teamOffense}
                     scoredPitcherCategories={scoredPitcherCategories}
                     focusMap={focusMap}
+                    categoryWeights={categoryWeights}
                     activeDate={day.date}
                   />
                 ))}

@@ -104,6 +104,9 @@ export interface PillInput {
   game: EnrichedGame;
   scoredCategories?: EnrichedLeagueStatCategory[];
   focusMap?: Record<number, Focus>;
+  /** Numeric pivotality weights. When provided, override focus-derived
+   *  weighting in the composite. See docs/pivotality-migration.md. */
+  categoryWeights?: Record<number, number>;
 }
 
 export type PitcherRatingMultiplier = ContextMultiplier;
@@ -219,7 +222,7 @@ const DEFAULT_SCORED_CATS: EnrichedLeagueStatCategory[] = [
  * has no talent vector — same fail-safe behaviour the page expects.
  */
 export function scorePitcher(input: PillInput): PitcherStreamingRating {
-  const { pp, game, isHome, oppOffense, scoredCategories, focusMap } = input;
+  const { pp, game, isHome, oppOffense, scoredCategories, focusMap, categoryWeights } = input;
 
   if (!pp.talent) {
     return neutralStreamingRating(pp.inningsPitched);
@@ -237,7 +240,7 @@ export function scorePitcher(input: PillInput): PitcherStreamingRating {
   });
 
   const cats = scoredCategories ?? DEFAULT_SCORED_CATS;
-  const canonical = ratingV2({ forecast, scoredCategories: cats, focusMap: focusMap ?? {} });
+  const canonical = ratingV2({ forecast, scoredCategories: cats, focusMap: focusMap ?? {}, categoryWeights });
 
   const tableCats: StreamingCategoryRow[] = canonical.categories.map(c => {
     // Map stat_id → StreamGoal. If the rating layer added a category we

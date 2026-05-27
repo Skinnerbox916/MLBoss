@@ -13,6 +13,7 @@ import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
+import { buildCategoryWeights } from '@/lib/matchup/categoryWeights';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
@@ -52,6 +53,7 @@ function StarterRowCard({
   onToggle,
   scoredCategories,
   focusMap,
+  categoryWeights,
 }: {
   s: StarterRow;
   index: number;
@@ -60,6 +62,7 @@ function StarterRowCard({
   onToggle: () => void;
   scoredCategories: EnrichedLeagueStatCategory[];
   focusMap: Record<number, Focus>;
+  categoryWeights: Record<number, number>;
 }) {
   const c = s;
   const initial = s.rosterPlayer.name.charAt(0).toUpperCase();
@@ -70,7 +73,7 @@ function StarterRowCard({
   // separate classifier, no ACE-vs-FAIR mismatch.
   const rating = scorePitcher({
     pp: c.pp, oppOffense: opp ?? null, park: c.park, weather: c.weather,
-    isHome: c.isHome, game: c.game, scoredCategories, focusMap,
+    isHome: c.isHome, game: c.game, scoredCategories, focusMap, categoryWeights,
   });
   // Unknown hand → bats-agnostic overall opponent OPS, never the vs-RHP split.
   const oppSplit =
@@ -198,6 +201,7 @@ function StarterRowCard({
           teamOffense={teamOffense}
           scoredCategories={scoredCategories}
           focusMap={focusMap}
+          categoryWeights={categoryWeights}
         />
       )}
     </div>
@@ -286,6 +290,12 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
     reset: resetFocus,
     hasOverrides: hasFocusOverrides,
   } = useSuggestedFocus(matchupAnalysis, pitcherPredicate);
+
+  // Pivotality weights for the pitcher composite (see docs/pivotality-migration.md).
+  const pitcherCategoryWeights = useMemo(
+    () => buildCategoryWeights(matchupAnalysis, focusMap, pitcherPredicate),
+    [matchupAnalysis, focusMap, pitcherPredicate],
+  );
 
   const { opponentName } = useMatchupHeader(leagueKey, teamKey);
 
@@ -455,6 +465,7 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
                 }
                 scoredCategories={scoredPitcherCategories}
                 focusMap={focusMap}
+                categoryWeights={pitcherCategoryWeights}
               />
             ))}
           </div>

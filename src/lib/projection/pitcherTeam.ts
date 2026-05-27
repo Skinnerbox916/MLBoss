@@ -103,6 +103,10 @@ export interface PitcherProjectionDeps {
   /** Optional focus map — chase/punt weights drive the per-start score
    *  composite the same way they do for batters. */
   focusMap?: Record<number, Focus>;
+  /** Optional numeric pivotality weights. When provided, override the
+   *  focus-derived weighting in the per-start score. See
+   *  docs/pivotality-migration.md. */
+  categoryWeights?: Record<number, number>;
 }
 
 export interface PerStartProjection {
@@ -287,6 +291,7 @@ export function projectPitcherPlayer(
       forecast,
       scoredCategories: deps.scoredCategories,
       focusMap,
+      categoryWeights: deps.categoryWeights,
     });
 
     expectedStarts += 1;

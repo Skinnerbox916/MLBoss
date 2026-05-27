@@ -14,6 +14,7 @@ import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
+import { buildCategoryWeights } from '@/lib/matchup/categoryWeights';
 import { useWeekBatterScores } from '@/lib/hooks/useWeekBatterScores';
 import { useWeekPitcherScores } from '@/lib/hooks/useWeekPitcherScores';
 import { useSlotAwareStreaming } from '@/lib/hooks/useSlotAwareStreaming';
@@ -126,6 +127,12 @@ export default function StreamingManager() {
     hasOverrides: pitcherFocusOverrides,
   } = useSuggestedFocus(matchupAnalysis, pitcherPredicate);
 
+  // Pivotality weights for the pitcher composite (see docs/pivotality-migration.md).
+  const pitcherCategoryWeights = useMemo(
+    () => buildCategoryWeights(matchupAnalysis, pitcherFocusMap, pitcherPredicate),
+    [matchupAnalysis, pitcherFocusMap, pitcherPredicate],
+  );
+
   // Tomorrow's slate drives the team-offense ID list — covers ~30 teams
   // when all play, and the SWR cache shares with `useWeekPitcherScores`'s
   // internal D+1 fetch. Pitchers whose multi-day starts hit teams not on
@@ -145,7 +152,7 @@ export default function StreamingManager() {
   const { teams: teamOffense } = useTeamOffense(opposingTeamIds);
 
   const { scored: pitcherWeekScores, days: pitcherPickupDays, isLoading: pitcherScoresLoading } =
-    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, pitcherFocusMap, teamOffense);
+    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, pitcherFocusMap, teamOffense, pitcherCategoryWeights);
 
   // ----- Batter tab inputs ---------------------------------------------
   const { batters: batterFAs, isLoading: batterFaLoading } = useAvailableBatters(leagueKey, true);
@@ -169,6 +176,12 @@ export default function StreamingManager() {
     hasOverrides: batterFocusOverrides,
   } = useSuggestedFocus(matchupAnalysis, batterPredicate);
 
+  // Pivotality weights for the batter composite (see docs/pivotality-migration.md).
+  const batterCategoryWeights = useMemo(
+    () => buildCategoryWeights(matchupAnalysis, batterFocusMap, batterPredicate),
+    [matchupAnalysis, batterFocusMap, batterPredicate],
+  );
+
   // FA filter: 5% ownership floor, IL bypass. Lifted out of
   // BatterStreamingBoard so the same filtered list feeds both the FA
   // scoring pipeline and the slot-aware engine.
@@ -184,7 +197,7 @@ export default function StreamingManager() {
   // Mon-Sun on Sunday — so today is automatically excluded from value
   // calculations.
   const { scored: batterFAScores, days: pickupDays, isLoading: batterScoresLoading } =
-    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterFocusMap);
+    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterFocusMap, batterCategoryWeights);
 
   // Slot-aware streaming value: per-day assignStarters with and without
   // each FA. Captures position competition, multi-step rebalancing, and
@@ -266,6 +279,7 @@ export default function StreamingManager() {
             loading={ctxLoading || pitcherFaLoading || pitcherScoresLoading}
             scoredPitcherCategories={scoredPitcherCategories}
             focusMap={pitcherFocusMap}
+            categoryWeights={pitcherCategoryWeights}
             helper={pitcherHelper}
           />
         </>

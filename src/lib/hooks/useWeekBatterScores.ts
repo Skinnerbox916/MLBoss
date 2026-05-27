@@ -59,6 +59,7 @@ export function useWeekBatterScores(
   faPool: FreeAgentPlayer[],
   scoredCategories: EnrichedLeagueStatCategory[],
   focusMap: Record<number, Focus>,
+  categoryWeights?: Record<number, number>,
 ): UseWeekBatterScoresResult {
   const gridDays = useMemo(() => getStreamingGridDays(), []);
   const playableDays = useMemo(() => getPickupPlayableDays(), []);
@@ -122,6 +123,7 @@ export function useWeekBatterScores(
       scoredCategories,
       lineupSpots,
       focusMap,
+      categoryWeights,
     };
 
     const out: WeekBatterScore[] = [];
@@ -137,7 +139,7 @@ export function useWeekBatterScores(
       out.push({ player: fa, projection });
     }
     return out;
-  }, [faPool, scoredCategories, playableDays, statsByMlbId, gamesByDate, lineupSpots, focusMap, getPlayerStats]);
+  }, [faPool, scoredCategories, playableDays, statsByMlbId, gamesByDate, lineupSpots, focusMap, categoryWeights, getPlayerStats]);
 
   const isLoading =
     statsLoading ||

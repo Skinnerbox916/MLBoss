@@ -9,18 +9,22 @@ import type { MatchupAnalysis } from './analysis';
  *
  *   weight(cat) = conceded ? 0 : pivotality(margin)
  *
- * A category is conceded when its effective focus is `punt` — i.e. either the
- * user conceded it or the analyzer auto-suggested punt (a decided loss, or
- * transitionally a locked win). Everything else is in-play and weighted by how
- * contested it is via `pivotality(margin)`: a coin-flip cat (margin 0) carries
- * full weight, a near-decided cat far less. This replaces the old flat
- * chase=2 / neutral=1 magnitude — direction and magnitude now come from the
- * margin, not the label.
+ * A category is conceded (weight 0) only when it is punted **and losing** — a
+ * decided/contested loss we give up on. A **decided win** (punted but `margin >
+ * 0`, i.e. a locked lead) stays *in-play*, weighted by `pivotality(margin)`:
+ * small, but never zero. This matters — when every category is a locked win,
+ * conceding them all would zero the whole vector and collapse the composite to
+ * the neutral 50 (which is exactly the bug the pitcher board surfaced). Keeping
+ * decided wins in-play lets the composite still rank players on overall quality.
  *
- * Transitional note: concession is keyed off the existing `Focus` map so the
- * 3-state focus panels keep working until the UI collapse (Phase 5). When that
- * lands, concession becomes an explicit concede/contest override and the
- * decided-win-stays-in-play refinement moves here.
+ * Everything not conceded is weighted by how contested it is via
+ * `pivotality(margin)`: a coin-flip cat (margin 0) carries full weight, a
+ * near-decided cat far less. Direction and magnitude come from the margin, not
+ * the label — this replaces the old flat chase=2 / neutral=1.
+ *
+ * Transitional note: concession is keyed off the existing `Focus` map + margin
+ * sign so the 3-state focus panels keep working until the UI collapse (Phase
+ * 5), when concession becomes an explicit concede/contest override.
  */
 export function buildCategoryWeights(
   analysis: MatchupAnalysis,
@@ -30,8 +34,8 @@ export function buildCategoryWeights(
   const weights: Record<number, number> = {};
   for (const row of analysis.rows) {
     if (predicate && !predicate(row.statId)) continue;
-    weights[row.statId] =
-      (focusMap[row.statId] ?? 'neutral') === 'punt' ? 0 : pivotality(row.margin);
+    const conceded = (focusMap[row.statId] ?? 'neutral') === 'punt' && row.margin <= 0;
+    weights[row.statId] = conceded ? 0 : pivotality(row.margin);
   }
   return weights;
 }

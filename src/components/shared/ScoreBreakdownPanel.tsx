@@ -17,6 +17,9 @@ interface ScoreBreakdownPanelProps {
   scoredCategories?: EnrichedLeagueStatCategory[];
   /** Optional chase/punt focus per stat_id. */
   focusMap?: Record<number, Focus>;
+  /** Optional numeric pivotality weights — keeps the breakdown's weighting
+   *  consistent with the row's score. See docs/pivotality-migration.md. */
+  categoryWeights?: Record<number, number>;
 }
 
 /**
@@ -65,7 +68,7 @@ function lineupLean(oppOps: number | null): string {
 }
 
 export default function ScoreBreakdownPanel({
-  c, teamOffense, scoredCategories, focusMap,
+  c, teamOffense, scoredCategories, focusMap, categoryWeights,
 }: ScoreBreakdownPanelProps) {
   const oppOffense = teamOffense[c.opponentMlbId] ?? null;
   const pillInput: PillInput = {
@@ -77,6 +80,7 @@ export default function ScoreBreakdownPanel({
     game: c.game,
     scoredCategories,
     focusMap,
+    categoryWeights,
   };
   const rating = scorePitcher(pillInput);
 

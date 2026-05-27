@@ -54,6 +54,7 @@ export function useWeekPitcherScores(
   scoredCategories: EnrichedLeagueStatCategory[],
   focusMap: Record<number, Focus>,
   teamOffense?: Record<number, TeamOffense>,
+  categoryWeights?: Record<number, number>,
 ): UseWeekPitcherScoresResult {
   const gridDays = useMemo(() => getStreamingGridDays(), []);
   const playableDays = useMemo(() => getPickupPlayableDays(), []);
@@ -96,6 +97,7 @@ export function useWeekPitcherScores(
       scoredCategories,
       teamOffense: teamOffenseMap,
       focusMap,
+      categoryWeights,
     };
 
     const out: WeekPitcherScore[] = [];
@@ -114,7 +116,7 @@ export function useWeekPitcherScores(
       out.push({ player: fa, projection });
     }
     return out;
-  }, [faPool, scoredCategories, playableDays, gamesByDate, teamOffenseMap, focusMap]);
+  }, [faPool, scoredCategories, playableDays, gamesByDate, teamOffenseMap, focusMap, categoryWeights]);
 
   const isLoading = dayResults.some(d => d.isLoading);
 

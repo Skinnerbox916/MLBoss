@@ -17,7 +17,6 @@ import {
 } from '@/lib/projection/batterTeam';
 import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/rating/focus';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 
 export interface WeekBatterScore {
@@ -58,7 +57,6 @@ interface UseWeekBatterScoresResult {
 export function useWeekBatterScores(
   faPool: FreeAgentPlayer[],
   scoredCategories: EnrichedLeagueStatCategory[],
-  focusMap: Record<number, Focus>,
   categoryWeights?: Record<number, number>,
 ): UseWeekBatterScoresResult {
   const gridDays = useMemo(() => getStreamingGridDays(), []);
@@ -122,7 +120,6 @@ export function useWeekBatterScores(
       gamesByDate,
       scoredCategories,
       lineupSpots,
-      focusMap,
       categoryWeights,
     };
 
@@ -139,7 +136,7 @@ export function useWeekBatterScores(
       out.push({ player: fa, projection });
     }
     return out;
-  }, [faPool, scoredCategories, playableDays, statsByMlbId, gamesByDate, lineupSpots, focusMap, categoryWeights, getPlayerStats]);
+  }, [faPool, scoredCategories, playableDays, statsByMlbId, gamesByDate, lineupSpots, categoryWeights, getPlayerStats]);
 
   const isLoading =
     statsLoading ||

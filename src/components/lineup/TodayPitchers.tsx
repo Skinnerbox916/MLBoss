@@ -12,8 +12,7 @@ import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
-import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
-import { buildCategoryWeights } from '@/lib/matchup/categoryWeights';
+import { useCategoryWeights } from '@/lib/hooks/useCategoryWeights';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
@@ -27,7 +26,6 @@ import {
 } from '@/lib/pitching/display';
 import { scorePitcher, tierLabel } from '@/lib/pitching/scoring';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/rating/focus';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import { getRowStatus } from './types';
@@ -52,7 +50,6 @@ function StarterRowCard({
   expanded,
   onToggle,
   scoredCategories,
-  focusMap,
   categoryWeights,
 }: {
   s: StarterRow;
@@ -61,7 +58,6 @@ function StarterRowCard({
   expanded: boolean;
   onToggle: () => void;
   scoredCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, Focus>;
   categoryWeights: Record<number, number>;
 }) {
   const c = s;
@@ -73,7 +69,7 @@ function StarterRowCard({
   // separate classifier, no ACE-vs-FAIR mismatch.
   const rating = scorePitcher({
     pp: c.pp, oppOffense: opp ?? null, park: c.park, weather: c.weather,
-    isHome: c.isHome, game: c.game, scoredCategories, focusMap, categoryWeights,
+    isHome: c.isHome, game: c.game, scoredCategories, categoryWeights,
   });
   // Unknown hand → bats-agnostic overall opponent OPS, never the vs-RHP split.
   const oppSplit =
@@ -200,7 +196,6 @@ function StarterRowCard({
           c={c}
           teamOffense={teamOffense}
           scoredCategories={scoredCategories}
-          focusMap={focusMap}
           categoryWeights={categoryWeights}
         />
       )}
@@ -284,18 +279,13 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
     [pitcherStatIds],
   );
   const {
-    focusMap,
-    suggestedFocusMap,
-    set: setFocus,
-    reset: resetFocus,
-    hasOverrides: hasFocusOverrides,
-  } = useSuggestedFocus(matchupAnalysis, pitcherPredicate);
-
-  // Pivotality weights for the pitcher composite (see docs/pivotality-migration.md).
-  const pitcherCategoryWeights = useMemo(
-    () => buildCategoryWeights(matchupAnalysis, focusMap, pitcherPredicate),
-    [matchupAnalysis, focusMap, pitcherPredicate],
-  );
+    categoryWeights: pitcherCategoryWeights,
+    isConceded,
+    isAutoConceded,
+    toggleConcede,
+    reset: resetConcede,
+    hasOverrides: hasConcedeOverrides,
+  } = useCategoryWeights(matchupAnalysis, pitcherPredicate);
 
   const { opponentName } = useMatchupHeader(leagueKey, teamKey);
 
@@ -396,11 +386,12 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
           isLoading={matchupLoading}
           side="pitching"
           opponentName={opponentName}
-          focusMap={focusMap}
-          onSetFocus={setFocus}
-          suggestedFocusMap={suggestedFocusMap}
-          onReset={resetFocus}
-          hasOverrides={hasFocusOverrides}
+          categoryWeights={pitcherCategoryWeights}
+          isConceded={isConceded}
+          isAutoConceded={isAutoConceded}
+          onToggleConcede={toggleConcede}
+          onReset={resetConcede}
+          hasOverrides={hasConcedeOverrides}
         />
       )}
 
@@ -464,7 +455,6 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
                   setExpandedKey(expandedKey === s.rosterPlayer.player_key ? null : s.rosterPlayer.player_key)
                 }
                 scoredCategories={scoredPitcherCategories}
-                focusMap={focusMap}
                 categoryWeights={pitcherCategoryWeights}
               />
             ))}

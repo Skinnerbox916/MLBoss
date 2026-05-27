@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { FiCalendar } from 'react-icons/fi';
+import { FiCalendar, FiSlash, FiRotateCcw } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Panel from '@/components/ui/Panel';
 import Badge from '@/components/ui/Badge';
@@ -9,43 +9,29 @@ import { formatStatValue } from '@/lib/formatStat';
 import type {
   AnalyzedMatchupRow,
   MatchupAnalysis,
-  SuggestedFocus,
 } from '@/lib/matchup/analysis';
 import { rowHasComparablePair } from '@/components/shared/matchupRows';
 import type { DailyBaseline } from '@/lib/projection/slotAware';
-import type { Focus } from '@/lib/rating/focus';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
-import {
-  FocusSectionTrio,
-  FocusSegmentedControl,
-  FocusResetButton,
-  deriveFocusSection,
-  isFocusOverride,
-} from '@/components/shared/focusPanel';
+import { FocusResetButton } from '@/components/shared/focusPanel';
 
 /**
- * Game Plan: per-cat tiles grouped by chase/hold/punt for **this week's
- * matchup**. Each tile reads at a glance via state-colored border
- * (winning / losing / tied), shows current → projected swing when
- * available, and carries a chase/hold/punt segmented control in its
- * top-right so the user can override MLBoss's suggestion without leaving
- * the panel. The reset-to-suggested affordance lives in the panel header.
+ * Game Plan: per-cat tiles for **this week's matchup**, split into two
+ * groups — **In play** (ranked by pivotality: most-contested first) and a
+ * **Conceded** shelf. Each tile reads at a glance via state-colored border
+ * (winning / losing / tied), shows current → projected swing when available,
+ * and carries a single concede/contest toggle so the user can give up a
+ * category or pull one back without leaving the panel. The reset affordance
+ * lives in the panel header. See docs/pivotality-migration.md.
+ *
+ * Chase/hold/punt is gone: every category is in-play by default, weighted by
+ * how contested it is. The only lever is concede vs contest. A decided loss
+ * is conceded automatically; a locked win stays in-play (you're winning it,
+ * it's just low-leverage), never on the concede shelf.
  *
  * One component, two pages, two sides:
  *  - `side: 'batting'` filters to is_batter_stat rows
  *  - `side: 'pitching'` filters to is_pitcher_stat rows
- *
- * The tile-grid layout sits at the top of both the Today/Lineup page
- * (daily start/sit) and the Streaming page (rest-of-week pickups). The
- * visual idiom is identical across pages so users learn it once.
- *
- * **Chrome (sections, segmented control, reset button) is shared** with
- * `RosterFocusPanel` via `@/components/shared/focusPanel`. Section
- * placement uses the always-jump rule defined there: rows place by
- * `focusMap[statId]` (user's effective focus). Clicking the punt segment
- * on a tile moves the tile to PUNT immediately. The override dot still
- * surfaces "engine disagreed" for transparency, but layout reflects the
- * user's decision.
  */
 interface GamePlanPanelProps {
   analysis: MatchupAnalysis;
@@ -65,14 +51,15 @@ interface GamePlanPanelProps {
    *  only). When empty, the footer renders nothing. */
   dailyBaselines?: DailyBaseline[];
 
-  /** User's effective focus per stat_id. */
-  focusMap: Record<number, Focus>;
-  /** Direct-select callback — set the stat's focus to a specific value. */
-  onSetFocus: (statId: number, focus: Focus) => void;
-  /** MLBoss's suggestion baseline. When provided, controls whose effective
-   *  focus differs render an override dot. */
-  suggestedFocusMap?: Record<number, Focus>;
-  /** Reset-to-suggested affordance — only renders when `hasOverrides`. */
+  /** Composite weight per stat_id (0 = conceded) — used to rank in-play tiles. */
+  categoryWeights: Record<number, number>;
+  /** Is this category conceded (auto decided-loss or user)? */
+  isConceded: (statId: number) => boolean;
+  /** Was it conceded purely by the auto rule? Drives the "auto" hint. */
+  isAutoConceded: (statId: number) => boolean;
+  /** Toggle a category between conceded and contested. */
+  onToggleConcede: (statId: number) => void;
+  /** Reset affordance — only renders when `hasOverrides`. */
   onReset?: () => void;
   hasOverrides?: boolean;
 }
@@ -86,9 +73,10 @@ export default function GamePlanPanel({
   actionableDays,
   targetWeek = 'current',
   dailyBaselines = [],
-  focusMap,
-  onSetFocus,
-  suggestedFocusMap,
+  categoryWeights,
+  isConceded,
+  isAutoConceded,
+  onToggleConcede,
   onReset,
   hasOverrides = false,
 }: GamePlanPanelProps) {
@@ -98,20 +86,18 @@ export default function GamePlanPanel({
   );
 
   const grouped = useMemo(() => {
-    const chase: AnalyzedMatchupRow[] = [];
-    const hold: AnalyzedMatchupRow[] = [];
-    const punt: AnalyzedMatchupRow[] = [];
+    const inPlay: AnalyzedMatchupRow[] = [];
+    const conceded: AnalyzedMatchupRow[] = [];
     for (const row of sideRows) {
-      const section = deriveFocusSection(focusMap, row.statId);
-      if (section === 'chase') chase.push(row);
-      else if (section === 'punt') punt.push(row);
-      else hold.push(row);
+      if (isConceded(row.statId)) conceded.push(row);
+      else inPlay.push(row);
     }
-    chase.sort((a, b) => a.margin - b.margin);
-    hold.sort((a, b) => a.margin - b.margin);
-    punt.sort((a, b) => Math.abs(b.margin) - Math.abs(a.margin));
-    return { chase, hold, punt };
-  }, [sideRows, focusMap]);
+    // In-play: most-contested (highest pivotality weight) first.
+    inPlay.sort((a, b) => (categoryWeights[b.statId] ?? 0) - (categoryWeights[a.statId] ?? 0));
+    // Conceded: most out-of-reach first.
+    conceded.sort((a, b) => a.margin - b.margin);
+    return { inPlay, conceded };
+  }, [sideRows, isConceded, categoryWeights]);
 
   const projWins = sideRows.filter(r => r.margin > 0).length;
   const projLosses = sideRows.filter(r => r.margin < 0).length;
@@ -174,26 +160,75 @@ export default function GamePlanPanel({
   return (
     <Panel title={title} action={action} helper={helper}>
       <div className="space-y-3">
-        <FocusSectionTrio
-          groups={grouped}
-          emptyStates={{
-            chase: 'No deficits to chase — your matchup is sitting comfortably.',
-            hold: 'Nothing to defend — no leads to protect.',
-            punt: 'No locked extremes — every cat is still in play.',
-          }}
-          renderTile={row => (
+        <GroupSection
+          label="In play"
+          tone="success"
+          count={grouped.inPlay.length}
+          empty="Nothing in play — every category is conceded."
+        >
+          {grouped.inPlay.map(row => (
             <CategoryTile
               key={row.statId}
               row={row}
-              focus={focusMap[row.statId] ?? 'neutral'}
-              onSet={onSetFocus}
-              isOverride={isFocusOverride(focusMap, suggestedFocusMap, row.statId)}
+              conceded={false}
+              autoConceded={false}
+              onToggleConcede={onToggleConcede}
             />
-          )}
-        />
+          ))}
+        </GroupSection>
+        <GroupSection
+          label="Conceded"
+          tone="muted"
+          count={grouped.conceded.length}
+          empty="Nothing conceded — contesting every category."
+        >
+          {grouped.conceded.map(row => (
+            <CategoryTile
+              key={row.statId}
+              row={row}
+              conceded
+              autoConceded={isAutoConceded(row.statId)}
+              onToggleConcede={onToggleConcede}
+            />
+          ))}
+        </GroupSection>
         <SlotPressureRow dailyBaselines={dailyBaselines} />
       </div>
     </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GroupSection — header + flex-wrap container (In play / Conceded)
+// ---------------------------------------------------------------------------
+
+function GroupSection({
+  label,
+  tone,
+  count,
+  empty,
+  children,
+}: {
+  label: string;
+  tone: 'success' | 'muted';
+  count: number;
+  empty: string;
+  children: React.ReactNode;
+}) {
+  const labelTone = tone === 'success' ? 'text-success' : 'text-muted-foreground';
+  return (
+    <div className="bg-surface-muted/30 rounded-md p-2.5">
+      <div className={`flex items-center gap-1.5 ${labelTone} text-caption font-semibold uppercase tracking-wide`}>
+        <Icon icon={tone === 'success' ? FiCalendar : FiSlash} size={11} />
+        <span>{label}</span>
+        <span className="text-muted-foreground/70">· {count}</span>
+      </div>
+      {count === 0 ? (
+        <p className="text-caption text-muted-foreground/60 mt-1.5">{empty}</p>
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-2">{children}</div>
+      )}
+    </div>
   );
 }
 
@@ -244,30 +279,34 @@ function SlotPressureRow({ dailyBaselines }: { dailyBaselines: DailyBaseline[] }
 
 function CategoryTile({
   row,
-  focus,
-  onSet,
-  isOverride,
+  conceded,
+  autoConceded,
+  onToggleConcede,
 }: {
   row: AnalyzedMatchupRow;
-  focus: Focus;
-  onSet: (statId: number, focus: Focus) => void;
-  isOverride: boolean;
+  conceded: boolean;
+  autoConceded: boolean;
+  onToggleConcede: (statId: number) => void;
 }) {
   const showSwing =
     row.rawMyVal !== undefined && row.rawOppVal !== undefined &&
     (row.rawMyVal !== row.myVal || row.rawOppVal !== row.oppVal);
 
-  const borderTone =
-    row.margin > 0 ? 'border-success/30 bg-success/5'
+  const borderTone = conceded
+    ? 'border-border bg-surface-muted/40 opacity-70'
+    : row.margin > 0 ? 'border-success/30 bg-success/5'
     : row.margin < 0 ? 'border-error/30 bg-error/5'
     : 'border-border bg-background';
 
-  const myTone =
-    row.margin > 0 ? 'text-success font-bold'
+  const myTone = conceded
+    ? 'text-muted-foreground font-bold'
+    : row.margin > 0 ? 'text-success font-bold'
     : row.margin < 0 ? 'text-error font-bold'
     : 'text-foreground font-bold';
 
-  const reason = getReason(row);
+  const reason = conceded
+    ? (autoConceded ? 'conceded · out of reach' : 'conceded')
+    : getReason(row);
 
   return (
     <div
@@ -275,12 +314,7 @@ function CategoryTile({
     >
       <div className="flex items-center justify-between gap-2 mb-1">
         <span className="text-base font-bold text-foreground tracking-wide leading-none">{row.label}</span>
-        <FocusSegmentedControl
-          statId={row.statId}
-          focus={focus}
-          onSet={onSet}
-          isOverride={isOverride}
-        />
+        <ConcedeToggle statId={row.statId} conceded={conceded} onToggle={onToggleConcede} />
       </div>
       <div className="flex items-baseline gap-2 tabular-nums leading-tight">
         <TileSegment
@@ -386,4 +420,32 @@ function getReason(row: AnalyzedMatchupRow): string {
   return 'steady deficit';
 }
 
-export type { SuggestedFocus };
+// ---------------------------------------------------------------------------
+// ConcedeToggle — single concede/contest button on each tile
+// ---------------------------------------------------------------------------
+
+function ConcedeToggle({
+  statId,
+  conceded,
+  onToggle,
+}: {
+  statId: number;
+  conceded: boolean;
+  onToggle: (statId: number) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(statId)}
+      title={conceded ? 'Contest — put this category back in play' : 'Concede this category'}
+      aria-label={conceded ? `Contest stat ${statId}` : `Concede stat ${statId}`}
+      className={`flex items-center justify-center w-5 h-5 rounded ring-1 ring-border-muted/60 transition-colors ${
+        conceded
+          ? 'text-muted-foreground/60 hover:text-success hover:ring-success/40'
+          : 'text-muted-foreground/45 hover:text-error hover:ring-error/40'
+      }`}
+    >
+      <Icon icon={conceded ? FiRotateCcw : FiSlash} size={11} />
+    </button>
+  );
+}

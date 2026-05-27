@@ -305,12 +305,12 @@ export function tierLabel(tier: PitcherTier | undefined): string {
 export interface PitcherRatingArgs {
   forecast: GameForecast;
   scoredCategories: EnrichedLeagueStatCategory[];
-  /** Chase/hold/punt focus map. Drives the `focus` display field and, when
-   *  `categoryWeights` is omitted, the composite weights (via the bridge). */
-  focusMap: Record<number, Focus>;
-  /** Numeric per-category weights (the pivotality substrate). When omitted,
-   *  derived from `focusMap` so existing callers are unchanged. Phase 3 will
-   *  pass pivotality weights here directly. See docs/pivotality-migration.md. */
+  /** Legacy chase/hold/punt focus map. Optional and being retired: feeds the
+   *  display-only `focus` field, and the weight bridge when `categoryWeights`
+   *  is absent. Prefer passing `categoryWeights`. */
+  focusMap?: Record<number, Focus>;
+  /** Numeric per-category pivotality weights — the weight substrate. When
+   *  omitted, derived from `focusMap`. See docs/pivotality-migration.md. */
   categoryWeights?: Record<number, number>;
 }
 
@@ -321,7 +321,7 @@ export function getPitcherRating(args: PitcherRatingArgs): PitcherRating {
   // Filter to scored cats this engine can project.
   const supported = scoredCategories.filter(c => supportsPitcherStatId(c.stat_id));
   const statIds = supported.map(c => c.stat_id);
-  const categoryWeights = args.categoryWeights ?? focusToCategoryWeights(focusMap);
+  const categoryWeights = args.categoryWeights ?? focusToCategoryWeights(focusMap ?? {});
   const weights = buildPitcherWeightVector(statIds, categoryWeights);
 
   const contributions: PitcherCategoryContribution[] = [];
@@ -334,7 +334,7 @@ export function getPitcherRating(args: PitcherRatingArgs): PitcherRating {
 
     const normalized = normalize(projection.expected, window);
     const weight = weights[cat.stat_id] ?? 0;
-    const focus = focusMap[cat.stat_id] ?? 'neutral';
+    const focus = focusMap?.[cat.stat_id] ?? 'neutral';
     const conceded = (categoryWeights[cat.stat_id] ?? 1) <= 0;
     const contribution = weight * (normalized - 0.5);
 

@@ -13,8 +13,7 @@ import { useTeamOffense } from '@/lib/hooks/useTeamOffense';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
-import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
-import { buildCategoryWeights } from '@/lib/matchup/categoryWeights';
+import { useCategoryWeights } from '@/lib/hooks/useCategoryWeights';
 import { useWeekBatterScores } from '@/lib/hooks/useWeekBatterScores';
 import { useWeekPitcherScores } from '@/lib/hooks/useWeekPitcherScores';
 import { useSlotAwareStreaming } from '@/lib/hooks/useSlotAwareStreaming';
@@ -120,18 +119,13 @@ export default function StreamingManager() {
   }, [scoredPitcherCategories]);
   const pitcherPredicate = useCallback((statId: number) => pitcherStatIds.has(statId), [pitcherStatIds]);
   const {
-    focusMap: pitcherFocusMap,
-    suggestedFocusMap: pitcherSuggestedFocusMap,
-    set: setPitcherFocus,
-    reset: resetPitcherFocus,
-    hasOverrides: pitcherFocusOverrides,
-  } = useSuggestedFocus(matchupAnalysis, pitcherPredicate);
-
-  // Pivotality weights for the pitcher composite (see docs/pivotality-migration.md).
-  const pitcherCategoryWeights = useMemo(
-    () => buildCategoryWeights(matchupAnalysis, pitcherFocusMap, pitcherPredicate),
-    [matchupAnalysis, pitcherFocusMap, pitcherPredicate],
-  );
+    categoryWeights: pitcherCategoryWeights,
+    isConceded: pitcherIsConceded,
+    isAutoConceded: pitcherIsAutoConceded,
+    toggleConcede: pitcherToggleConcede,
+    reset: resetPitcherConcede,
+    hasOverrides: pitcherConcedeOverrides,
+  } = useCategoryWeights(matchupAnalysis, pitcherPredicate);
 
   // Tomorrow's slate drives the team-offense ID list — covers ~30 teams
   // when all play, and the SWR cache shares with `useWeekPitcherScores`'s
@@ -152,7 +146,7 @@ export default function StreamingManager() {
   const { teams: teamOffense } = useTeamOffense(opposingTeamIds);
 
   const { scored: pitcherWeekScores, days: pitcherPickupDays, isLoading: pitcherScoresLoading } =
-    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, pitcherFocusMap, teamOffense, pitcherCategoryWeights);
+    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, teamOffense, pitcherCategoryWeights);
 
   // ----- Batter tab inputs ---------------------------------------------
   const { batters: batterFAs, isLoading: batterFaLoading } = useAvailableBatters(leagueKey, true);
@@ -169,18 +163,13 @@ export default function StreamingManager() {
   }, [scoredBatterCategories]);
   const batterPredicate = useCallback((statId: number) => batterStatIds.has(statId), [batterStatIds]);
   const {
-    focusMap: batterFocusMap,
-    suggestedFocusMap: batterSuggestedFocusMap,
-    set: setBatterFocus,
-    reset: resetBatterFocus,
-    hasOverrides: batterFocusOverrides,
-  } = useSuggestedFocus(matchupAnalysis, batterPredicate);
-
-  // Pivotality weights for the batter composite (see docs/pivotality-migration.md).
-  const batterCategoryWeights = useMemo(
-    () => buildCategoryWeights(matchupAnalysis, batterFocusMap, batterPredicate),
-    [matchupAnalysis, batterFocusMap, batterPredicate],
-  );
+    categoryWeights: batterCategoryWeights,
+    isConceded: batterIsConceded,
+    isAutoConceded: batterIsAutoConceded,
+    toggleConcede: batterToggleConcede,
+    reset: resetBatterConcede,
+    hasOverrides: batterConcedeOverrides,
+  } = useCategoryWeights(matchupAnalysis, batterPredicate);
 
   // FA filter: 5% ownership floor, IL bypass. Lifted out of
   // BatterStreamingBoard so the same filtered list feeds both the FA
@@ -197,7 +186,7 @@ export default function StreamingManager() {
   // Mon-Sun on Sunday — so today is automatically excluded from value
   // calculations.
   const { scored: batterFAScores, days: pickupDays, isLoading: batterScoresLoading } =
-    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterFocusMap, batterCategoryWeights);
+    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterCategoryWeights);
 
   // Slot-aware streaming value: per-day assignStarters with and without
   // each FA. Captures position competition, multi-step rebalancing, and
@@ -265,11 +254,12 @@ export default function StreamingManager() {
             side="pitching"
             opponentName={opponentName}
             targetWeek={targetWeek}
-            focusMap={pitcherFocusMap}
-            onSetFocus={setPitcherFocus}
-            suggestedFocusMap={pitcherSuggestedFocusMap}
-            onReset={resetPitcherFocus}
-            hasOverrides={pitcherFocusOverrides}
+            categoryWeights={pitcherCategoryWeights}
+            isConceded={pitcherIsConceded}
+            isAutoConceded={pitcherIsAutoConceded}
+            onToggleConcede={pitcherToggleConcede}
+            onReset={resetPitcherConcede}
+            hasOverrides={pitcherConcedeOverrides}
           />
 
           <StreamingBoard
@@ -278,7 +268,6 @@ export default function StreamingManager() {
             teamOffense={teamOffense}
             loading={ctxLoading || pitcherFaLoading || pitcherScoresLoading}
             scoredPitcherCategories={scoredPitcherCategories}
-            focusMap={pitcherFocusMap}
             categoryWeights={pitcherCategoryWeights}
             helper={pitcherHelper}
           />
@@ -294,18 +283,18 @@ export default function StreamingManager() {
             targetWeek={targetWeek}
             actionableDays={pickupDays.length}
             dailyBaselines={slotAware.dailyBaselines}
-            focusMap={batterFocusMap}
-            onSetFocus={setBatterFocus}
-            suggestedFocusMap={batterSuggestedFocusMap}
-            onReset={resetBatterFocus}
-            hasOverrides={batterFocusOverrides}
+            categoryWeights={batterCategoryWeights}
+            isConceded={batterIsConceded}
+            isAutoConceded={batterIsAutoConceded}
+            onToggleConcede={batterToggleConcede}
+            onReset={resetBatterConcede}
+            hasOverrides={batterConcedeOverrides}
           />
 
           <BatterStreamingBoard
             faScores={batterFAScores}
             slotAwareValues={slotAware.byPlayerKey}
             days={pickupDays}
-            focusMap={batterFocusMap}
             faLoading={ctxLoading || batterFaLoading || batterScoresLoading}
           />
         </>

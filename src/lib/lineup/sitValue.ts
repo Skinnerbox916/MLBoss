@@ -10,13 +10,15 @@
  *
  * This engine answers the actual question: **does PLAYING this batter today
  * move my matchup favorably, net, given the game plan?** It sums the margin
- * movement that playing causes in each scored category, weighted by how much
- * the game plan cares (chase=2, neutral/hold=1, punt/locked=0), in the same
- * margin-point unit the matchup analyzer uses (so the terms are comparable):
+ * movement that playing causes in each scored category, weighted by each
+ * category's **pivotality weight** (how contested it is; 0 if conceded), in
+ * the same margin-point unit the matchup analyzer uses (so the terms are
+ * comparable):
  *
  *   - Counting, higher-better (HR/R/RBI/TB/H/SB/BB): playing always adds a
- *     favorable `E[count] / scale`. Punted → ×0, so forfeiting it costs
- *     nothing — this is why punting counting stats unlocks sitting.
+ *     favorable `E[count] / scale`. A locked win carries a small pivotality
+ *     weight (its lead is safe, so extra production barely matters) and a
+ *     conceded cat carries 0 — which is what unlocks sitting for ratios.
  *   - Batter K (lower-better counting): you can't strike out from the bench,
  *     so playing always adds an UNfavorable `E[K] / scale`.
  *   - AVG (rate): playing shifts team AVG toward the player's expected AVG.
@@ -34,7 +36,6 @@
  */
 
 import type { BatterRating } from '@/lib/mlb/batterRating';
-import type { Focus } from '@/lib/rating/focus';
 import { RATE_SCALE, CORRECTED_COUNTING_SCALE } from '@/lib/matchup/analysis';
 
 /** Matches `AB_PER_PA` in projection/batterTeam.ts — AB ≈ PA × 0.91. */
@@ -46,38 +47,9 @@ const AVG_STAT_ID = 3;
  *  Small negative deadband so we don't bench on noise. */
 export const SIT_DEADBAND = 0.03;
 
-/**
- * Residual weight for a LOCKED-WIN counting cat (suggestedFocus = punt,
- * margin > 0). A locked lead isn't truly safe — an absentee opponent keeps
- * accruing, so the lead erodes over the rest of the matchup/season. Zeroing
- * these cats entirely is what makes "chase K" bench the whole lineup: with no
- * counting value left, every bat's K harm goes unoffset. The residual keeps
- * real counting production worth something, so producers earn their slot and
- * only weak / high-K bats fall below the sit line.
- *
- * Out-of-reach LOSSES (punt, margin ≤ 0) stay at 0 — there's nothing to
- * protect. If the user thinks such a cat is still live (the absentee will
- * catch up), they override it to chase, which restores full weight.
- */
-const LOCKED_WIN_RESIDUAL = 0.35;
-
-/**
- * How much a category's production is worth to the sit decision. Chase = 2×,
- * hold = 1×, locked win = small residual, out-of-reach loss = 0. `margin` is
- * the corrected matchup margin for this cat (positive = winning); only
- * consulted for punted cats to split locked wins from out-of-reach losses.
- */
-function categoryWeight(f: Focus, margin: number | undefined): number {
-  if (f === 'chase') return 2;
-  if (f === 'neutral') return 1;
-  // punt: split by direction.
-  return margin !== undefined && margin > 0 ? LOCKED_WIN_RESIDUAL : 0;
-}
-
 export interface SitCatContribution {
   statId: number;
   label: string;
-  focus: Focus;
   /** Signed margin movement from PLAYING in this cat. Positive = playing
    *  helps the matchup; negative = playing hurts it. */
   marginDelta: number;
@@ -109,10 +81,10 @@ export interface SitValueInputs {
    * much one bat's ABs move your team rate. When omitted, AVG is skipped.
    */
   avgAnchor?: { oppAvg: number; myWeekAB: number };
-  /** Corrected matchup margin per stat_id (positive = winning). Used only to
-   *  split punted cats into locked wins (retain residual value) vs
-   *  out-of-reach losses (zero). Missing entries are treated as 0. */
-  marginByStatId?: Record<number, number>;
+  /** Pivotality weight per stat_id (0 = conceded). The per-cat importance in
+   *  the sit calc: a contested cat ≈ 1, a locked win small, a conceded cat 0.
+   *  Missing entries are treated as 0 (not in play). */
+  categoryWeights: Record<number, number>;
   deadband?: number;
 }
 
@@ -123,15 +95,15 @@ export interface SitValueInputs {
  * with the game plan the user sees.
  */
 export function computeBatterSitValue(input: SitValueInputs): BatterSitValue {
-  const { rating, expectedPA, avgAnchor, marginByStatId } = input;
+  const { rating, expectedPA, avgAnchor, categoryWeights } = input;
   const deadband = input.deadband ?? SIT_DEADBAND;
   const expectedAB = expectedPA * AB_PER_PA;
 
   const perCat: SitCatContribution[] = [];
 
   for (const cat of rating.categories) {
-    const w = categoryWeight(cat.focus, marginByStatId?.[cat.statId]);
-    if (w === 0) continue; // out-of-reach loss — playing adds nothing we value
+    const w = categoryWeights[cat.statId] ?? 0;
+    if (w === 0) continue; // conceded — playing adds nothing we value
 
     if (cat.statId === AVG_STAT_ID) {
       if (!avgAnchor || avgAnchor.myWeekAB <= 0) continue;
@@ -145,7 +117,6 @@ export function computeBatterSitValue(input: SitValueInputs): BatterSitValue {
       perCat.push({
         statId: cat.statId,
         label: cat.label,
-        focus: cat.focus,
         marginDelta,
         note: playerAvg < avgAnchor.oppAvg ? 'dilutes AVG' : 'lifts AVG',
       });
@@ -161,7 +132,6 @@ export function computeBatterSitValue(input: SitValueInputs): BatterSitValue {
     perCat.push({
       statId: cat.statId,
       label: cat.label,
-      focus: cat.focus,
       marginDelta,
       // For lower-better cats (batter K) playing ADDS the stat, which hurts —
       // show it as "+N K" so the harm reads naturally in the why-benched line.
@@ -175,25 +145,34 @@ export function computeBatterSitValue(input: SitValueInputs): BatterSitValue {
   return { net, perCat, shouldSit: net < -deadband };
 }
 
+// Sit-worthiness thresholds on the pivotality weight. LOW_VALUE_COUNTING
+// (≈ pivotality at |margin| 0.7) means a counting cat is locked or conceded —
+// extra production barely moves it. CONTESTED_RATIO (≈ pivotality at |margin|
+// ~0.4) means a ratio/K cat is close enough to be worth protecting. Defaults;
+// tune by watching real weeks. See docs/pivotality-migration.md.
+const LOW_VALUE_COUNTING = 0.15;
+const CONTESTED_RATIO = 0.5;
+
 /**
  * Is the game plan in the shape where sitting-for-ratio makes sense — at
- * least one counting cat punted/locked AND at least one ratio/K cat chased?
- * When false, the daily optimizer keeps its "always fill the lineup" behavior
- * (composite-rating objective, no empty slots). This bounds the auto-sit
- * behavior change to exactly the scenario it's designed for.
+ * least one counting cat locked/conceded (low pivotality weight) AND at least
+ * one ratio/K cat still contested (high weight)? When false, the daily
+ * optimizer keeps its "always fill the lineup" behavior (composite-rating
+ * objective, no empty slots). This bounds the auto-sit behavior change to
+ * exactly the scenario it's designed for.
  */
-export function isGamePlanSitWorthy(focusByStatId: Record<number, Focus>): boolean {
-  // Higher-better counting cats whose punt removes the offsetting value.
+export function isGamePlanSitWorthy(categoryWeights: Record<number, number>): boolean {
+  // Higher-better counting cats whose low weight removes the offsetting value.
   const COUNTING_HIGHER = new Set([7, 8, 12, 13, 16, 18, 23]);
   // Cats where sitting actively protects the number (AVG rate, batter K).
   const RATIO_OR_K = new Set([AVG_STAT_ID, 21]);
 
-  let hasPuntedCounting = false;
-  let hasChasedRatioOrK = false;
-  for (const [statIdStr, focus] of Object.entries(focusByStatId)) {
+  let hasLowValueCounting = false;
+  let hasContestedRatioOrK = false;
+  for (const [statIdStr, w] of Object.entries(categoryWeights)) {
     const statId = Number(statIdStr);
-    if (focus === 'punt' && COUNTING_HIGHER.has(statId)) hasPuntedCounting = true;
-    if (focus === 'chase' && RATIO_OR_K.has(statId)) hasChasedRatioOrK = true;
+    if (COUNTING_HIGHER.has(statId) && w <= LOW_VALUE_COUNTING) hasLowValueCounting = true;
+    if (RATIO_OR_K.has(statId) && w >= CONTESTED_RATIO) hasContestedRatioOrK = true;
   }
-  return hasPuntedCounting && hasChasedRatioOrK;
+  return hasLowValueCounting && hasContestedRatioOrK;
 }

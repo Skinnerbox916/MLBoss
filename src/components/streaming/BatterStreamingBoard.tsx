@@ -13,7 +13,6 @@ interface BatterStreamingBoardProps {
   faScores: WeekBatterScore[];
   slotAwareValues: Map<string, FAStreamingValue>;
   days: WeekDay[];
-  focusMap: Record<number, Focus>;
   faLoading: boolean;
   helper?: string;
 }
@@ -50,7 +49,6 @@ export default function BatterStreamingBoard({
   faScores,
   slotAwareValues,
   days,
-  focusMap,
   faLoading,
   helper,
 }: BatterStreamingBoardProps) {
@@ -98,7 +96,6 @@ export default function BatterStreamingBoard({
               key={s.player.player_key}
               entry={s}
               days={days}
-              focusMap={focusMap}
             />
           ))}
         </ul>
@@ -119,11 +116,9 @@ interface RowEntry extends WeekBatterScore {
 function BatterRow({
   entry,
   days,
-  focusMap,
 }: {
   entry: RowEntry;
   days: WeekDay[];
-  focusMap: Record<number, Focus>;
 }) {
   const { player, projection, streamingValue, slotPerDay } = entry;
   const tier = streamingTier(streamingValue);
@@ -183,7 +178,6 @@ function BatterRow({
                 key={c.statId}
                 statId={c.statId}
                 cat={projection.byCategory.get(c.statId)!}
-                focus={focusMap[c.statId]}
               />
             ))}
           </div>

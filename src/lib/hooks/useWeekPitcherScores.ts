@@ -15,7 +15,6 @@ import {
 } from '@/lib/projection/pitcherTeam';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import type { Focus } from '@/lib/rating/focus';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 
 export interface WeekPitcherScore {
@@ -52,7 +51,6 @@ interface UseWeekPitcherScoresResult {
 export function useWeekPitcherScores(
   faPool: FreeAgentPlayer[],
   scoredCategories: EnrichedLeagueStatCategory[],
-  focusMap: Record<number, Focus>,
   teamOffense?: Record<number, TeamOffense>,
   categoryWeights?: Record<number, number>,
 ): UseWeekPitcherScoresResult {
@@ -96,7 +94,6 @@ export function useWeekPitcherScores(
       gamesByDate,
       scoredCategories,
       teamOffense: teamOffenseMap,
-      focusMap,
       categoryWeights,
     };
 
@@ -116,7 +113,7 @@ export function useWeekPitcherScores(
       out.push({ player: fa, projection });
     }
     return out;
-  }, [faPool, scoredCategories, playableDays, gamesByDate, teamOffenseMap, focusMap, categoryWeights]);
+  }, [faPool, scoredCategories, playableDays, gamesByDate, teamOffenseMap, categoryWeights]);
 
   const isLoading = dayResults.some(d => d.isLoading);
 

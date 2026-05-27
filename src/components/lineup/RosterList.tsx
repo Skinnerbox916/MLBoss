@@ -5,7 +5,6 @@ import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { PlayerStatLine } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
-import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import PlayerRow from './PlayerRow';
 import { type LineupMode, getRowStatus, isPitcher } from './types';
@@ -37,8 +36,6 @@ interface RosterListProps {
   getPlayerLine: (name: string, team: string) => PlayerStatLine | null;
   /** Batter-side league scoring categories — drive the category-weighted rating. */
   scoredBatterCategories: EnrichedLeagueStatCategory[];
-  /** Per-category chase/punt focus state for this page. */
-  focusMap: Record<number, Focus>;
   /** Numeric pivotality weights for the rating composite (see
    *  docs/pivotality-migration.md). Must match the optimizer's weights so
    *  displayed scores and lineup picks agree. */
@@ -54,7 +51,6 @@ export default function RosterList({
   getMatchupContext,
   getPlayerLine,
   scoredBatterCategories,
-  focusMap,
   categoryWeights,
 }: RosterListProps) {
   const { sorted, noGameCount } = useMemo(() => {
@@ -91,7 +87,6 @@ export default function RosterList({
         context,
         stats: line,
         scoredCategories: scoredBatterCategories,
-        focusMap,
         categoryWeights,
         battingOrder: p.batting_order,
       }).score;
@@ -99,7 +94,7 @@ export default function RosterList({
     const _sorted = withGame.slice().sort((a, b) => scoreFor(b) - scoreFor(a));
 
     return { sorted: _sorted, noGameCount: _noGameCount };
-  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, focusMap, categoryWeights]);
+  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, categoryWeights]);
 
   if (isLoading) {
     return (
@@ -146,7 +141,6 @@ export default function RosterList({
           context={getMatchupContext(player.editorial_team_abbr)}
           seasonStats={getPlayerLine(player.name, player.editorial_team_abbr)}
           scoredBatterCategories={scoredBatterCategories}
-          focusMap={focusMap}
           categoryWeights={categoryWeights}
         />
       ))}

@@ -9,7 +9,6 @@ import type { PlayerStatLine } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
 import { getWeatherFlag } from '@/lib/mlb/analysis';
 import { getBatterRating, type BatterRating } from '@/lib/mlb/batterRating';
-import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { usePlayerSplits } from '@/lib/hooks/usePlayerSplits';
 import PlayerSplitsPanel from './PlayerSplitsPanel';
@@ -178,8 +177,6 @@ interface PlayerRowProps {
   seasonStats: PlayerStatLine | null;
   /** Batter-side scored categories (drives which rows appear in the waterfall). */
   scoredBatterCategories: EnrichedLeagueStatCategory[];
-  /** Per-category chase/punt focus for this page (independent from roster page). */
-  focusMap: Record<number, Focus>;
   /** Numeric pivotality weights for the rating composite (see
    *  docs/pivotality-migration.md). Matches the list sort + optimizer. */
   categoryWeights: Record<number, number>;
@@ -190,7 +187,6 @@ export default function PlayerRow({
   context,
   seasonStats,
   scoredBatterCategories,
-  focusMap,
   categoryWeights,
 }: PlayerRowProps) {
   const [expanded, setExpanded] = useState(false);
@@ -213,7 +209,6 @@ export default function PlayerRow({
     context,
     stats: seasonStats,
     scoredCategories: scoredBatterCategories,
-    focusMap,
     categoryWeights,
     battingOrder: player.batting_order,
   });

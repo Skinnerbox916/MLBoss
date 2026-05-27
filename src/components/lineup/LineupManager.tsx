@@ -11,8 +11,7 @@ import { useRosterStats } from '@/lib/hooks/useRosterStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
-import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
-import { buildCategoryWeights } from '@/lib/matchup/categoryWeights';
+import { useCategoryWeights } from '@/lib/hooks/useCategoryWeights';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import { computeBatterSitValue, isGamePlanSitWorthy } from '@/lib/lineup/sitValue';
@@ -109,22 +108,17 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   }, [scoredBatterCategories]);
   const batterPredicate = useCallback((statId: number) => batterStatIds.has(statId), [batterStatIds]);
 
-  const {
-    focusMap,
-    suggestedFocusMap,
-    set: setFocus,
-    reset: resetFocus,
-    hasOverrides: hasFocusOverrides,
-  } = useSuggestedFocus(matchupAnalysis, batterPredicate);
-
-  // Pivotality weights for the rating composite: pivotality(margin) for
-  // in-play cats, 0 for conceded (punt). Drives the displayed scores and the
-  // optimizer; `focusMap` still drives the Game Plan panel and the sit logic.
+  // Pivotality weights + concession state for the batter side. Drives the
+  // displayed scores, the optimizer, the Game Plan panel, and the sit logic.
   // See docs/pivotality-migration.md.
-  const batterCategoryWeights = useMemo(
-    () => buildCategoryWeights(matchupAnalysis, focusMap, batterPredicate),
-    [matchupAnalysis, focusMap, batterPredicate],
-  );
+  const {
+    categoryWeights: batterCategoryWeights,
+    isConceded,
+    isAutoConceded,
+    toggleConcede,
+    reset: resetConcede,
+    hasOverrides: hasConcedeOverrides,
+  } = useCategoryWeights(matchupAnalysis, batterPredicate);
 
   // Build a lookup: team abbr → MatchupContext. Memoized so row renders don't rebuild it.
   const matchupIndex = useMemo(() => {
@@ -169,7 +163,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // switch the optimizer objective to net matchup-value and let it leave
   // slots empty. Otherwise the optimizer keeps its "always fill" behavior.
   // See docs/recommendation-system.md and src/lib/lineup/sitValue.ts.
-  const sitForRatio = useMemo(() => isGamePlanSitWorthy(focusMap), [focusMap]);
+  const sitForRatio = useMemo(() => isGamePlanSitWorthy(batterCategoryWeights), [batterCategoryWeights]);
 
   // AVG dilution anchor for the sit-value calc. The bar is the OPPONENT's
   // projected AVG (stat_id 3) — what we must beat to win the category — not
@@ -186,14 +180,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     };
   }, [oppProjection, myProjection]);
 
-  // Per-cat corrected margin (positive = winning) — lets the sit-value calc
-  // split locked wins (keep residual value) from out-of-reach losses (zero).
-  const marginByStatId = useMemo(() => {
-    const map: Record<number, number> = {};
-    for (const row of matchupAnalysis.rows) map[row.statId] = row.margin;
-    return map;
-  }, [matchupAnalysis]);
-
   // Optimizer score. A player with a rough matchup is still strictly better
   // than a player who isn't playing at all — we want the counting stats.
   // `getBatterRating` returns a neutral 50 when there's no game context,
@@ -209,7 +195,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         context,
         stats: getPlayerLine(p.name, p.editorial_team_abbr),
         scoredCategories: scoredBatterCategories,
-        focusMap,
         categoryWeights: batterCategoryWeights,
         battingOrder: p.batting_order,
       });
@@ -219,12 +204,12 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         // be benched harder, not force-started.
         const gameCount = dhTeams.has(abbr) ? 2 : 1;
         const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
-        return computeBatterSitValue({ rating, expectedPA, avgAnchor, marginByStatId }).net;
+        return computeBatterSitValue({ rating, expectedPA, avgAnchor, categoryWeights: batterCategoryWeights }).net;
       }
       const dhBoost = dhTeams.has(abbr) ? DH_BOOST : 0;
       return dhBoost + rating.score / 100;
     },
-    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, batterCategoryWeights, sitForRatio, avgAnchor, marginByStatId],
+    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, batterCategoryWeights, sitForRatio, avgAnchor],
   );
 
   // Optimize-week state. Runs the optimizer for every remaining day in the
@@ -245,12 +230,10 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           teamKey,
           rosterPositions,
           scoredBatterCategories,
-          focusMap,
           categoryWeights: batterCategoryWeights,
           getPlayerLine,
           sitForRatio,
           avgAnchor,
-          marginByStatId,
         },
         (date, i, total) => {
           setWeekStatus(`Optimizing ${date} (${i + 1}/${total})…`);
@@ -269,7 +252,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, focusMap, batterCategoryWeights, getPlayerLine, mutateRoster, sitForRatio, avgAnchor, marginByStatId]);
+  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, sitForRatio, avgAnchor]);
 
   // Sit-for-ratio advisory: today's batters who are in a starting slot but
   // whose net matchup-value is negative — the optimizer will bench these to
@@ -288,13 +271,12 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         context,
         stats: getPlayerLine(p.name, p.editorial_team_abbr),
         scoredCategories: scoredBatterCategories,
-        focusMap,
         categoryWeights: batterCategoryWeights,
         battingOrder: p.batting_order,
       });
       const gameCount = dhTeams.has(abbr) ? 2 : 1;
       const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
-      const sit = computeBatterSitValue({ rating, expectedPA, avgAnchor, marginByStatId });
+      const sit = computeBatterSitValue({ rating, expectedPA, avgAnchor, categoryWeights: batterCategoryWeights });
       if (!sit.shouldSit) continue;
       const reasons = sit.perCat
         .filter(c => c.marginDelta < 0)
@@ -303,7 +285,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       out.push({ key: p.player_key, name: p.name, net: sit.net, reasons });
     }
     return out.sort((a, b) => a.net - b.net);
-  }, [sitForRatio, mode, roster, matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, batterCategoryWeights, avgAnchor, marginByStatId]);
+  }, [sitForRatio, mode, roster, matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, batterCategoryWeights, avgAnchor]);
 
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
@@ -367,11 +349,12 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           isLoading={matchupLoading}
           side="batting"
           opponentName={opponentName}
-          focusMap={focusMap}
-          onSetFocus={setFocus}
-          suggestedFocusMap={suggestedFocusMap}
-          onReset={resetFocus}
-          hasOverrides={hasFocusOverrides}
+          categoryWeights={batterCategoryWeights}
+          isConceded={isConceded}
+          isAutoConceded={isAutoConceded}
+          onToggleConcede={toggleConcede}
+          onReset={resetConcede}
+          hasOverrides={hasConcedeOverrides}
         />
       )}
 
@@ -435,7 +418,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               getMatchupContext={getMatchupContext}
               getPlayerLine={getPlayerLine}
               scoredBatterCategories={scoredBatterCategories}
-              focusMap={focusMap}
               categoryWeights={batterCategoryWeights}
             />
           </Panel>

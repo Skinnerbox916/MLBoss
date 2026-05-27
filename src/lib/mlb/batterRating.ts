@@ -302,12 +302,12 @@ export interface BatterRatingArgs {
    *  stratified `PlayerStatLine`. */
   stats: PlayerStatLine | BatterSeasonStats | null;
   scoredCategories: EnrichedLeagueStatCategory[];
-  /** Chase/hold/punt focus map. Drives the `focus` display field and, when
-   *  `categoryWeights` is omitted, the composite weights (via the bridge). */
-  focusMap: Record<number, Focus>;
-  /** Numeric per-category weights (the pivotality substrate). When omitted,
-   *  derived from `focusMap` so existing callers are unchanged. Phase 3 will
-   *  pass pivotality weights here directly. See docs/pivotality-migration.md. */
+  /** Legacy chase/hold/punt focus map. Optional and being retired: it only
+   *  feeds the display-only `focus` field now, and the weight bridge when
+   *  `categoryWeights` is absent. Prefer passing `categoryWeights`. */
+  focusMap?: Record<number, Focus>;
+  /** Numeric per-category pivotality weights — the weight substrate. When
+   *  omitted, derived from `focusMap`. See docs/pivotality-migration.md. */
   categoryWeights?: Record<number, number>;
   battingOrder: number | null;
 }
@@ -350,7 +350,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
   // Filter to the scored categories this engine can actually compute.
   const supported = scoredCategories.filter(c => supportsStatId(c.stat_id));
   const statIds = supported.map(c => c.stat_id);
-  const categoryWeights = args.categoryWeights ?? focusToCategoryWeights(focusMap);
+  const categoryWeights = args.categoryWeights ?? focusToCategoryWeights(focusMap ?? {});
   const weights = buildWeightVector(statIds, categoryWeights);
 
   // L2: build the per-PA forecast for every supported cat in one call.
@@ -367,7 +367,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
     const { baseline, expected, effectivePA, modifierHint } = f;
     const normalized = normalizeRate(expected, cat.stat_id, cat.betterIs);
     const weight = weights[cat.stat_id] ?? 0;
-    const focus = focusMap[cat.stat_id] ?? 'neutral';
+    const focus = focusMap?.[cat.stat_id] ?? 'neutral';
     const conceded = (categoryWeights[cat.stat_id] ?? 1) <= 0;
     // Contribution measured as the category's pull on score, centered on
     // neutral (0.5). Positive = above-average for this category today.

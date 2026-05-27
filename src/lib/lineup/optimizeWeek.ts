@@ -3,7 +3,6 @@ import type { RosterPositionSlot } from '@/lib/hooks/useRosterPositions';
 import type { MLBGame, ParkData, PlayerStatLine } from '@/lib/mlb/types';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
-import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { computeBatterSitValue } from './sitValue';
 import { expectedPAperGame } from '@/lib/projection/batterTeam';
@@ -20,7 +19,6 @@ export interface OptimizeWeekDeps {
   teamKey: string;
   rosterPositions: RosterPositionSlot[];
   scoredBatterCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, Focus>;
   /** Numeric pivotality weights for the rating composite — must match the
    *  page's displayed scores. See docs/pivotality-migration.md. */
   categoryWeights: Record<number, number>;
@@ -44,9 +42,6 @@ export interface OptimizeWeekDeps {
    * Counting + K terms work without it; AVG is skipped when absent.
    */
   avgAnchor?: { oppAvg: number; myWeekAB: number };
-  /** Corrected matchup margin per stat_id (positive = winning) — splits
-   *  locked wins from out-of-reach losses in the sit-value weighting. */
-  marginByStatId?: Record<number, number>;
 }
 
 export interface DayResult {
@@ -184,7 +179,6 @@ async function optimizeOneDay(
       context,
       stats: deps.getPlayerLine(p.name, p.editorial_team_abbr),
       scoredCategories: deps.scoredBatterCategories,
-      focusMap: deps.focusMap,
       categoryWeights: deps.categoryWeights,
       battingOrder: p.batting_order,
     });
@@ -198,7 +192,7 @@ async function optimizeOneDay(
         rating,
         expectedPA,
         avgAnchor: deps.avgAnchor,
-        marginByStatId: deps.marginByStatId,
+        categoryWeights: deps.categoryWeights,
       }).net;
     }
     const boost = dhTeams.has(abbr) ? DH_BOOST : 0;

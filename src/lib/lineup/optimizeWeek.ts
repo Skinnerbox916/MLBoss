@@ -21,6 +21,9 @@ export interface OptimizeWeekDeps {
   rosterPositions: RosterPositionSlot[];
   scoredBatterCategories: EnrichedLeagueStatCategory[];
   focusMap: Record<number, Focus>;
+  /** Numeric pivotality weights for the rating composite — must match the
+   *  page's displayed scores. See docs/pivotality-migration.md. */
+  categoryWeights: Record<number, number>;
   /**
    * Looks up cached/known season stats for a player as a stratified
    * `PlayerStatLine`. Reused across days — season stats are stable
@@ -182,6 +185,7 @@ async function optimizeOneDay(
       stats: deps.getPlayerLine(p.name, p.editorial_team_abbr),
       scoredCategories: deps.scoredBatterCategories,
       focusMap: deps.focusMap,
+      categoryWeights: deps.categoryWeights,
       battingOrder: p.batting_order,
     });
     if (deps.sitForRatio) {

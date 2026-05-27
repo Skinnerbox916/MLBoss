@@ -39,6 +39,10 @@ interface RosterListProps {
   scoredBatterCategories: EnrichedLeagueStatCategory[];
   /** Per-category chase/punt focus state for this page. */
   focusMap: Record<number, Focus>;
+  /** Numeric pivotality weights for the rating composite (see
+   *  docs/pivotality-migration.md). Must match the optimizer's weights so
+   *  displayed scores and lineup picks agree. */
+  categoryWeights: Record<number, number>;
 }
 
 export default function RosterList({
@@ -51,6 +55,7 @@ export default function RosterList({
   getPlayerLine,
   scoredBatterCategories,
   focusMap,
+  categoryWeights,
 }: RosterListProps) {
   const { sorted, noGameCount } = useMemo(() => {
     const scoped = filterByMode(roster, mode);
@@ -87,13 +92,14 @@ export default function RosterList({
         stats: line,
         scoredCategories: scoredBatterCategories,
         focusMap,
+        categoryWeights,
         battingOrder: p.batting_order,
       }).score;
     };
     const _sorted = withGame.slice().sort((a, b) => scoreFor(b) - scoreFor(a));
 
     return { sorted: _sorted, noGameCount: _noGameCount };
-  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, focusMap]);
+  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, focusMap, categoryWeights]);
 
   if (isLoading) {
     return (
@@ -141,6 +147,7 @@ export default function RosterList({
           seasonStats={getPlayerLine(player.name, player.editorial_team_abbr)}
           scoredBatterCategories={scoredBatterCategories}
           focusMap={focusMap}
+          categoryWeights={categoryWeights}
         />
       ))}
       {noGameCount > 0 && (

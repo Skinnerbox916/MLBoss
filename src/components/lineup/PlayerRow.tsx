@@ -180,6 +180,9 @@ interface PlayerRowProps {
   scoredBatterCategories: EnrichedLeagueStatCategory[];
   /** Per-category chase/punt focus for this page (independent from roster page). */
   focusMap: Record<number, Focus>;
+  /** Numeric pivotality weights for the rating composite (see
+   *  docs/pivotality-migration.md). Matches the list sort + optimizer. */
+  categoryWeights: Record<number, number>;
 }
 
 export default function PlayerRow({
@@ -188,6 +191,7 @@ export default function PlayerRow({
   seasonStats,
   scoredBatterCategories,
   focusMap,
+  categoryWeights,
 }: PlayerRowProps) {
   const [expanded, setExpanded] = useState(false);
   const status = getRowStatus(player);
@@ -210,6 +214,7 @@ export default function PlayerRow({
     stats: seasonStats,
     scoredCategories: scoredBatterCategories,
     focusMap,
+    categoryWeights,
     battingOrder: player.batting_order,
   });
   const tierStyle = matchupTierStyle(rating.tier);

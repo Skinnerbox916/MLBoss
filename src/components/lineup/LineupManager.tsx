@@ -12,6 +12,7 @@ import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
+import { buildCategoryWeights } from '@/lib/matchup/categoryWeights';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import { computeBatterSitValue, isGamePlanSitWorthy } from '@/lib/lineup/sitValue';
@@ -116,6 +117,15 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     hasOverrides: hasFocusOverrides,
   } = useSuggestedFocus(matchupAnalysis, batterPredicate);
 
+  // Pivotality weights for the rating composite: pivotality(margin) for
+  // in-play cats, 0 for conceded (punt). Drives the displayed scores and the
+  // optimizer; `focusMap` still drives the Game Plan panel and the sit logic.
+  // See docs/pivotality-migration.md.
+  const batterCategoryWeights = useMemo(
+    () => buildCategoryWeights(matchupAnalysis, focusMap, batterPredicate),
+    [matchupAnalysis, focusMap, batterPredicate],
+  );
+
   // Build a lookup: team abbr → MatchupContext. Memoized so row renders don't rebuild it.
   const matchupIndex = useMemo(() => {
     const map = new Map<string, MatchupContext>();
@@ -200,6 +210,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         stats: getPlayerLine(p.name, p.editorial_team_abbr),
         scoredCategories: scoredBatterCategories,
         focusMap,
+        categoryWeights: batterCategoryWeights,
         battingOrder: p.batting_order,
       });
       if (sitForRatio) {
@@ -213,7 +224,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       const dhBoost = dhTeams.has(abbr) ? DH_BOOST : 0;
       return dhBoost + rating.score / 100;
     },
-    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, sitForRatio, avgAnchor, marginByStatId],
+    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, batterCategoryWeights, sitForRatio, avgAnchor, marginByStatId],
   );
 
   // Optimize-week state. Runs the optimizer for every remaining day in the
@@ -235,6 +246,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           rosterPositions,
           scoredBatterCategories,
           focusMap,
+          categoryWeights: batterCategoryWeights,
           getPlayerLine,
           sitForRatio,
           avgAnchor,
@@ -257,7 +269,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, focusMap, getPlayerLine, mutateRoster, sitForRatio, avgAnchor, marginByStatId]);
+  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, focusMap, batterCategoryWeights, getPlayerLine, mutateRoster, sitForRatio, avgAnchor, marginByStatId]);
 
   // Sit-for-ratio advisory: today's batters who are in a starting slot but
   // whose net matchup-value is negative — the optimizer will bench these to
@@ -277,6 +289,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         stats: getPlayerLine(p.name, p.editorial_team_abbr),
         scoredCategories: scoredBatterCategories,
         focusMap,
+        categoryWeights: batterCategoryWeights,
         battingOrder: p.batting_order,
       });
       const gameCount = dhTeams.has(abbr) ? 2 : 1;
@@ -290,7 +303,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       out.push({ key: p.player_key, name: p.name, net: sit.net, reasons });
     }
     return out.sort((a, b) => a.net - b.net);
-  }, [sitForRatio, mode, roster, matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, avgAnchor, marginByStatId]);
+  }, [sitForRatio, mode, roster, matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, batterCategoryWeights, avgAnchor, marginByStatId]);
 
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
@@ -423,6 +436,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               getPlayerLine={getPlayerLine}
               scoredBatterCategories={scoredBatterCategories}
               focusMap={focusMap}
+              categoryWeights={batterCategoryWeights}
             />
           </Panel>
 

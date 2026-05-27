@@ -468,22 +468,56 @@ export async function getRosterSeasonStats(
             const priorOverallOps = priorLine?.ops ?? null;
             const primaryOverallOps = line.ops;
 
+            // Per-category platoon ratios (vs-hand rate / overall rate),
+            // computed from whichever source (current or prior) drove the
+            // OPS split — so the ratio basis matches `paVs*`. Same-season
+            // numerator/denominator keeps each ratio internally consistent.
+            const handRatios = (
+              src: SplitLine,
+              overall: SplitLine,
+            ): Partial<Record<number, number>> => {
+              const out: Partial<Record<number, number>> = {};
+              const sPa = src.plateAppearances, oPa = overall.plateAppearances;
+              if (sPa <= 0 || oPa <= 0) return out;
+              const set = (id: number, sCount: number, oCount: number) => {
+                const sRate = sCount / sPa, oRate = oCount / oPa;
+                if (oRate > 0) { const r = sRate / oRate; if (isFinite(r) && r > 0) out[id] = r; }
+              };
+              if (src.avg != null && overall.avg != null && overall.avg > 0) out[3] = src.avg / overall.avg;
+              set(8, src.hits, overall.hits);          // H
+              set(23, src.totalBases, overall.totalBases); // TB
+              set(12, src.homeRuns, overall.homeRuns); // HR
+              set(21, src.strikeouts, overall.strikeouts); // K
+              set(18, src.walks, overall.walks);       // BB
+              set(7, src.runs, overall.runs);          // R
+              set(13, src.rbi, overall.rbi);           // RBI
+              return out;
+            };
+
             const resolveHand = (
               curr: SplitLine | null,
               prior: SplitLine | null,
-            ): { ops: number | null; pa: number } => {
+            ): { ops: number | null; pa: number; ratios: Partial<Record<number, number>> } => {
               if (curr && curr.plateAppearances >= MIN_HAND_PA && curr.ops !== null) {
-                return { ops: curr.ops, pa: curr.plateAppearances };
+                return { ops: curr.ops, pa: curr.plateAppearances, ratios: handRatios(curr, line) };
               }
               if (
                 prior && prior.plateAppearances >= MIN_HAND_PA && prior.ops !== null &&
-                priorOverallOps !== null && priorOverallOps > 0 &&
+                priorLine && priorOverallOps !== null && priorOverallOps > 0 &&
                 primaryOverallOps !== null
               ) {
                 const priorRatio = prior.ops / priorOverallOps;
-                return { ops: primaryOverallOps * priorRatio, pa: prior.plateAppearances };
+                return {
+                  ops: primaryOverallOps * priorRatio,
+                  pa: prior.plateAppearances,
+                  ratios: handRatios(prior, priorLine),
+                };
               }
-              return { ops: curr?.ops ?? null, pa: curr?.plateAppearances ?? 0 };
+              return {
+                ops: curr?.ops ?? null,
+                pa: curr?.plateAppearances ?? 0,
+                ratios: curr ? handRatios(curr, line) : {},
+              };
             };
 
             const vsL = resolveHand(currentVsL, priorVsL);
@@ -537,6 +571,8 @@ export async function getRosterSeasonStats(
               paVsL: vsL.pa,
               opsVsR: vsR.ops,
               paVsR: vsR.pa,
+              ratiosVsL: Object.keys(vsL.ratios).length ? vsL.ratios : null,
+              ratiosVsR: Object.keys(vsR.ratios).length ? vsR.ratios : null,
               priorSeason: priorSeasonBlock,
             };
           } else if (priorLine && priorLine.plateAppearances > 0) {
@@ -579,6 +615,8 @@ export async function getRosterSeasonStats(
               paVsL: 0,
               opsVsR: null,
               paVsR: 0,
+              ratiosVsL: null,
+              ratiosVsR: null,
               priorSeason: null,
             };
           }
@@ -654,7 +692,7 @@ export async function getPitcherTalentBatch(
 
         const talent = computePitcherTalent({
           mlbId: identity.mlbId,
-          throws: identity.throws as 'L' | 'R' | 'S',
+          throws: identity.throws,
           currentLine: seasonLines.current,
           priorLine: seasonLines.prior,
           currentSavant: savantMap.get(identity.mlbId) ?? null,

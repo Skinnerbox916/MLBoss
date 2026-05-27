@@ -91,6 +91,8 @@ function batter(overrides: Partial<BatterSeasonStats>): BatterSeasonStats {
     paVsL: 150,
     opsVsR: 0.775,
     paVsR: 350,
+    ratiosVsL: null,
+    ratiosVsR: null,
     priorSeason: {
       season: 2025, pa: 600, gp: 150, hr: 25, sb: 10, runs: 85, rbi: 80,
       hits: 155, walks: 60, strikeouts: 120, totalBases: 275, avg: 0.260,
@@ -310,7 +312,9 @@ const PROFILES: Profile[] = [
     focusMap: NEUTRAL_FOCUS,
     // Above-average batter vs league-mean SP → SP modifiers are all
     // ~neutral; the score reflects baseline talent + batting-order
-    // opportunity (1.06×) − platoon (0.97×). Lands near 67.
+    // opportunity (1.06×). Platoon is now per-cat (RHB-vs-RHP same-hand:
+    // small K bump / AVG dip), folded into the cats rather than a
+    // composite factor. Lands in the mid-high 60s.
     expectedScoreRange: [55, 75],
   },
   {

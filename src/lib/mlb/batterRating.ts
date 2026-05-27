@@ -29,20 +29,19 @@
  *   2. Normalise `expected` onto 0-1 using the category's floor/elite
  *      window (shared with roster scoring).
  *   3. Weight each category by focus (chase / neutral / punt) and sum.
- *   4. Multiply the composite by ONLY the matchup-wide adjustments:
- *        - platoon multiplier (regressed split ratio, centered on 1.0)
- *        - opportunity multiplier (batting order → PA count)
- *      Weather and park live at the per-cat layer; pulling them up to
- *      the composite would double-count and would also paper over the
- *      stat-specific differences (wind out helps HR/R/RBI but doesn't
- *      help K-suppression — the per-cat layer captures that).
+ *   4. Multiply the composite by ONLY the opportunity multiplier (batting
+ *      order → PA count) — the one signal that truly scales every counting
+ *      stat the same. Platoon, weather, and park all live at the per-cat
+ *      layer because their effect is stat-specific.
  *   5. Multiply by 100 and bucket into great/good/neutral/poor/bad tiers.
  *
- * Matchup modifiers live INSIDE each category's expected rate so we
- * don't double-count. Platoon and opportunity are multipliers on the
- * whole composite because they scale every category proportionally
- * (platoon: every per-PA rate is shifted by the same talent-vs-hand
- * factor; opportunity: PA count scales every counting stat the same).
+ * Matchup modifiers live INSIDE each category's expected rate so we don't
+ * double-count and so stat-specific differences survive. Platoon (2026-05)
+ * is a per-cat population component model (`platoon.ts`): same-handed
+ * matchups raise K hard, dent AVG/H lightly, and barely move HR — a single
+ * composite OPS factor both overstated AVG and understated K. The `platoon`
+ * field on the result is now a display-only headline summary, not applied
+ * to score. See docs/history.md "2026-05 — Per-category platoon".
  *
  * SB intentionally retains a flat handedness bump (RHP +5%) until a
  * pitcher SB-allowed rate is plumbed onto `ProbablePitcher`. Catcher
@@ -65,7 +64,8 @@ import {
   normalizeRate,
   supportsStatId,
 } from './categoryBaselines';
-import { getPlatoonAdjustedTalent, getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
+import { getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
+import { platoonSummaryFactor, facingHandFrom } from './platoon';
 import { buildBatterForecast } from './batterForecast';
 import type { Focus } from '@/lib/rating/focus';
 
@@ -147,45 +147,40 @@ function clamp(x: number, lo: number, hi: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Platoon multiplier from the regressed split ratio. Caps the output to
- * ±15% so extreme observed ratios on thin samples (rare) can't swamp
- * the category composite — the priors already regress most cases into
- * that band.
+ * Platoon SUMMARY for display only. As of 2026-05 the platoon effect is
+ * applied per-category inside `buildBatterForecast` (population component
+ * structure — large on K, small on AVG, negligible on HR; see platoon.ts).
+ * This multiplier is therefore NOT applied to the composite score — it is
+ * a headline tilt ("is this a good/bad platoon spot?") for the breakdown
+ * panel, while the per-category rows carry the real stat-specific effect.
+ * `available` is false (neutral) for switch hitters, unknown batter hand,
+ * switch-pitchers, and unknown SP.
  */
 function buildPlatoonMultiplier(
   stats: BatterSeasonStats | null,
   ctx: MatchupContext | null,
 ): RatingMultiplier {
-  const platoon = getPlatoonAdjustedTalent(stats, ctx?.opposingPitcher?.throws);
-  const clamped = clamp(platoon.multiplier, 0.85, 1.15);
-  const pct = (clamped - 1) * 100;
-  const handLabel = platoon.facingHand === 'L' ? 'vs LHP' : platoon.facingHand === 'R' ? 'vs RHP' : '';
-
-  let summary: string;
-  const available = platoon.facingHand !== null;
+  const facingHand = facingHandFrom(ctx?.opposingPitcher?.throws);
+  const factor = platoonSummaryFactor(stats?.bats, facingHand);
+  const available = factor !== null;
   if (!available) {
-    summary = ctx?.opposingPitcher
-      ? 'Switch-pitcher matchup'
-      : 'SP unknown';
-  } else if (clamped >= 1.05) {
-    summary = 'Strong vs hand';
-  } else if (clamped >= 1.02) {
-    summary = 'Favorable vs hand';
-  } else if (clamped >= 0.98) {
-    summary = 'Neutral platoon';
-  } else if (clamped >= 0.95) {
-    summary = 'Mild tilt vs hand';
-  } else {
-    summary = 'Rough vs hand';
+    const summary = !ctx?.opposingPitcher ? 'SP unknown'
+      : facingHand === null ? 'Switch-pitcher matchup'
+      : stats?.bats === 'S' ? 'Switch hitter — no platoon'
+      : 'Platoon n/a';
+    return { multiplier: 1.0, deltaPct: 0, display: '—', summary, available: false };
   }
 
-  return {
-    multiplier: clamped,
-    deltaPct: pct,
-    display: handLabel || '—',
-    summary,
-    available,
-  };
+  const pct = (factor - 1) * 100;
+  const handLabel = facingHand === 'L' ? 'vs LHP' : 'vs RHP';
+  const summary =
+    factor >= 1.04 ? 'Strong vs hand'
+    : factor >= 1.015 ? 'Favorable vs hand'
+    : factor >= 0.985 ? 'Neutral platoon'
+    : factor >= 0.96 ? 'Mild tilt vs hand'
+    : 'Rough vs hand';
+
+  return { multiplier: factor, deltaPct: pct, display: handLabel, summary, available };
 }
 
 /**
@@ -400,12 +395,14 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
   const activeWeight = Object.values(weights).reduce((a, b) => a + b, 0);
   const preMultScore = activeWeight > 0 ? composite * 100 : 50;
 
-  // Composite multipliers — only platoon and opportunity. Weather is
-  // applied per-cat (see weatherCatFactor) so the K and BB cats — which
-  // weather doesn't affect — are not penalised, while HR/R/RBI carry
-  // the wind/temperature signal where it actually applies.
+  // Composite multiplier — only opportunity (PA count from batting order).
+  // Platoon moved to the per-cat layer in 2026-05 (population component
+  // structure in batterForecast/platoon.ts): it scales K hard, AVG/H
+  // lightly, HR negligibly, so a single composite factor both overstated
+  // the AVG effect and understated K. `platoon` is now a display summary
+  // only (see buildPlatoonMultiplier). Weather is likewise per-cat.
   const finalScore = activeWeight > 0
-    ? preMultScore * platoon.multiplier * opportunity.multiplier
+    ? preMultScore * opportunity.multiplier
     : preMultScore;
 
   const score = Math.max(0, Math.min(100, Math.round(finalScore)));

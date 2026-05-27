@@ -31,35 +31,6 @@ import {
 // MLB Stats API response shapes (internal — not exported)
 // ---------------------------------------------------------------------------
 
-interface RawPitcherStats {
-  splits?: Array<{
-    stat: {
-      era?: string;
-      whip?: string;
-      wins?: number;
-      losses?: number;
-      inningsPitched?: string;
-      strikeoutsPer9Inn?: string;
-      strikeOuts?: number;
-      gamesStarted?: number;
-      pitchesPerInning?: string;
-      baseOnBalls?: number;
-      homeRuns?: number;
-      hits?: number;
-      atBats?: number;
-      groundOuts?: number;
-      airOuts?: number;
-    };
-  }>;
-}
-
-interface RawPitcher {
-  id: number;
-  fullName: string;
-  pitchHand?: { code: string };
-  stats?: RawPitcherStats[];
-}
-
 interface RawTeam {
   id: number;
   name: string;
@@ -91,8 +62,8 @@ interface RawGame {
   gameDate: string;
   status: { detailedState: string };
   teams: {
-    home: { team: RawTeam; probablePitcher?: RawPitcher };
-    away: { team: RawTeam; probablePitcher?: RawPitcher };
+    home: { team: RawTeam };
+    away: { team: RawTeam };
   };
   venue?: RawVenue;
   weather?: RawWeather;
@@ -113,12 +84,6 @@ interface RawScheduleResponse {
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
-function parseFloat2(val: string | undefined): number | null {
-  if (!val) return null;
-  const n = parseFloat(val);
-  return isNaN(n) ? null : n;
-}
-
 function parseWind(raw: string | undefined): { speed: number | null; direction: string | null } {
   if (!raw) return { speed: null, direction: null };
   // Typical format: "12 mph, Out To CF" or "Calm"
@@ -127,80 +92,6 @@ function parseWind(raw: string | undefined): { speed: number | null; direction: 
   return {
     speed: parseInt(match[1], 10),
     direction: match[2].trim() || null,
-  };
-}
-
-function parsePitcherStats(stat: NonNullable<RawPitcherStats['splits']>[number]['stat']) {
-  const ip = parseFloat2(stat.inningsPitched) ?? 0;
-  const gs = stat.gamesStarted ?? null;
-  const bb = stat.baseOnBalls ?? 0;
-  const hr = stat.homeRuns ?? 0;
-  const hitsAllowed = stat.hits ?? 0;
-  const abAgainst = stat.atBats ?? 0;
-  const go = stat.groundOuts ?? 0;
-  const ao = stat.airOuts ?? 0;
-  return {
-    era: parseFloat2(stat.era),
-    whip: parseFloat2(stat.whip),
-    wins: stat.wins ?? 0,
-    losses: stat.losses ?? 0,
-    inningsPitched: ip,
-    strikeoutsPer9: parseFloat2(stat.strikeoutsPer9Inn),
-    strikeOuts: stat.strikeOuts ?? null,
-    gamesStarted: gs,
-    pitchesPerInning: parseFloat2(stat.pitchesPerInning),
-    inningsPerStart: gs && gs > 0 ? Math.round((ip / gs) * 100) / 100 : null,
-    bb9: ip > 0 ? Math.round((bb / ip * 9) * 100) / 100 : null,
-    hr9: ip > 0 ? Math.round((hr / ip * 9) * 100) / 100 : null,
-    battingAvgAgainst: abAgainst > 0 ? Math.round((hitsAllowed / abAgainst) * 1000) / 1000 : null,
-    gbRate: (go + ao) > 0 ? Math.round((go / (go + ao)) * 1000) / 1000 : null,
-  };
-}
-
-function parsePitcher(raw: RawPitcher | undefined): ProbablePitcher | null {
-  if (!raw) return null;
-
-  let stats = {
-    era: null as number | null,
-    whip: null as number | null,
-    wins: 0,
-    losses: 0,
-    inningsPitched: 0,
-    strikeoutsPer9: null as number | null,
-    strikeOuts: null as number | null,
-    gamesStarted: null as number | null,
-    pitchesPerInning: null as number | null,
-    inningsPerStart: null as number | null,
-    bb9: null as number | null,
-    hr9: null as number | null,
-    battingAvgAgainst: null as number | null,
-    gbRate: null as number | null,
-  };
-
-  if (raw.stats && raw.stats.length > 0) {
-    const splits = raw.stats[0]?.splits;
-    if (splits && splits.length > 0) {
-      stats = parsePitcherStats(splits[0].stat);
-    }
-  }
-
-  const throws = (raw.pitchHand?.code ?? 'R') as 'L' | 'R' | 'S';
-
-  return {
-    mlbId: raw.id,
-    name: raw.fullName,
-    throws,
-    ...stats,
-    eraLast30: null,
-    recentFormEra: null,
-    platoonOpsVsLeft: null,
-    platoonOpsVsRight: null,
-    xera: null,
-    xwoba: null,
-    avgFastballVelo: null,
-    avgFastballVeloPrior: null,
-    runValuePer100: null,
-    talent: null,
   };
 }
 
@@ -249,8 +140,11 @@ function parseGame(raw: RawGame): MLBGame {
       name: raw.venue?.name ?? park?.name ?? 'Unknown Venue',
     },
     weather: parseWeather(raw.weather),
-    homeProbablePitcher: parsePitcher(raw.teams.home.probablePitcher),
-    awayProbablePitcher: parsePitcher(raw.teams.away.probablePitcher),
+    // Pitchers come from ESPN, spliced in by getGameDay after this parse.
+    // MLB's probablePitcher hydrate is no longer requested, so there's
+    // nothing to parse here.
+    homeProbablePitcher: null,
+    awayProbablePitcher: null,
     homeLineup: parseLineup(raw.lineups?.homePlayers),
     awayLineup: parseLineup(raw.lineups?.awayPlayers),
   };
@@ -459,14 +353,16 @@ function indexEspnPitchers(
 /**
  * Build a stub `ProbablePitcher` from a name. `mlbId: 0` is the sentinel
  * that tells `enrichPitcher` to do an identity lookup before running the
- * stats pipeline. Throws side defaults to 'R' and is overwritten by the
- * stats-line application once we have real data.
+ * stats pipeline. Throws starts null (honest "unknown") and `enrichPitcher`
+ * fills it from the identity lookup (`pitchHand`). It stays null only if the
+ * name never resolves to an MLB id, in which case the row is fully degraded
+ * (no stats/talent) and downstream treats the null hand as neutral.
  */
 function stubPitcher(name: string): ProbablePitcher {
   return {
     mlbId: 0,
     name,
-    throws: 'R',
+    throws: null,
     era: null,
     whip: null,
     wins: 0,
@@ -561,6 +457,13 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
       const identity = await resolveMLBId(p.name, teamAbbr);
       if (!identity?.mlbId) return; // unknown name — leave as stub
       p.mlbId = identity.mlbId;
+      // Handedness rides along with the identity lookup (pitchHand is on the
+      // base /people record). The stub defaulted throws to 'R'; without this
+      // every ESPN-sourced pitcher would stay 'R', silently mis-platooning
+      // batters (vs-RHP split applied vs actual LHPs), tilting the SB forecast,
+      // and mis-resolving switch-hitter park factors. Must land before
+      // computePitcherTalent below so the talent vector carries the real hand.
+      p.throws = identity.throws;
     }
 
     const [line, overallEra, platoon, recentForm, seasonLines] = await Promise.all([

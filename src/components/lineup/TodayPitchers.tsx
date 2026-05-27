@@ -72,12 +72,17 @@ function StarterRowCard({
     pp: c.pp, oppOffense: opp ?? null, park: c.park, weather: c.weather,
     isHome: c.isHome, game: c.game, scoredCategories, focusMap,
   });
-  const oppSplit = c.pp.throws === 'L' ? opp?.vsLeft : opp?.vsRight;
+  // Unknown hand → bats-agnostic overall opponent OPS, never the vs-RHP split.
+  const oppSplit =
+    c.pp.throws === 'L' ? opp?.vsLeft
+    : c.pp.throws === 'R' ? opp?.vsRight
+    : undefined;
   const oppOps = oppSplit?.ops ?? opp?.ops ?? null;
   const park = parkCue(c.park);
   const lineup = lineupCue(oppOps);
+  const handSuffix = c.pp.throws === 'L' || c.pp.throws === 'R' ? ` vs ${c.pp.throws}` : '';
   const lineupTitle = oppOps !== null
-    ? `Opp OPS vs ${c.pp.throws}: ${oppOps.toFixed(3).replace(/^0\./, '.')}`
+    ? `Opp OPS${handSuffix}: ${oppOps.toFixed(3).replace(/^0\./, '.')}`
     : undefined;
   const parkTitle = c.park
     ? `Overall PF ${c.park.parkFactor} · HR PF ${c.park.parkFactorHR}`
@@ -117,9 +122,11 @@ function StarterRowCard({
         <div className="flex-1 min-w-0 space-y-0.5">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-sm font-semibold text-foreground truncate">{s.rosterPlayer.name}</span>
-            <span className={`text-[11px] font-bold ${c.pp.throws === 'L' ? 'text-accent' : 'text-primary'}`}>
-              ({c.pp.throws}HP)
-            </span>
+            {(c.pp.throws === 'L' || c.pp.throws === 'R') && (
+              <span className={`text-[11px] font-bold ${c.pp.throws === 'L' ? 'text-accent' : 'text-primary'}`}>
+                ({c.pp.throws}HP)
+              </span>
+            )}
             <span className={`text-caption font-bold ${tierColor(rating.tier)}`}>
               {tierLabel(rating.tier)}
             </span>

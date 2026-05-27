@@ -208,6 +208,7 @@ The Yahoo to MLB join is the most fragile boundary in the system. It lives in [s
 ### Failure semantics
 
 - `resolveMLBId` returns `null` on any failure rather than throwing. Callers are expected to skip the player and continue processing the rest of the batch.
+- On success, `bats` and `throws` are `'L' | 'R' | 'S' | null` — `null` when the MLB record carried no `batSide`/`pitchHand`. **Never default these to `'R'`.** Unknown handedness must propagate as `null`; the platoon, park, SB, and opponent-multiplier paths all treat `null` as neutral. Defaulting to `'R'` is a confident-wrong guess that silently mis-platoons half the league (see [history.md](./history.md) "Handedness is honestly nullable").
 - Every outcome is recorded against an in-process counter as one of:
   `hit | no-search-results | no-active-candidates | hydrate-empty | team-mismatch-fallback | fetch-error`.
 - Misses are logged as `[identity] resolve missed: name="…" team="…" reason=… candidates=N` so the dev log can be `grep`d for fragile joins.

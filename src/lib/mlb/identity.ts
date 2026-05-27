@@ -312,8 +312,11 @@ export async function resolveMLBId(
       mlbId: best.id,
       fullName: best.fullName,
       currentTeamAbbr: best.currentTeam?.abbreviation ?? teamAbbr ?? '',
-      bats: (best.batSide?.code ?? 'R') as 'L' | 'R' | 'S',
-      throws: (best.pitchHand?.code ?? 'R') as 'L' | 'R' | 'S',
+      // Honest unknown: null when MLB carries no batSide/pitchHand, rather
+      // than a confident-but-wrong 'R'. Downstream platoon / park / SB logic
+      // is built to treat null as neutral.
+      bats: (best.batSide?.code as 'L' | 'R' | 'S' | undefined) ?? null,
+      throws: (best.pitchHand?.code as 'L' | 'R' | 'S' | undefined) ?? null,
       primaryPosition: best.primaryPosition?.abbreviation ?? '',
       active: best.active ?? true,
     };

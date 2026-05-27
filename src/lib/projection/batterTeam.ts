@@ -116,8 +116,8 @@ export interface PerDayProjection {
   parkFactor?: number;
   /** Probable opposing SP name, when ESPN/MLB has posted it. */
   spName?: string;
-  /** Throwing hand of the opposing SP. */
-  spThrows?: 'L' | 'R' | 'S';
+  /** Throwing hand of the opposing SP. null when unresolved. */
+  spThrows?: 'L' | 'R' | 'S' | null;
   /** Weather flag label ("wind out 12mph", "dome", etc.). */
   weatherFlag?: string;
   /** Expected PA across the day's games (game count × PA/game). */

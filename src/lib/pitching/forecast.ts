@@ -213,10 +213,18 @@ function buildPlatoonMultiplier(
     };
   }
 
-  const handLabel = pitcher.throws === 'L' ? 'vs LHP' : 'vs RHP';
-  const oppOps = pitcher.throws === 'L'
-    ? opp.vsLeft?.ops ?? opp.ops
-    : opp.vsRight?.ops ?? opp.ops;
+  // Platoon is unknowable without the pitcher's hand — there's no "weaker
+  // side" to stack against. Unknown hand (null) falls through to the
+  // oppOps == null guard below and reports as unavailable rather than
+  // silently grading the matchup as if the pitcher were a righty.
+  const handLabel =
+    pitcher.throws === 'L' ? 'vs LHP'
+    : pitcher.throws === 'R' ? 'vs RHP'
+    : 'hand TBD';
+  const oppOps =
+    pitcher.throws === 'L' ? opp.vsLeft?.ops ?? opp.ops
+    : pitcher.throws === 'R' ? opp.vsRight?.ops ?? opp.ops
+    : null;
   if (oppOps == null) {
     return {
       multiplier: 1.0, deltaPct: 0, display: handLabel,
@@ -407,12 +415,16 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
   // ============================================================
 
   // ----- Opponent factors (read once, applied below) ----------------------
-  const oppK = pitcher.throws === 'L'
-    ? opposingOffense?.vsLeft?.strikeOutRate ?? opposingOffense?.strikeOutRate ?? null
-    : opposingOffense?.vsRight?.strikeOutRate ?? opposingOffense?.strikeOutRate ?? null;
-  const oppOps = pitcher.throws === 'L'
-    ? opposingOffense?.vsLeft?.ops ?? opposingOffense?.ops ?? null
-    : opposingOffense?.vsRight?.ops ?? opposingOffense?.ops ?? null;
+  // Unknown hand (null) uses the bats-agnostic overall opponent rate rather
+  // than defaulting to the vs-RHP split.
+  const oppK =
+    pitcher.throws === 'L' ? opposingOffense?.vsLeft?.strikeOutRate ?? opposingOffense?.strikeOutRate ?? null
+    : pitcher.throws === 'R' ? opposingOffense?.vsRight?.strikeOutRate ?? opposingOffense?.strikeOutRate ?? null
+    : opposingOffense?.strikeOutRate ?? null;
+  const oppOps =
+    pitcher.throws === 'L' ? opposingOffense?.vsLeft?.ops ?? opposingOffense?.ops ?? null
+    : pitcher.throws === 'R' ? opposingOffense?.vsRight?.ops ?? opposingOffense?.ops ?? null
+    : opposingOffense?.ops ?? null;
   /** Opponent OPS-vs-hand factor relative to league. > 1 = stronger lineup
    *  (more BB, more contact value); < 1 = weaker lineup. Clamped ±15%. */
   const oppOpsFactor = oppOps != null

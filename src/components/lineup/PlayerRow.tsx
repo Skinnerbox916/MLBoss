@@ -131,13 +131,15 @@ function MatchupLine({ context }: { context: MatchupContext | null }) {
           <span className="text-border">|</span>
           <span className="text-muted-foreground">
             {opposingPitcher.name}
-            <span
-              className={`ml-1 font-bold ${
-                opposingPitcher.throws === 'L' ? 'text-accent' : 'text-primary'
-              }`}
-            >
-              ({opposingPitcher.throws}HP)
-            </span>
+            {(opposingPitcher.throws === 'L' || opposingPitcher.throws === 'R') && (
+              <span
+                className={`ml-1 font-bold ${
+                  opposingPitcher.throws === 'L' ? 'text-accent' : 'text-primary'
+                }`}
+              >
+                ({opposingPitcher.throws}HP)
+              </span>
+            )}
             {opposingPitcher.era !== null && (
               <span className="text-muted-foreground ml-1">{opposingPitcher.era.toFixed(2)} ERA</span>
             )}

@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getCurrentMLBGameKey, analyzeUserFantasyLeagues } from '@/lib/fantasy';
+import {
+  getCurrentMLBGameKey,
+  analyzeUserFantasyLeagues,
+  getScoringProfile,
+  type ScoringProfile,
+} from '@/lib/fantasy';
 
 /**
  * GET /api/fantasy/context
@@ -45,13 +50,38 @@ export async function GET() {
       user_team: league.user_team,
     }));
 
+    const primaryLeagueKey = leagues.find(l => l.user_team && !l.is_finished)?.league_key
+      ?? leagues[0]?.league_key;
+    const primaryTeamKey = leagues.find(l => l.user_team && !l.is_finished)?.user_team?.team_key
+      ?? leagues[0]?.user_team?.team_key;
+
+    // Resolve the scoring profile for the primary league only — secondary
+    // leagues stay unresolved until a team switcher lands. Failure here is
+    // non-fatal; surface the league context regardless so the UI can still
+    // render in legacy categories mode.
+    let primaryScoringProfile: ScoringProfile | undefined;
+    if (primaryLeagueKey) {
+      const primaryLeague = leagues.find(l => l.league_key === primaryLeagueKey);
+      if (primaryLeague) {
+        try {
+          primaryScoringProfile = await getScoringProfile(
+            user.id,
+            primaryLeagueKey,
+            primaryLeague.scoring_type,
+          );
+        } catch (err) {
+          console.warn('[fantasy/context] failed to resolve scoring profile', primaryLeagueKey, err);
+        }
+      }
+    }
+
     return NextResponse.json({
       game_key: currentMLB.game_key,
       season: currentMLB.season,
       leagues,
-      // Convenience: primary league/team (first active league where user has a team)
-      primary_league_key: leagues.find(l => l.user_team && !l.is_finished)?.league_key ?? leagues[0]?.league_key,
-      primary_team_key: leagues.find(l => l.user_team && !l.is_finished)?.user_team?.team_key ?? leagues[0]?.user_team?.team_key,
+      primary_league_key: primaryLeagueKey,
+      primary_team_key: primaryTeamKey,
+      primary_scoring_profile: primaryScoringProfile,
     });
   } catch (error) {
     console.error('Fantasy context API error:', error);

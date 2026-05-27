@@ -40,7 +40,7 @@
  * score are projections of the same number.
  */
 
-import type { Focus } from '@/lib/rating/focus';
+import { focusToCategoryWeights, type Focus } from '@/lib/rating/focus';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { GameForecast, ContextMultiplier } from './forecast';
 
@@ -67,6 +67,10 @@ export interface PitcherCategoryContribution {
   /** weight × (normalized - 0.5). Signed contribution in points-of-score. */
   contribution: number;
   focus: Focus;
+  /** True when this category was conceded (weight 0). With pivotality
+   *  weights this is the punt-shelf flag; transitionally it tracks
+   *  `focus === 'punt'`. See docs/pivotality-migration.md. */
+  conceded: boolean;
   /** Display string — e.g. "6.4 K · 5.4 IP", "3.1 ER · 4.30 ERA". */
   display: string;
   /** Short matchup-modifier hint — e.g. "vs weak K-rate · pitcher park". */
@@ -243,19 +247,12 @@ function normalize(expected: number, window: NormWindow): number {
 
 function buildPitcherWeightVector(
   scoredStatIds: number[],
-  focusMap: Record<number, Focus>,
+  categoryWeights: Record<number, number>,
 ): Record<number, number> {
-  const active = scoredStatIds.filter(id => (focusMap[id] ?? 'neutral') !== 'punt');
-  if (active.length === 0) {
-    const empty: Record<number, number> = {};
-    for (const id of scoredStatIds) empty[id] = 0;
-    return empty;
-  }
   const raw: Record<number, number> = {};
   let total = 0;
   for (const id of scoredStatIds) {
-    const f = focusMap[id] ?? 'neutral';
-    const w = f === 'punt' ? 0 : f === 'chase' ? 2 : 1;
+    const w = Math.max(0, categoryWeights[id] ?? 1);
     raw[id] = w;
     total += w;
   }
@@ -308,7 +305,13 @@ export function tierLabel(tier: PitcherTier | undefined): string {
 export interface PitcherRatingArgs {
   forecast: GameForecast;
   scoredCategories: EnrichedLeagueStatCategory[];
+  /** Chase/hold/punt focus map. Drives the `focus` display field and, when
+   *  `categoryWeights` is omitted, the composite weights (via the bridge). */
   focusMap: Record<number, Focus>;
+  /** Numeric per-category weights (the pivotality substrate). When omitted,
+   *  derived from `focusMap` so existing callers are unchanged. Phase 3 will
+   *  pass pivotality weights here directly. See docs/pivotality-migration.md. */
+  categoryWeights?: Record<number, number>;
 }
 
 export function getPitcherRating(args: PitcherRatingArgs): PitcherRating {
@@ -318,7 +321,8 @@ export function getPitcherRating(args: PitcherRatingArgs): PitcherRating {
   // Filter to scored cats this engine can project.
   const supported = scoredCategories.filter(c => supportsPitcherStatId(c.stat_id));
   const statIds = supported.map(c => c.stat_id);
-  const weights = buildPitcherWeightVector(statIds, focusMap);
+  const categoryWeights = args.categoryWeights ?? focusToCategoryWeights(focusMap);
+  const weights = buildPitcherWeightVector(statIds, categoryWeights);
 
   const contributions: PitcherCategoryContribution[] = [];
   let composite = 0;
@@ -331,6 +335,7 @@ export function getPitcherRating(args: PitcherRatingArgs): PitcherRating {
     const normalized = normalize(projection.expected, window);
     const weight = weights[cat.stat_id] ?? 0;
     const focus = focusMap[cat.stat_id] ?? 'neutral';
+    const conceded = (categoryWeights[cat.stat_id] ?? 1) <= 0;
     const contribution = weight * (normalized - 0.5);
 
     contributions.push({
@@ -342,6 +347,7 @@ export function getPitcherRating(args: PitcherRatingArgs): PitcherRating {
       weight,
       contribution,
       focus,
+      conceded,
       display: window.formatExpected(projection.expected),
       modifierHint: projection.modifierHint,
     });

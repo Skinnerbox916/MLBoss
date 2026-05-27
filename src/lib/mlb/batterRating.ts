@@ -67,7 +67,7 @@ import {
 import { getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
 import { platoonSummaryFactor, facingHandFrom } from './platoon';
 import { buildBatterForecast } from './batterForecast';
-import type { Focus } from '@/lib/rating/focus';
+import { focusToCategoryWeights, type Focus } from '@/lib/rating/focus';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,6 +93,10 @@ export interface CategoryContribution {
    *  score", ready to render as the waterfall row. */
   contribution: number;
   focus: Focus;
+  /** True when this category was conceded (weight 0). With pivotality
+   *  weights this is the punt-shelf flag; transitionally it tracks
+   *  `focus === 'punt'`. See docs/pivotality-migration.md. */
+  conceded: boolean;
   /** Pre-formatted display string for the waterfall (e.g. ".298 AVG",
    *  "0.138 R/PA", ".024 HR/PA"). */
   display: string;
@@ -245,37 +249,28 @@ function buildWeatherMultiplier(ctx: MatchupContext | null): RatingMultiplier {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a weight for each scored statId from the focus map.
+ * Renormalize a per-category weight map onto the scored cats so the
+ * composite stays on a 0-1 scale regardless of how the weights were
+ * produced. A missing cat defaults to 1 (full contest); a 0 weight is a
+ * concession that drops out. Weights sum to 1.0 across non-zero cats.
  *
- *   punt    → 0
- *   chase   → 2 × base
- *   neutral → 1 × base
+ * Inputs are the numeric `categoryWeights` substrate (Phase 2 of the
+ * pivotality migration): transitionally these come from
+ * `focusToCategoryWeights` (chase=2 / neutral=1 / punt=0), which renders
+ * identically to the old focus-keyed vector; Phase 3 feeds continuous
+ * pivotality weights through the same path.
  *
- * Where base = 1 / (count of non-punted categories). Weights renormalise
- * to sum to 1.0 across active categories so the composite stays on a
- * 0-1 scale regardless of how many cats are chased/punted.
- *
- * Edge case: if every category is punted, returns all zeros and the
- * caller's composite degrades to 0 (score = 0 × multipliers = 0). We
- * warn only in-console — the user did it on purpose.
+ * Edge case: if every category is conceded (all 0), returns all zeros and
+ * the caller's composite degrades to 0 — the user did it on purpose.
  */
 function buildWeightVector(
   scoredStatIds: number[],
-  focusMap: Record<number, Focus>,
+  categoryWeights: Record<number, number>,
 ): Record<number, number> {
-  const active = scoredStatIds.filter(id => (focusMap[id] ?? 'neutral') !== 'punt');
-  if (active.length === 0) {
-    const empty: Record<number, number> = {};
-    for (const id of scoredStatIds) empty[id] = 0;
-    return empty;
-  }
-
-  // Pre-normalised weights: chase=2, neutral=1, punt=0.
   const raw: Record<number, number> = {};
   let total = 0;
   for (const id of scoredStatIds) {
-    const f = focusMap[id] ?? 'neutral';
-    const w = f === 'punt' ? 0 : f === 'chase' ? 2 : 1;
+    const w = Math.max(0, categoryWeights[id] ?? 1);
     raw[id] = w;
     total += w;
   }
@@ -307,7 +302,13 @@ export interface BatterRatingArgs {
    *  stratified `PlayerStatLine`. */
   stats: PlayerStatLine | BatterSeasonStats | null;
   scoredCategories: EnrichedLeagueStatCategory[];
+  /** Chase/hold/punt focus map. Drives the `focus` display field and, when
+   *  `categoryWeights` is omitted, the composite weights (via the bridge). */
   focusMap: Record<number, Focus>;
+  /** Numeric per-category weights (the pivotality substrate). When omitted,
+   *  derived from `focusMap` so existing callers are unchanged. Phase 3 will
+   *  pass pivotality weights here directly. See docs/pivotality-migration.md. */
+  categoryWeights?: Record<number, number>;
   battingOrder: number | null;
 }
 
@@ -349,7 +350,8 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
   // Filter to the scored categories this engine can actually compute.
   const supported = scoredCategories.filter(c => supportsStatId(c.stat_id));
   const statIds = supported.map(c => c.stat_id);
-  const weights = buildWeightVector(statIds, focusMap);
+  const categoryWeights = args.categoryWeights ?? focusToCategoryWeights(focusMap);
+  const weights = buildWeightVector(statIds, categoryWeights);
 
   // L2: build the per-PA forecast for every supported cat in one call.
   const forecast = buildBatterForecast(stats, context, battingOrder, supported);
@@ -366,6 +368,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
     const normalized = normalizeRate(expected, cat.stat_id, cat.betterIs);
     const weight = weights[cat.stat_id] ?? 0;
     const focus = focusMap[cat.stat_id] ?? 'neutral';
+    const conceded = (categoryWeights[cat.stat_id] ?? 1) <= 0;
     // Contribution measured as the category's pull on score, centered on
     // neutral (0.5). Positive = above-average for this category today.
     const contribution = weight * (normalized - 0.5);
@@ -381,6 +384,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
       weight,
       contribution,
       focus,
+      conceded,
       display: `${formatRate(cat.stat_id, expected)} ${cfg.label}${cat.stat_id === 3 ? '' : '/PA'}`,
       modifierHint,
     });

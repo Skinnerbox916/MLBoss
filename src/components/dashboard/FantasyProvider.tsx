@@ -2,12 +2,14 @@
 
 import { createContext, useContext, ReactNode } from 'react';
 import { useFantasyContext, type FantasyContext } from '@/lib/hooks/useFantasyContext';
+import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 
 interface FantasyContextValue {
   context: FantasyContext | undefined;
   leagueKey: string | undefined;
   teamKey: string | undefined;
   currentWeek: string | undefined;
+  scoringProfile: ScoringProfile | undefined;
   isLoading: boolean;
   isError: boolean;
 }
@@ -17,6 +19,7 @@ const FantasyCtx = createContext<FantasyContextValue>({
   leagueKey: undefined,
   teamKey: undefined,
   currentWeek: undefined,
+  scoringProfile: undefined,
   isLoading: true,
   isError: false,
 });

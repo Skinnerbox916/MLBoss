@@ -48,7 +48,7 @@ import { rowHasComparablePair, type MatchupRow } from '@/components/shared/match
  * for standard 5x5 / 6x6 leagues; deriving these from league averages is a
  * v2 once defaults are observed to misbehave.
  */
-const RATE_SCALE: Record<string, number> = {
+export const RATE_SCALE: Record<string, number> = {
   AVG: 0.040,
   OBP: 0.040,
   SLG: 0.080,
@@ -79,7 +79,7 @@ const RATE_SCALE: Record<string, number> = {
  * Keyed by `stat_id` (not display_name) because batter K (21) and
  * pitcher K (42) share a label.
  */
-const CORRECTED_COUNTING_SCALE: Record<number, number> = {
+export const CORRECTED_COUNTING_SCALE: Record<number, number> = {
   // Batter counting cats
   7: 8,    // R
   8: 12,   // H

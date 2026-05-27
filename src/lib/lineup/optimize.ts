@@ -83,11 +83,30 @@ interface PlayerScore {
 const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
 const BIG_COST = 1e9;
 
+export interface OptimizeOpts {
+  /**
+   * When true, a starting slot may be left EMPTY in preference to assigning
+   * a negative-score player. Used by the sit-for-ratio path: when the score
+   * is a net matchup-value (which can go negative), a player who hurts your
+   * chased K/AVG more than he helps your counting cats should be benched
+   * rather than started, even though no replacement exists. The Hungarian
+   * gets one zero-cost "empty" column per slot, so a slot picks a real
+   * player only when that player's score is positive.
+   *
+   * When false (default), every slot is filled by the best available player
+   * regardless of sign — the original behavior. Use with a non-negative
+   * score (e.g. the composite rating).
+   */
+  allowEmpty?: boolean;
+}
+
 export function optimizeLineup(
   activeSlots: SlotDef[],
   roster: RosterEntry[],
   getScore: (player: RosterEntry) => number,
+  opts: OptimizeOpts = {},
 ): Map<string, string> {
+  const { allowEmpty = false } = opts;
   const batters = roster.filter(p => !isPitcherEntry(p));
 
   // Separate into three groups:
@@ -138,7 +157,16 @@ export function optimizeLineup(
 
   // Build cost matrix: n×n square (pad with dummy rows/cols).
   // Rows = slots, Cols = players. We maximize score, so cost = -score.
-  const n = Math.max(nSlots, nPlayers);
+  //
+  // When `allowEmpty`, append one zero-cost "empty" column per slot
+  // (columns nPlayers .. nPlayers+nSlots-1). A real slot then prefers an
+  // empty column (cost 0) over any negative-score player (cost > 0), so
+  // net-harmful players are left on the bench. Positive-score players
+  // (cost < 0) still beat empty and fill their slots. The extra dummy rows
+  // this introduces all carry BIG_COST regardless of column, contributing
+  // a constant offset that doesn't affect which players win real slots.
+  const emptyCols = allowEmpty ? nSlots : 0;
+  const n = Math.max(nSlots, nPlayers + emptyCols);
   const costMatrix: number[][] = Array.from({ length: n }, () =>
     new Array<number>(n).fill(BIG_COST),
   );
@@ -153,6 +181,9 @@ export function optimizeLineup(
       if (eligible) {
         costMatrix[si][pi] = -score;
       }
+    }
+    for (let e = 0; e < emptyCols; e++) {
+      costMatrix[si][nPlayers + e] = 0;
     }
   }
 

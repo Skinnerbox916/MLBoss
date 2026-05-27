@@ -1084,6 +1084,55 @@ export class YahooFantasyAPI {
   }
 
   /**
+   * Get the per-stat point modifiers for a league (points-league scoring).
+   *
+   * Yahoo exposes per-stat point values under `settings.stat_modifiers.stats[]`
+   * for leagues with `scoring_type === 'points'` (and for some H2H leagues
+   * configured with points scoring). Categories/roto leagues either omit
+   * this section or return zero values across the board.
+   *
+   * Returns the raw array — `getScoringProfile` filters out zero weights
+   * and builds the canonical mode/weights/scoredStatIds shape.
+   */
+  async getLeagueStatModifiers(leagueKey: string): Promise<Array<{ stat_id: number; value: number }>> {
+    try {
+      const settings = await this.getLeagueSettings(leagueKey);
+
+      // Yahoo wraps stat_modifiers identically to stat_categories.
+      let modContainer: unknown = undefined;
+      if (settings?.stat_modifiers?.stats) {
+        modContainer = settings.stat_modifiers.stats;
+      } else if (Array.isArray(settings?.stat_modifiers) && settings.stat_modifiers[0]?.stats) {
+        modContainer = settings.stat_modifiers[0].stats;
+      } else if (Array.isArray(settings) && settings[0]?.stat_modifiers?.stats) {
+        modContainer = settings[0].stat_modifiers.stats;
+      }
+
+      if (!modContainer || typeof modContainer !== 'object') {
+        return [];
+      }
+
+      const modifiers: Array<{ stat_id: number; value: number }> = [];
+      for (const [k, v] of Object.entries(modContainer as Record<string, unknown>)) {
+        if (k === 'count') continue;
+        if (!v || typeof v !== 'object') continue;
+        const stat = (v as any).stat ?? v;
+        if (!stat || typeof stat !== 'object') continue;
+        const stat_id = Number((stat as any).stat_id);
+        const rawValue = (stat as any).value;
+        const value = typeof rawValue === 'number' ? rawValue : parseFloat(String(rawValue ?? ''));
+        if (Number.isFinite(stat_id) && Number.isFinite(value)) {
+          modifiers.push({ stat_id, value });
+        }
+      }
+      return modifiers;
+    } catch (error) {
+      console.error('Failed to get league stat modifiers for league', leagueKey, ':', error);
+      throw new Error(`Failed to get league stat modifiers: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
    * Get stat categories used by a specific league
    * @param leagueKey - The league key (e.g., "458.l.123456")
    * @returns Array of stat categories used by this league with enriched metadata

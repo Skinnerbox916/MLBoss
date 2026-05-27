@@ -43,6 +43,9 @@ export type {
   LeagueAnalysisSummary,
 } from './leagues';
 
+export { getScoringProfile } from './scoringProfile';
+export type { ScoringProfile, ScoringMode } from './scoringProfile';
+
 export { getLeagueStandings } from './standings';
 
 export { getLeagueScoreboard, getTeamMatchups } from './matchups';

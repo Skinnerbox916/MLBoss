@@ -1,5 +1,6 @@
 import useSWR from 'swr';
 import { fetcher } from './fetcher';
+import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 
 export interface FantasyLeagueContext {
   league_key: string;
@@ -22,6 +23,7 @@ export interface FantasyContext {
   leagues: FantasyLeagueContext[];
   primary_league_key?: string;
   primary_team_key?: string;
+  primary_scoring_profile?: ScoringProfile;
 }
 
 /**
@@ -40,6 +42,7 @@ export function useFantasyContext() {
     leagueKey: data?.primary_league_key,
     teamKey: data?.primary_team_key,
     currentWeek: data?.leagues?.find(l => l.league_key === data.primary_league_key)?.current_week,
+    scoringProfile: data?.primary_scoring_profile,
     isLoading,
     isError: !!error,
   };

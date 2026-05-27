@@ -14,6 +14,8 @@ import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
+import { computeBatterSitValue, isGamePlanSitWorthy } from '@/lib/lineup/sitValue';
+import { expectedPAperGame } from '@/lib/projection/batterTeam';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import { optimizeWeek } from '@/lib/lineup/optimizeWeek';
 import DatePicker from './DatePicker';
@@ -34,6 +36,8 @@ function todayStr(): string {
 // enough to outrank any single-game score, while still letting Hungarian
 // rank between multiple DH players by their underlying matchup score.
 const DH_BOOST = 1000;
+
+const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
 
 interface LineupManagerProps {
   mode?: LineupMode;
@@ -91,6 +95,8 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     analysis: matchupAnalysis,
     isCorrected,
     isLoading: matchupLoading,
+    myProjection,
+    oppProjection,
   } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
 
   const { opponentName } = useMatchupHeader(leagueKey, teamKey);
@@ -147,6 +153,37 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     [matchupIndex],
   );
 
+  // Sit-for-ratio mode. When the game plan punts counting cats and chases a
+  // ratio/K cat, a bat whose K/AVG harm outweighs the (now-worthless)
+  // counting value he'd add is worth benching — even to an empty slot. We
+  // switch the optimizer objective to net matchup-value and let it leave
+  // slots empty. Otherwise the optimizer keeps its "always fill" behavior.
+  // See docs/recommendation-system.md and src/lib/lineup/sitValue.ts.
+  const sitForRatio = useMemo(() => isGamePlanSitWorthy(focusMap), [focusMap]);
+
+  // AVG dilution anchor for the sit-value calc. The bar is the OPPONENT's
+  // projected AVG (stat_id 3) — what we must beat to win the category — not
+  // our own (small-sample-inflated) AVG, which would flag every bat as
+  // dilutive. `myWeekAB` scales how much one bat's ABs move our team rate.
+  const avgAnchor = useMemo(() => {
+    const oppAvgRow = oppProjection?.byCategory?.[3];
+    const myAvgRow = myProjection?.byCategory?.[3];
+    if (!oppAvgRow || oppAvgRow.expectedDenom <= 0) return undefined;
+    if (!myAvgRow || myAvgRow.expectedDenom <= 0) return undefined;
+    return {
+      oppAvg: oppAvgRow.expectedCount / oppAvgRow.expectedDenom,
+      myWeekAB: myAvgRow.expectedDenom,
+    };
+  }, [oppProjection, myProjection]);
+
+  // Per-cat corrected margin (positive = winning) — lets the sit-value calc
+  // split locked wins (keep residual value) from out-of-reach losses (zero).
+  const marginByStatId = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const row of matchupAnalysis.rows) map[row.statId] = row.margin;
+    return map;
+  }, [matchupAnalysis]);
+
   // Optimizer score. A player with a rough matchup is still strictly better
   // than a player who isn't playing at all — we want the counting stats.
   // `getBatterRating` returns a neutral 50 when there's no game context,
@@ -165,10 +202,18 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         focusMap,
         battingOrder: p.batting_order,
       });
+      if (sitForRatio) {
+        // Net matchup-value: doubleheaders double expectedPA (so both harm
+        // and value double) — no DH boost, since a net-harmful DH bat should
+        // be benched harder, not force-started.
+        const gameCount = dhTeams.has(abbr) ? 2 : 1;
+        const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
+        return computeBatterSitValue({ rating, expectedPA, avgAnchor, marginByStatId }).net;
+      }
       const dhBoost = dhTeams.has(abbr) ? DH_BOOST : 0;
       return dhBoost + rating.score / 100;
     },
-    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap],
+    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, sitForRatio, avgAnchor, marginByStatId],
   );
 
   // Optimize-week state. Runs the optimizer for every remaining day in the
@@ -191,6 +236,9 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           scoredBatterCategories,
           focusMap,
           getPlayerLine,
+          sitForRatio,
+          avgAnchor,
+          marginByStatId,
         },
         (date, i, total) => {
           setWeekStatus(`Optimizing ${date} (${i + 1}/${total})…`);
@@ -209,7 +257,40 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, focusMap, getPlayerLine, mutateRoster]);
+  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, focusMap, getPlayerLine, mutateRoster, sitForRatio, avgAnchor, marginByStatId]);
+
+  // Sit-for-ratio advisory: today's batters who are in a starting slot but
+  // whose net matchup-value is negative — the optimizer will bench these to
+  // protect the chased ratio/K cats. This is the one-line justification for
+  // an action the algorithm takes, not a diagnostic the user has to scan.
+  const sitCandidates = useMemo(() => {
+    if (!sitForRatio || mode !== 'batting') return [];
+    const out: { key: string; name: string; net: number; reasons: string[] }[] = [];
+    for (const p of roster) {
+      if (isPitcher(p)) continue;
+      if (RESERVE_POSITIONS.has(p.selected_position)) continue; // already benched
+      const abbr = p.editorial_team_abbr.toUpperCase();
+      const context = matchupIndex.get(abbr) ?? null;
+      if (!context) continue; // no game today — not a sit decision
+      const rating = getBatterRating({
+        context,
+        stats: getPlayerLine(p.name, p.editorial_team_abbr),
+        scoredCategories: scoredBatterCategories,
+        focusMap,
+        battingOrder: p.batting_order,
+      });
+      const gameCount = dhTeams.has(abbr) ? 2 : 1;
+      const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
+      const sit = computeBatterSitValue({ rating, expectedPA, avgAnchor, marginByStatId });
+      if (!sit.shouldSit) continue;
+      const reasons = sit.perCat
+        .filter(c => c.marginDelta < 0)
+        .slice(0, 2)
+        .map(c => c.note);
+      out.push({ key: p.player_key, name: p.name, net: sit.net, reasons });
+    }
+    return out.sort((a, b) => a.net - b.net);
+  }, [sitForRatio, mode, roster, matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, focusMap, avgAnchor, marginByStatId]);
 
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
@@ -281,6 +362,28 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         />
       )}
 
+      {/* Sit-for-ratio advisory — only when the game plan punts counting and
+          chases a ratio/K cat. Explains who the optimizer will bench (to an
+          empty slot if needed) and why. */}
+      {mode === 'batting' && sitCandidates.length > 0 && (
+        <Panel className="border-l-4 border-l-accent/70">
+          <Heading as="h3" className="text-sm">Sit to protect ratios</Heading>
+          <Text variant="caption" className="text-muted-foreground">
+            Counting cats are locked/punted, so these starters cost you more in K/AVG than they add. Optimize will bench them — leaving the slot empty if you have no better bat.
+          </Text>
+          <ul className="mt-2 space-y-1">
+            {sitCandidates.map(c => (
+              <li key={c.key} className="text-sm">
+                <span className="font-semibold">{c.name}</span>
+                {c.reasons.length > 0 && (
+                  <span className="text-muted-foreground"> — {c.reasons.join(' · ')}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       <Panel>
         <PositionFilter mode={mode} selected={selectedPosition} onSelect={setSelectedPosition} />
       </Panel>
@@ -333,6 +436,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               rosterPositions={rosterPositions}
               onSaved={() => mutateRoster()}
               getPlayerScore={getPlayerScore}
+              allowEmptyOnOptimize={sitForRatio}
             />
           </Panel>
         </div>

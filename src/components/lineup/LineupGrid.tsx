@@ -200,6 +200,10 @@ interface LineupGridProps {
   rosterPositions?: RosterPositionSlot[];
   onSaved?: () => void;
   getPlayerScore?: (player: RosterEntry) => number;
+  /** When true, "Optimize" may leave a starting slot empty rather than start
+   *  a net-harmful bat (sit-for-ratio). Pairs with a `getPlayerScore` that
+   *  returns net matchup-value (can be negative). See sitValue.ts. */
+  allowEmptyOnOptimize?: boolean;
 }
 
 export default function LineupGrid({
@@ -211,6 +215,7 @@ export default function LineupGrid({
   rosterPositions,
   onSaved,
   getPlayerScore,
+  allowEmptyOnOptimize = false,
 }: LineupGridProps) {
   const slots = useMemo(
     () => buildSlots(mode, rosterPositions && rosterPositions.length > 0 ? rosterPositions : FALLBACK_POSITIONS),
@@ -310,13 +315,15 @@ export default function LineupGrid({
   const handleOptimize = useCallback(() => {
     if (!getPlayerScore || mode !== 'batting') return;
     const slotDefs = slots.map(s => ({ position: s.position, group: s.group }));
-    const newOverrides = optimizeLineup(slotDefs, roster, getPlayerScore);
+    const newOverrides = optimizeLineup(slotDefs, roster, getPlayerScore, {
+      allowEmpty: allowEmptyOnOptimize,
+    });
     if (newOverrides.size > 0) {
       setOverrides(newOverrides);
       setSelectedKey(null);
       setError(null);
     }
-  }, [getPlayerScore, mode, slots, roster]);
+  }, [getPlayerScore, mode, slots, roster, allowEmptyOnOptimize]);
 
   const handleSave = useCallback(async () => {
     if (!teamKey || !dirty) return;

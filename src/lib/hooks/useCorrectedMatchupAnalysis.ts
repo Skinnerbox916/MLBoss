@@ -3,14 +3,50 @@
 import { useMemo } from 'react';
 import { useScoreboard } from './useScoreboard';
 import { useLeagueCategories } from './useLeagueCategories';
+import { useLeagueEngagements } from './useLeagueEngagements';
 import { useBatterTeamProjection, type BatterTeamProjectionResponse } from './useBatterTeamProjection';
 import { usePitcherTeamProjection, type PitcherTeamProjectionResponse } from './usePitcherTeamProjection';
 import { buildMatchupRows } from '@/components/shared/matchupRows';
 import { analyzeMatchup, withSwing, type MatchupAnalysis } from '@/lib/matchup/analysis';
 import { composeCorrectedRows } from '@/lib/matchup/correctedRows';
+import { isRatioCat } from '@/lib/league/forecast';
 import { getMatchupWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import type { ProjectedCategory } from './useBatterTeamProjection';
+import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { MatchupData } from '@/lib/yahoo-fantasy-api';
+
+/**
+ * Discount an absentee opponent's counting-cat projection by their manager-
+ * engagement ratio. Returns a NEW record (does not mutate the input).
+ *
+ * Counting cats (incl. batter K) scale by `ratio`; ratio cats (AVG / ERA /
+ * WHIP) are left untouched since they're volume-invariant. Mirrors
+ * `applyEngagement` in the L6 forecast route, but applied ONLY to the
+ * opponent: the user, by virtue of actively setting daily lineups in this
+ * app, is the engaged manager going forward, so their YTD ratio would
+ * understate their forward engagement. A `ratio` of 0 (no signal) or 1
+ * (league-leading / no opponent identity) is a no-op.
+ */
+function regressOpponentCounting(
+  oppMerged: Record<number, ProjectedCategory>,
+  ratio: number | undefined,
+  ratioStatIds: Set<number>,
+): Record<number, ProjectedCategory> {
+  if (!ratio || ratio === 0 || ratio === 1) return oppMerged;
+  const out: Record<number, ProjectedCategory> = {};
+  for (const [statIdStr, cat] of Object.entries(oppMerged)) {
+    const statId = Number(statIdStr);
+    if (ratioStatIds.has(statId)) {
+      out[statId] = cat;
+    } else {
+      out[statId] = {
+        expectedCount: cat.expectedCount * ratio,
+        expectedDenom: cat.expectedDenom * ratio,
+      };
+    }
+  }
+  return out;
+}
 
 /**
  * Matchup analysis hook used by every page that asks "which categories
@@ -97,6 +133,11 @@ export function useCorrectedMatchupAnalysis(
 
   const { categories, isLoading: catsLoading } = useLeagueCategories(leagueKey);
 
+  // Manager-engagement ratios — used to regress an absentee opponent's
+  // counting-cat projection below. League-cached; doesn't gate loading
+  // (a missing ratio just means no discount).
+  const { ratioByTeamKey } = useLeagueEngagements(leagueKey);
+
   const opponentTeamKey = useMemo(() => {
     if (!teamKey) return undefined;
     const userMatchup = matchups.find(m => m.teams.some(t => t.team_key === teamKey));
@@ -140,10 +181,24 @@ export function useCorrectedMatchupAnalysis(
       ...(myProjection?.byCategory ?? {}),
       ...(myPitcherProjection?.byCategory ?? {}),
     };
-    const oppMerged: Record<number, ProjectedCategory> = {
+    const oppMergedRaw: Record<number, ProjectedCategory> = {
       ...(oppProjection?.byCategory ?? {}),
       ...(oppPitcherProjection?.byCategory ?? {}),
     };
+    // Discount the opponent's counting cats by their manager engagement —
+    // an absentee opponent accrues fewer PAs all week, so their HR/R/K/etc.
+    // projection is overstated. Applied opponent-only (the user is the
+    // engaged manager going forward). Rate cats pass through untouched.
+    const ratioStatIds = new Set(
+      categories
+        .filter((c: EnrichedLeagueStatCategory) => isRatioCat(c))
+        .map((c: EnrichedLeagueStatCategory) => c.stat_id),
+    );
+    const oppMerged = regressOpponentCounting(
+      oppMergedRaw,
+      opponentTeamKey ? ratioByTeamKey.get(opponentTeamKey) : undefined,
+      ratioStatIds,
+    );
     const hasAnyProjection = Object.keys(myMerged).length > 0 || Object.keys(oppMerged).length > 0;
 
     if (isPivot) {
@@ -228,7 +283,7 @@ export function useCorrectedMatchupAnalysis(
       opponentName,
     };
   }, [
-    matchups, teamKey, categories, isPivot,
+    matchups, teamKey, categories, isPivot, ratioByTeamKey,
     myProjection, oppProjection, myPitcherProjection, oppPitcherProjection,
     scoreLoading, nextScoreLoading, catsLoading,
     myProjLoading, oppProjLoading, myPitchProjLoading, oppPitchProjLoading,

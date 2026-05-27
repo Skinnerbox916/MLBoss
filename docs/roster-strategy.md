@@ -240,6 +240,12 @@ The current v2 plan does not see this. It picks swings purely by closeness to fl
 
 A future iteration could prune infeasible swings by inspecting the FA pool's conditional distributions (top-K producers of cat X, median z on a conflicting cat). Out of scope for v1 — the talent-vacuum foundation has to be solid and trusted before layering this on. If swing recommendations look unrealistic in practice, that's the lever to add.
 
+**Concession as resource reallocation (punt strategy).** The engine today concedes a category only when it's *unreachable* (`targetRank` undefined) and scores every cat independently. It therefore can't model the strongest lever in category-league roster construction: conceding a *winnable* category on purpose because doing so frees roster resources that lift the categories you're contesting. The canonical case is punting saves — you may well be able to compete in SV, but rostering closers costs slots and add/drop budget that buy little outside a narrow archetype (SV + some ERA/WHIP/K). Conceding SV unlocks those slots for bats/SPs that help everywhere else. The payoff is the freed resource, not the SV margin. This is the sharpest instance of the stat-shape-correlation gap above.
+
+A tractable future approach reuses existing infra: enumerate a small set of realistic concede-sets (SV, SB, a ratio), re-run [`assignStarters`](../src/lib/roster/depth.ts) + the neutral-week projection under the constraint "don't spend slots/archetype budget on the conceded cats," score the resulting roster on the *kept* set ("dominate a winning number + a real shot at a couple more"), and recommend the concede-set that maximizes that profile. Bounded search, no new engine. Out of scope until the talent-vacuum foundation is trusted; recorded here so the pivotality work doesn't foreclose it.
+
+**Weekly punts stay independent of roster-construction punts.** A roster-level concession (e.g. "built without speed, punting SB for the season") must *not* auto-propagate into the weekly lineup/streaming pages. If a given week happens to have a couple of SB sources in play, that week treats SB as in-play and fights for it — the L5 concede set is computed from *this week's* actual situation, not inherited from L6 roster strategy. The shared pivotality primitive must stay pure (`pivotality(distance)`); `distance` and the concede decision are produced per-layer so the two horizons never get cross-wired.
+
 ## Where this fits in the stack
 
 ```

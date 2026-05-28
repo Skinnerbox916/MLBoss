@@ -8,6 +8,35 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-05 — Chase/hold/punt retired as the weight driver (pivotality + concede-only)
+
+The whole category-emphasis system used to be a per-cat label, `Focus = 'chase' | 'neutral' | 'punt'`, with pre-renormalisation weights `chase=2 / neutral=1 / punt=0` feeding the rating composite (`buildWeightVector` in `batterRating.ts` and `pitching/rating.ts`), and `analyzeMatchup`'s `suggestFocus` auto-assigned the label from the corrected margin (`|margin| ≥ 0.7 → punt`, `margin ≤ 0 → chase`, else `neutral`). One 3-state lever drove the weights, the panels, the sit logic (via `cat.focus`), and the bossBrief copy.
+
+Why we used it: a clear, legible vocabulary that pulled triple duty as the user lever (chase/punt overrides), the engine signal (weight magnitude), and the display label. Worked well enough to ship the original product.
+
+Why we stopped:
+
+1. **The 3-tier label was a step-function over one underlying axis** — how contested a category is. The flat `2×` chase boost was arbitrary; the gap between chase and neutral was hard-coded magnitude with no calibration. Direction was redundant with `betterIs`, not encoded in the label.
+2. **"Chase everything you're losing" over-commits.** A reachable deficit and a hopeless one both became `chase` and got the same `2×` boost. The user noticed this in matchups where the engine kept pushing for cats that were genuinely out of reach.
+3. **Auto-punting locked wins broke the composite in extreme weeks.** `suggestFocus` marks both decided wins **and** decided losses as `punt` (weight 0). In an all-locked week (every cat a locked win), every weight zeroed → the composite preMult fell to the neutral-50 fallback → the whole streaming pitcher board flatlined to 50/FAIR with no differentiation. The same `punt`-bucket conflated "we've got this" (no need to chase further) with "concede" (give it up), which were never the same thing.
+4. **The sit logic inherited the conflation.** `categoryWeight(focus, margin)` had to split `punt+margin>0` (locked win, partial value via `LOCKED_WIN_RESIDUAL=0.35`) from `punt+margin≤0` (loss, zero) — a band-aid for the conflation.
+
+What replaced it (Phases 1-5 of [pivotality-migration.md](pivotality-migration.md)):
+
+- **`pivotality(margin) = exp(−margin²/2w²)`** ([`src/lib/rating/pivotality.ts`](../src/lib/rating/pivotality.ts), `w=0.35`) — a smooth Gaussian on the corrected matchup margin. Peaks at coin-flip (margin 0), decays symmetrically. Same primitive on both layers; each produces its own `distance`.
+- **Concession is the only user lever.** A category is either in play (weighted by pivotality) or conceded (weight 0). Auto-concede fires only on a **decided loss** (`margin ≤ −0.7`); a locked win stays in-play with its naturally-small pivotality weight. `useCategoryWeights` ([`src/lib/hooks/useCategoryWeights.ts`](../src/lib/hooks/useCategoryWeights.ts)) replaces `useSuggestedFocus` on the matchup pages, with a concede/contest override store in localStorage.
+- **The Game Plan panel collapsed** from `FocusSectionTrio` (Chase/Hold/Punt + 3-state segmented control) to **In play** (ranked by pivotality) + a **Conceded** shelf with a 2-state concede/contest toggle (`GamePlanPanel.tsx`).
+- **`sitValue` runs on pivotality**: every cat weights by its `categoryWeights[id]`, no focus ternary, no fixed locked-win residual (a locked win's pivotality of ~0.07-0.13 *is* the residual now, derived not asserted).
+- The legacy `Focus` union, `useSuggestedFocus`, the `focusPanel.tsx` building blocks, and the `cat.focus` field still exist transitionally because the L6 roster page (`RosterFocusPanel` / `RosterManager`) hasn't been converted yet. Phase 6 deletes them.
+
+Considered and explicitly rejected during the design:
+
+- **A global majority optimizer.** Earliest draft was "maximise `P(win a majority)`": auto-punt long-shots with a `KEEP_THRESHOLD`/`BUFFER`/greedy-fill apparatus that selected which cats to commit to and which to concede in one global pass over batting + pitching. Killed because (a) when you're behind everywhere, every point matters and you shouldn't force-concede contestable cats just to satisfy a majority quota; (b) coupling batting and pitching through one global count cost a lot of legibility for not enough correctness gain. Batting and pitching are independent now.
+- **Auto-conceding decided wins.** The first transitional `buildCategoryWeights` zeroed every `punt` cat regardless of direction — same conflation as the old system, just spelled differently. Caused the all-50 pitcher board. Fixed by keying concession to `punt && margin ≤ 0` and then properly to "decided loss only."
+- **A strong blanket sit-target weight** for contested manageable cats (`SIT_TARGET_WEIGHT=2` applied uniformly to non-conceded AVG/K). It worked in the trivial sense — un-conceding K *did* bench bats — but with no stopping condition it benched the entire lineup, throwing away counting production for zero gain. Reverted before commit. The right design (opponent-total / sit-just-enough with a stopping condition) is captured in [sit-to-flip-prd.md](sit-to-flip-prd.md).
+
+Don't reintroduce: (a) a 3-tier `Focus` label as the weight magnitude — pivotality on margin is the substrate; (b) auto-punting locked wins — they stay in-play; (c) a fixed `LOCKED_WIN_RESIDUAL` in `sitValue` — pivotality of margin already does this; (d) a blanket sit-target weight without a per-cat opponent-total stopping condition — see the PRD; (e) coupling batter and pitcher focus through any global majority count.
+
 ## 2026-05 — Per-category platoon (Bayesian; replaced the composite OPS multiplier)
 
 After handedness display was fixed, a user noticed a lefty/switch batter's per-category **AVG** was identical facing a LHP vs a RHP, even though the composite score moved. Root cause: batter platoon was a single **OPS-derived, composite-wide multiplier** applied post-normalization to the whole score (`getPlatoonAdjustedTalent` → `buildPlatoonMultiplier`). It never touched the per-category expected rates, so every category row was platoon-blind, and the one number it did move was an OPS proxy applied uniformly.

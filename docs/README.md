@@ -37,6 +37,11 @@ This index is the single authoritative table of contents for all Markdown docs i
 - **[yahoo-api-reference.md](./yahoo-api-reference.md)** — Yahoo Fantasy Sports API guide.
 - **[mlb-api-reference.md](./mlb-api-reference.md)** — MLB Stats API guide: hydrate params, splits, early-season gap, disambiguation.
 
+### In-flight migrations and proposals
+
+- **[pivotality-migration.md](./pivotality-migration.md)** — Retiring chase/hold/punt as the weight driver; replacing with continuous `pivotality(margin)` + concede/contest. Phases 1-5 shipped for the matchup pages; L6 roster + Phase 6 cleanup outstanding.
+- **[sit-to-flip-prd.md](./sit-to-flip-prd.md)** — PRD for the opponent-total / sit-just-enough sit engine that replaces the current `computeBatterSitValue`. Not built; implement against the PRD when prioritized.
+
 ---
 
 ➜ **If you add a new doc**, register it here and read [architecture.md](./architecture.md#rules-for-adding-a-new-doc) first.

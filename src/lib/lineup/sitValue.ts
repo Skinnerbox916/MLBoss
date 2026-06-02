@@ -155,24 +155,42 @@ const CONTESTED_RATIO = 0.5;
 
 /**
  * Is the game plan in the shape where sitting-for-ratio makes sense — at
- * least one counting cat locked/conceded (low pivotality weight) AND at least
- * one ratio/K cat still contested (high weight)? When false, the daily
- * optimizer keeps its "always fill the lineup" behavior (composite-rating
- * objective, no empty slots). This bounds the auto-sit behavior change to
- * exactly the scenario it's designed for.
+ * least one counting cat locked/conceded (low pivotality weight) AND at
+ * least one ratio/K cat that is **contested AND being lost** (high weight
+ * + margin ≤ 0)? When false, the daily optimizer keeps its "always fill
+ * the lineup" behavior (composite-rating objective, no empty slots).
+ *
+ * The direction guard is load-bearing: sitting protects a ratio you're
+ * trying to **flip**, not one you're already winning. Without it, a
+ * narrow-LEAD AVG/K still has high pivotality (close cat → close to
+ * coin-flip), the gate fires, and the optimizer benches the whole lineup
+ * to "protect" a number that's already on the right side. The old
+ * chase/hold/punt gate captured this via `focus === 'chase'` (chase ≡
+ * `margin ≤ 0`); we lost it in the Phase-4 weights-only rewrite, then
+ * restored it after the empty-lineup regression on a winning week. See
+ * [sit-to-flip-prd.md](../../../docs/sit-to-flip-prd.md) step 1.
  */
-export function isGamePlanSitWorthy(categoryWeights: Record<number, number>): boolean {
+export function isGamePlanSitWorthy(
+  categoryWeights: Record<number, number>,
+  marginByStatId?: Record<number, number>,
+): boolean {
   // Higher-better counting cats whose low weight removes the offsetting value.
   const COUNTING_HIGHER = new Set([7, 8, 12, 13, 16, 18, 23]);
   // Cats where sitting actively protects the number (AVG rate, batter K).
   const RATIO_OR_K = new Set([AVG_STAT_ID, 21]);
 
   let hasLowValueCounting = false;
-  let hasContestedRatioOrK = false;
+  let hasContestedLosingRatioOrK = false;
   for (const [statIdStr, w] of Object.entries(categoryWeights)) {
     const statId = Number(statIdStr);
     if (COUNTING_HIGHER.has(statId) && w <= LOW_VALUE_COUNTING) hasLowValueCounting = true;
-    if (RATIO_OR_K.has(statId) && w >= CONTESTED_RATIO) hasContestedRatioOrK = true;
+    if (
+      RATIO_OR_K.has(statId) &&
+      w >= CONTESTED_RATIO &&
+      (marginByStatId?.[statId] ?? 0) <= 0
+    ) {
+      hasContestedLosingRatioOrK = true;
+    }
   }
-  return hasLowValueCounting && hasContestedRatioOrK;
+  return hasLowValueCounting && hasContestedLosingRatioOrK;
 }

@@ -163,7 +163,20 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // switch the optimizer objective to net matchup-value and let it leave
   // slots empty. Otherwise the optimizer keeps its "always fill" behavior.
   // See docs/recommendation-system.md and src/lib/lineup/sitValue.ts.
-  const sitForRatio = useMemo(() => isGamePlanSitWorthy(batterCategoryWeights), [batterCategoryWeights]);
+  // Per-cat corrected margin (positive = winning) — gates the sit-for-ratio
+  // mode so it only fires when a manageable cat is contested AND being lost,
+  // never when you're already winning (which would bench the whole lineup
+  // "to protect" a number that's already on the right side).
+  const marginByStatId = useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const row of matchupAnalysis.rows) map[row.statId] = row.margin;
+    return map;
+  }, [matchupAnalysis]);
+
+  const sitForRatio = useMemo(
+    () => isGamePlanSitWorthy(batterCategoryWeights, marginByStatId),
+    [batterCategoryWeights, marginByStatId],
+  );
 
   // AVG dilution anchor for the sit-value calc. The bar is the OPPONENT's
   // projected AVG (stat_id 3) — what we must beat to win the category — not

@@ -20,6 +20,58 @@ interface CornerProps {
 }
 
 /**
+ * Compact team row for the mobile Boss Card — the corners collapse into a
+ * vertical stack (you on top, opponent below a `vs` rule). The away row is
+ * mirrored — logo on the right, text right-aligned — so the two teams still
+ * read as facing each other across the divider. The leader signal moves from
+ * the crown into an accent ring + a small `leader` tag on the record line.
+ * See the design system's mobile Boss Card spec
+ * (mlboss-design-system/project/preview/mobile-bosscard.html).
+ */
+export function MobileTeamRow({
+  teamName,
+  logoUrl,
+  record,
+  rank,
+  side,
+  isLeader,
+}: Omit<CornerProps, 'managerName'>) {
+  const isRight = side === 'right';
+  const initial = teamName.charAt(0).toUpperCase();
+
+  return (
+    <div className={`flex items-center gap-2.5 min-w-0 ${isRight ? 'flex-row-reverse text-right' : ''}`}>
+      <div
+        className={`w-9 h-9 rounded-full overflow-hidden bg-surface-muted shrink-0 ring-1 ring-offset-1 ring-offset-surface ${
+          isLeader ? 'ring-accent' : 'ring-border'
+        }`}
+      >
+        {logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logoUrl} alt={`${teamName} logo`} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-sm font-bold text-primary">
+            {initial}
+          </div>
+        )}
+      </div>
+      <div className={`min-w-0 flex flex-col ${isRight ? 'items-end' : 'items-start'}`}>
+        <Heading as="h2" className="text-base text-primary leading-tight truncate max-w-full">
+          {teamName}
+        </Heading>
+        <div className="flex items-baseline gap-1.5 text-caption text-muted-foreground font-mono font-numeric">
+          {record && <span className="text-foreground font-bold">{record}</span>}
+          {typeof rank === 'number' && <span>· #{rank}</span>}
+          {isLeader && (
+            <span className="text-accent font-semibold uppercase tracking-wide">· leader</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Fight-card corner for the Boss Card marquee — avatar + name + record + rank.
  *
  * The leading team gets a crown above the avatar and a low-opacity watermark

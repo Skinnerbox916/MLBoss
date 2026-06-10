@@ -23,7 +23,7 @@ export default function BossBrief({ brief }: BossBriefProps) {
   if (!brief) return null;
 
   return (
-    <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-primary/5 border-l-2 border-accent">
+    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-primary/5 border-l-2 border-accent">
       <Icon
         icon={GiBaseballBat}
         size={16}

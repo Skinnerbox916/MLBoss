@@ -34,7 +34,7 @@ export default function PositionFilter({ mode, selected, onSelect }: PositionFil
     <div className="flex gap-1.5 flex-wrap">
       <button
         onClick={() => onSelect(null)}
-        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
           selected === null
             ? 'bg-primary text-white'
             : 'bg-surface text-muted-foreground hover:bg-surface-muted'
@@ -46,7 +46,7 @@ export default function PositionFilter({ mode, selected, onSelect }: PositionFil
         <button
           key={pos.key}
           onClick={() => onSelect(selected === pos.key ? null : pos.key)}
-          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
             selected === pos.key
               ? 'bg-primary text-white'
               : 'bg-surface text-muted-foreground hover:bg-surface-muted'

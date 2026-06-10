@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
  * <Icon icon={GiBaseballBat} />
  * 
  * // Custom size and styling
- * <Icon icon={FiHome} size={24} className="text-blue-600" />
+ * <Icon icon={FiHome} size={24} className="text-accent" />
  * 
  * // With accessibility label
  * <Icon icon={GiBaseballBat} aria-label="Baseball equipment" />

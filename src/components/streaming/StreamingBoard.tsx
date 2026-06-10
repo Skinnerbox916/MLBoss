@@ -333,7 +333,7 @@ function Row({
               game: start.gameRef,
             };
             return (
-              <div key={start.date} className="bg-surface-muted/20 rounded-md">
+              <div key={start.date} className="bg-surface-muted/20 rounded-lg">
                 <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border/40">
                   <span className="font-semibold text-foreground">{start.dayLabel}</span>{' '}
                   {start.isHome ? 'vs' : '@'} {start.opponent ?? '?'}
@@ -387,7 +387,7 @@ function ViewModeToggle({
     );
   };
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-md bg-surface-muted/60 p-0.5 border border-border">
+    <div className="inline-flex items-center gap-0.5 rounded-lg bg-surface-muted/60 p-0.5 border border-border">
       <Btn mode="week" label="Week" />
       <Btn mode="byday" label="By Day" />
     </div>

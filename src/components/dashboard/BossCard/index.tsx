@@ -14,7 +14,7 @@ import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
 import { getBossBrief } from '@/lib/dashboard/bossBrief';
 import Skeleton from '@/components/ui/Skeleton';
 import { Text } from '@/components/typography';
-import Corner from './Corner';
+import Corner, { MobileTeamRow } from './Corner';
 import LeverageBar from './LeverageBar';
 import CategoryRail from './CategoryRail';
 import WeekProgress from './WeekProgress';
@@ -184,8 +184,38 @@ export default function BossCard() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)] items-center gap-5 lg:gap-6">
-        {/* Left corner */}
-        <div className="order-1 lg:order-1 flex justify-center lg:justify-start">
+        {/* Mobile matchup stack — full-width team rows facing each other
+            across a `vs` rule. Strictly mobile-only (<md, same boundary as
+            the mobile chrome); every desktop width keeps the corners. */}
+        <div className="md:hidden flex flex-col gap-1.5 pt-3">
+          <MobileTeamRow
+            teamName={userTeam.name}
+            logoUrl={myLogo}
+            record={myRecord}
+            rank={myStandings?.rank}
+            side="left"
+            isLeader={myLeader}
+          />
+          <div className="flex items-center gap-2.5 px-1" aria-hidden="true">
+            <span className="flex-1 h-px bg-border-muted" />
+            <span className="text-micro font-mono font-bold uppercase tracking-[0.15em] text-muted-foreground">
+              vs
+            </span>
+            <span className="flex-1 h-px bg-border-muted" />
+          </div>
+          <MobileTeamRow
+            teamName={opponent.name}
+            logoUrl={oppLogo}
+            record={oppRecord}
+            rank={oppStandings?.rank}
+            side="right"
+            isLeader={oppLeader}
+          />
+        </div>
+
+        {/* Left corner — md+ (centered while the grid is single-column,
+            left-anchored once the 3-column marquee kicks in at lg) */}
+        <div className="hidden md:flex order-1 justify-center lg:order-1 lg:justify-start">
           <Corner
             teamName={userTeam.name}
             logoUrl={myLogo}
@@ -219,7 +249,7 @@ export default function BossCard() {
         </div>
 
         {/* Right corner */}
-        <div className="order-2 lg:order-3 flex justify-center lg:justify-end">
+        <div className="hidden md:flex order-2 justify-center lg:order-3 lg:justify-end">
           <Corner
             teamName={opponent.name}
             logoUrl={oppLogo}

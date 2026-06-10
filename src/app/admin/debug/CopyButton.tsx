@@ -28,9 +28,9 @@ export default function CopyButton<T = unknown>({
     <button
       onClick={handleCopy}
       className={`px-3 py-1 text-white text-sm rounded transition-colors ${
-        copied 
-          ? 'bg-green-600' 
-          : 'bg-primary hover:bg-primary-600'
+        copied
+          ? 'bg-success'
+          : 'bg-primary hover:bg-primary-700'
       } ${className}`}
     >
       {copied ? 'Copied!' : 'Copy JSON'}

@@ -37,7 +37,7 @@ function CategoryCell({ row, isHighlight }: { row: MatchupRow; isHighlight: bool
 
   return (
     <div
-      className={`relative flex flex-col items-center justify-between min-w-[3rem] px-1.5 py-1 rounded-md border ${tone} ${isHighlight ? 'ring-1 ring-accent/60' : ''}`}
+      className={`relative flex flex-col items-center justify-between min-w-0 sm:min-w-[3rem] px-1.5 py-1 rounded border ${tone} ${isHighlight ? 'ring-1 ring-accent/60' : ''}`}
       title={tooltip}
     >
       {isHighlight && (
@@ -49,12 +49,50 @@ function CategoryCell({ row, isHighlight }: { row: MatchupRow; isHighlight: bool
       <span className="text-[10px] font-bold uppercase tracking-tight font-mono leading-none text-muted-foreground">
         {row.label}
       </span>
-      <span className={`mt-1 text-sm font-bold font-mono font-numeric leading-none ${myValueTone}`}>
-        {myShown ? formatStatValue(row.myVal, row.name) : '—'}
-      </span>
-      <span className="mt-0.5 text-[11px] font-mono font-numeric text-muted-foreground leading-none">
-        {oppShown ? formatStatValue(row.oppVal, row.name) : '—'}
-      </span>
+      {/* Values: one `my / opp` line on mobile (2-line tile), stacked on sm+
+          (3-line tile) — see the design system's mobile Boss Card spec. */}
+      <div className="mt-1 flex items-baseline gap-1 font-mono font-numeric leading-none sm:flex-col sm:items-center sm:gap-0">
+        <span className={`text-[11px] sm:text-sm font-bold ${myValueTone}`}>
+          {myShown ? formatStatValue(row.myVal, row.name) : '—'}
+        </span>
+        <span aria-hidden="true" className="sm:hidden text-[9px] text-muted-foreground">
+          /
+        </span>
+        <span className="text-[10px] sm:mt-0.5 sm:text-[11px] text-muted-foreground">
+          {oppShown ? formatStatValue(row.oppVal, row.name) : '—'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SideGroup({
+  label,
+  rows,
+  keyPrefix,
+  highlightStatId,
+}: {
+  label: string;
+  rows: MatchupRow[];
+  keyPrefix: string;
+  highlightStatId?: number;
+}) {
+  return (
+    <div className="min-w-0">
+      {/* Mobile section caption — replaces the desktop vertical divider,
+          which doesn't survive a 4-per-row wrapped grid. */}
+      <p className="sm:hidden text-micro font-mono font-bold uppercase tracking-[0.1em] text-muted-foreground mb-1 ml-0.5">
+        {label}
+      </p>
+      <div className="grid grid-cols-4 gap-1 sm:flex sm:flex-wrap sm:items-stretch sm:gap-1.5">
+        {rows.map(row => (
+          <CategoryCell
+            key={`${keyPrefix}-${row.statId}`}
+            row={row}
+            isHighlight={row.statId === highlightStatId}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -66,9 +104,10 @@ function CategoryCell({ row, isHighlight }: { row: MatchupRow; isHighlight: bool
  * coded green/red by winner), opponent value (muted). The colored border
  * carries the win/loss state visually so you can scan the rail at a glance.
  *
- * Splits into batting / pitching halves with a vertical divider so the
- * groupings stay readable even with 16 categories on a wide screen. On
- * mobile the divider folds into a row break.
+ * Splits into batting / pitching halves. On sm+ a vertical divider separates
+ * the wrapped tile runs; on mobile each half becomes a labeled 4-up grid of
+ * compact 2-line tiles (label / `my / opp`) per the design system's mobile
+ * Boss Card spec.
  */
 export default function CategoryRail({ battingRows, pitchingRows, highlightStatId }: CategoryRailProps) {
   const hasAny = battingRows.length > 0 || pitchingRows.length > 0;
@@ -81,13 +120,14 @@ export default function CategoryRail({ battingRows, pitchingRows, highlightStatI
   }
 
   return (
-    <div className="flex flex-wrap items-stretch justify-center gap-1.5 sm:gap-2">
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch sm:justify-center sm:gap-2">
       {battingRows.length > 0 && (
-        <div className="flex flex-wrap items-stretch gap-1 sm:gap-1.5">
-          {battingRows.map(row => (
-            <CategoryCell key={`bat-${row.statId}`} row={row} isHighlight={row.statId === highlightStatId} />
-          ))}
-        </div>
+        <SideGroup
+          label="Batting"
+          rows={battingRows}
+          keyPrefix="bat"
+          highlightStatId={highlightStatId}
+        />
       )}
 
       {battingRows.length > 0 && pitchingRows.length > 0 && (
@@ -98,11 +138,12 @@ export default function CategoryRail({ battingRows, pitchingRows, highlightStatI
       )}
 
       {pitchingRows.length > 0 && (
-        <div className="flex flex-wrap items-stretch gap-1 sm:gap-1.5">
-          {pitchingRows.map(row => (
-            <CategoryCell key={`pit-${row.statId}`} row={row} isHighlight={row.statId === highlightStatId} />
-          ))}
-        </div>
+        <SideGroup
+          label="Pitching"
+          rows={pitchingRows}
+          keyPrefix="pit"
+          highlightStatId={highlightStatId}
+        />
       )}
     </div>
   );

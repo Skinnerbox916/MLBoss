@@ -18,10 +18,10 @@ interface Props {
 }
 
 const TIER_DOT: Record<CacheRow['tier'], string> = {
-  static: 'bg-blue-500',
-  'semi-dynamic': 'bg-amber-500',
-  dynamic: 'bg-green-500',
-  other: 'bg-gray-400',
+  static: 'bg-primary',
+  'semi-dynamic': 'bg-accent',
+  dynamic: 'bg-success',
+  other: 'bg-muted-foreground',
 };
 
 function formatTTL(seconds: number): string {

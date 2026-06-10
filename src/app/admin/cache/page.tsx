@@ -211,22 +211,22 @@ function formatRelativeTime(ts: number): string {
 
 const TIER_STYLE: Record<CacheTier, { dot: string; label: string; desc: string }> = {
   static: {
-    dot: 'bg-blue-500',
+    dot: 'bg-primary',
     label: 'Static',
     desc: '24–48h — game key, stat categories, league limits & roster slots, MLB identity, Savant leaderboards',
   },
   'semi-dynamic': {
-    dot: 'bg-amber-500',
+    dot: 'bg-accent',
     label: 'Semi-dynamic',
     desc: '5min–1h — leagues, teams, standings, market signals, roster talent, free-agent pools',
   },
   dynamic: {
-    dot: 'bg-green-500',
+    dot: 'bg-success',
     label: 'Dynamic',
     desc: '30s–1min — scoreboards, live team stats, rosters, transactions',
   },
   other: {
-    dot: 'bg-gray-400',
+    dot: 'bg-muted-foreground',
     label: 'Other',
     desc: 'Keys under cache: that don\'t match a known tier prefix. Should be empty; if it isn\'t, something is bypassing CACHE_CATEGORIES.',
   },

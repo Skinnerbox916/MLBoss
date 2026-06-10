@@ -34,7 +34,9 @@ export default function DashboardCard({
 }: DashboardCardProps) {
   return (
     <div className={`${sizeToGridClass[size]} ${className}`}>
-      <div className="bg-surface rounded-lg shadow p-6 h-full flex flex-col">
+      {/* p-3.5 (14px) on mobile so 1-up stacked cards don't feel cavernous;
+          24px on sm+ — see the design system's mobile adaptations. */}
+      <div className="bg-surface rounded-lg shadow p-3.5 sm:p-6 h-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <Heading as="h3">{title}</Heading>

@@ -118,10 +118,15 @@ function SlotRow({ slot, player, isSelected, isEligible, editable, locked, onCli
       disabled={locked}
       className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${bgClass} ${cursorClass} ${locked ? 'opacity-70' : ''}`}
     >
-      <span className={`w-8 text-xs font-bold shrink-0 ${
-        slot.group === 'batting' ? 'text-success' :
-        slot.group === 'pitching' ? 'text-accent' :
-        'text-muted-foreground'
+      {/* Slot badge — square mono chip. Starting slots read primary regardless
+          of batting/pitching (slots aren't color-distinct between sides — see
+          the design system badge sheet); bench is muted, IL is error-tinted. */}
+      <span className={`min-w-8 h-8 px-1 rounded flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
+        slot.position === 'IL' || slot.position === 'IL+' || slot.position === 'NA'
+          ? 'bg-error/10 text-error'
+          : slot.group === 'reserve'
+            ? 'bg-surface-muted text-muted-foreground'
+            : 'bg-surface-muted text-primary'
       }`}>
         {slot.label}
       </span>

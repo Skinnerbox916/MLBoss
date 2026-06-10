@@ -95,7 +95,7 @@ function AuthErrorContent() {
         </div>
 
         {/* Error Card */}
-        <div className="bg-surface shadow-xl rounded-xl border border-border px-8 py-8">
+        <div className="bg-surface shadow-xl rounded-lg border border-border px-8 py-8">
           <div className="space-y-6">
             {/* Error Message */}
             <div className="text-center">
@@ -109,7 +109,7 @@ function AuthErrorContent() {
 
             {/* Error Code */}
             {error && (
-              <div className="bg-primary-50 dark:bg-primary-700 rounded-lg p-3 space-y-2">
+              <div className="bg-primary/10 dark:bg-primary-700 rounded-lg p-3 space-y-2">
                 <p className="text-xs text-muted-foreground text-center">
                   Error Code: <span className="font-mono text-error dark:text-error-light">{error}</span>
                 </p>
@@ -130,7 +130,7 @@ function AuthErrorContent() {
             <div className="space-y-3">
               <Link
                 href="/"
-                className="w-full flex justify-center items-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-primary to-accent hover:from-primary-600 hover:to-accent-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring focus:ring-offset-background transition-all duration-200 shadow-lg hover:shadow-xl"
+                className="w-full flex justify-center items-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-primary to-accent hover:from-primary-700 hover:to-accent-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring focus:ring-offset-background transition-all duration-200 shadow-lg hover:shadow-xl"
               >
                 Try Sign In Again
               </Link>

@@ -12,62 +12,44 @@ The color palette is derived from the MLBoss logo and creates a cohesive, profes
 | **Prussian Blue** | `#132F43` | Primary brand, main UI elements | `bg-primary`, `text-primary` |
 | **Dark Goldenrod** | `#C89222` | Accent, CTAs, highlights | `bg-accent`, `text-accent` |
 | **Isabelline** | `#F9F6F1` | Primary background (light mode) | `bg-background` |
-| **Dark Spring Green** | `#2C6E49` | Success states, positive metrics | `bg-success`, `text-success` |
+| **Dark Spring Green** | `#1F8A5B` | Success states, positive metrics | `bg-success`, `text-success` |
 | **Sea Green** | `#4C956C` | Success secondary, lighter success states | `bg-success-light` |
 | **Crimson Red** | `#B91C1C` | Error states, destructive actions | `bg-error`, `text-error` |
 
-### Color Variants
-Each brand color includes intensity variants (50-900) generated via `color-mix()`:
+### Color Variants — 4 stops only
+Each brand color (`primary`, `accent`, `success`, `error`) exposes exactly **four** numbered
+intensity stops, generated via `color-mix()`. Each stop earns its place; there are intentionally
+no `50/200/300/400/600/800` stops. They were removed because a 10-stop ramp produces near-duplicate
+neighbors (700 vs 800) that different agents pick inconsistently — drift, not expressiveness.
 
-#### Primary (Prussian Blue)
 ```css
---color-primary-50:  /* Very light blue */
---color-primary-100: /* Light blue */
---color-primary-200: /* Lighter blue */
---color-primary-300: /* Light medium blue */
---color-primary-400: /* Medium light blue */
---color-primary-500: /* Base primary (#132F43) */
---color-primary-600: /* Medium dark blue */
---color-primary-700: /* Dark blue */
---color-primary-800: /* Darker blue */
---color-primary-900: /* Very dark blue */
+--color-primary-100: /* opaque soft fill — badges, focus tiles, table-row stripes */
+--color-primary-500: /* the brand itself — text, nav, buttons, icons (= var(--primary)) */
+--color-primary-700: /* darker brand — button hover, dark-mode chrome */
+--color-primary-900: /* deepest — dark-mode background, text-on-tint */
+```
+
+`accent`, `success`, and `error` follow the identical four-stop pattern.
+
+**For everything in between, use alpha mixing — not a numbered stop.** Tailwind's slash modifier
+mixes the brand color with transparency over whatever surface is behind it:
+
+```tsx
+<div className="bg-primary/10">structural wash (zebra stripe, chip fill, hover bar)</div>
+<span className="text-accent/60">de-emphasized accent</span>
+<div className="border-success/40">tinted hairline</div>
 ```
 
 **Usage Examples:**
 ```tsx
-<div className="bg-primary-50 text-primary-900">Light background, dark text</div>
-<button className="bg-primary hover:bg-primary-600">Primary button</button>
-<div className="border-primary-200">Subtle border</div>
+<div className="bg-accent/10 text-accent-900">Light tint, dark readable text</div>
+<button className="bg-primary hover:bg-primary-700">Primary button</button>
+<button className="bg-accent text-white hover:bg-accent-700">Call to action</button>
+<div className="bg-error-100 text-error-900">Error message</div>
 ```
 
-#### Accent (Dark Goldenrod)
-Available as `accent-50` through `accent-900` following the same pattern.
-
-**Usage Examples:**
-```tsx
-<button className="bg-accent text-white hover:bg-accent-600">Call to action</button>
-<div className="text-accent-700">Highlighted text</div>
-<div className="bg-accent-100 border-accent-300">Accent background</div>
-```
-
-#### Success (Green Tones)
-Available as `success-50` through `success-900`.
-
-**Usage Examples:**
-```tsx
-<div className="bg-success-100 text-success-800">Success message</div>
-<span className="text-success">Positive metric</span>
-<button className="bg-success hover:bg-success-600">Confirm action</button>
-```
-
-#### Error (Red Tones)
-Available as `error-50` through `error-900` following the same pattern.
-
-**Usage Examples:**
-```tsx
-<div className="bg-error-100 text-error-800">Error message</div>
-<button className="bg-error hover:bg-error-600">Delete</button>
-```
+> **Do not reintroduce `50/200/300/400/600/800`.** They are not defined in `globals.css`, so the
+> utility silently produces no CSS. If you reach for a sub-`100` wash, use `color/N` alpha instead.
 
 ### Dark Mode
 Dark mode automatically inverts key colors while maintaining contrast:
@@ -268,7 +250,7 @@ All colors and fonts are defined as CSS custom properties in `src/app/globals.cs
   --foreground: #132F43;
   --primary: #132F43;
   --accent: #C89222;
-  --success: #2C6E49;
+  --success: #1F8A5B;
   --success-light: #4C956C;
   --error: #B91C1C;
   --error-light: #DC2626;
@@ -293,11 +275,12 @@ Colors are wired into Tailwind CSS v4 via the `@theme` directive, enabling stand
 - Background: `bg-primary`, `bg-accent`, `bg-success`, `bg-background`
 - Text: `text-primary`, `text-accent`, `text-success`, `text-foreground`
 - Border: `border-primary`, `border-accent`, `border-success`
-- All with intensity variants: `bg-primary-100`, `text-accent-600`, etc.
+- Four intensity stops only: `bg-primary-100`, `text-accent-700`, `bg-success-900`, etc. (100/500/700/900)
+- Everything between stops via alpha: `bg-primary/10`, `text-accent/60`, `border-success/40`
 
 **Responsive & State Variants:**
 ```tsx
-<div className="bg-primary hover:bg-primary-600 md:bg-accent">
+<div className="bg-primary hover:bg-primary-700 md:bg-accent">
   Responsive and interactive styles
 </div>
 ```
@@ -377,6 +360,45 @@ These aren't containers but are shared, reusable display surfaces. Prefer them b
 - **No two visual styles for the same intent.** If you need a new look, update this rubric first and then update every usage.
 - **No per-page reinventions** of `MatchupPulse` or `CategoryFocusBar` — they live in `src/components/shared/` and get extended via props.
 
+## Mobile Adaptations
+
+MLBoss is data-dense — "just stack the columns" is not a mobile strategy. The
+dense surfaces swap to compact variants rather than shrinking. Two breakpoint
+rules, so desktop never sees a mobile treatment:
+
+- **Structural swaps** (one layout replaced by another, e.g. Boss Card corners
+  → stacked matchup) happen at **`md`** — the same boundary as the mobile
+  chrome. Desktop above `md` always gets the desktop structure.
+- **Density swaps** (tiles → chips, 3-line → 2-line, padding steps) happen at
+  **`sm`** — they're about available width, not device class.
+
+Shipped patterns (from the MLBoss Design System handoff bundle's mobile
+previews):
+
+- **Boss Card matchup header** — below `md` the fight-card corners collapse to
+  a vertical stack: your team row, a hairline `vs` rule, then the opponent row
+  mirrored (logo right, text right-aligned) so the teams still face each other.
+  Leader signal moves from the crown to an accent ring + `leader` tag. Between
+  `md` and `lg` the full corners render centered above the rail; at `lg`+ they
+  anchor the marquee's sides.
+  (`src/components/dashboard/BossCard/Corner.tsx` → `MobileTeamRow`)
+- **Category rail** — each side becomes a labeled (`BATTING` / `PITCHING`)
+  4-up grid of 2-line tiles (`label` / `my / opp` on one line). The desktop
+  vertical divider doesn't survive wrapped grids; the captions replace it.
+  (`src/components/dashboard/BossCard/CategoryRail.tsx`)
+- **Game Plan chips** — category tiles collapse to stat-name chips whose tint
+  encodes status (deep green locked, green lead, amber narrowing, red behind,
+  dashed muted conceded). Tapping a chip expands one detail block — projection,
+  status, concede/restore — at a time. The cluster reads as a heatmap of the
+  matchup and fits without scrolling.
+  (`src/components/shared/GamePlanPanel.tsx`)
+- **Dashboard cards** — stack 1-up; interior padding drops 24px → 14px
+  (`p-3.5 sm:p-6`) so cards don't feel cavernous. Card titles already floor at
+  17px via the `h3` clamp. (`src/components/dashboard/DashboardCard.tsx`)
+- **Mobile chrome** — 48px top bar + 56px bottom tab bar, 5 destinations max
+  (hard ceiling), `env(safe-area-inset-bottom)` reserved.
+  (`src/components/layout/MobileChrome.tsx`)
+
 ## Component Patterns
 
 ### Icon System
@@ -398,11 +420,11 @@ import { GiBaseballBat } from 'react-icons/gi';
 ### Color Usage Hierarchy
 1. **Primary** (`#132F43`): Navigation, headers, primary actions
 2. **Accent** (`#C89222`): CTAs, highlights, interactive elements
-3. **Success** (`#2C6E49`): Positive states, confirmations, good metrics
+3. **Success** (`#1F8A5B`): Positive states, confirmations, good metrics
 4. **Background/Foreground**: Base layout colors
 
 ### Best Practices
-- Use intensity variants for subtle states (`primary-100` for hover backgrounds)
+- Use a numbered stop only for opaque fills (`bg-primary-100`); use alpha (`bg-primary/10`) for subtle washes and hover backgrounds
 - Maintain contrast ratios for accessibility
 - Prefer semantic color names over hex values in components
 - Test both light and dark modes when adding new color usage
@@ -410,28 +432,51 @@ import { GiBaseballBat } from 'react-icons/gi';
 ### Common Patterns
 ```tsx
 // Card with primary theme
-<div className="bg-white dark:bg-primary-900 border-primary-200">
+<div className="bg-white dark:bg-primary-900 border-primary/20">
   <Heading as="h3" className="text-primary">Title</Heading>
   <Text className="text-foreground">Body text</Text>
 </div>
 
 // Success state
-<div className="bg-success-100 text-success-800 border-success-300">
+<div className="bg-success-100 text-success-900 border-success/40">
   <Text variant="small">Success message</Text>
 </div>
 
 // Interactive element
-<button className="bg-accent hover:bg-accent-600 text-white">
+<button className="bg-accent hover:bg-accent-700 text-white">
   <Text as="span" className="font-medium">Action Button</Text>
 </button>
 ```
+
+## Corner Radii
+
+Exactly **four** radii are sanctioned, each answering a different question. The scale is
+**geometric (4 → 8 → 16)** — each step roughly doubles — so every tier reads as perceptibly
+distinct. (A linear `4 → 8 → 12` was rejected: 8px and 12px are nearly indistinguishable at the
+sizes these surfaces render, which is how "two LLMs picked Tailwind defaults" drift starts.)
+
+| Radius | Value | Tailwind | Question it answers | Used for |
+|--------|-------|----------|---------------------|----------|
+| sm | 4px | `rounded` | "is it a chip?" | badges, pills, inputs, segmented/tab buttons, Boss category tiles, player-row body |
+| lg | 8px | `rounded-lg` | "is it a container?" **(the default)** | cards, panels, dashboard tiles, focus tiles, callouts |
+| xl | 16px | `rounded-xl` | "is it the marquee?" | **Boss Card top-of-dashboard band only — nothing else** |
+| full | 9999px | `rounded-full` | "is it round?" | avatars, week chip, status pills |
+
+`rounded-xl` is remapped to **16px** in `globals.css` (`@theme inline { --radius-xl: 1rem }`) —
+Tailwind's default is 12px, the ambiguous middle we're deliberately skipping. The marquee keeps
+using the `rounded-xl` class; it just renders at 16px now.
+
+**Do not use `rounded-md` (6px) or `rounded-2xl`.** `rounded-md` is the Tailwind default that creeps
+in when a component is written without consulting this rubric (`6` is indistinguishable from `8`).
+`rounded-2xl` is redundant — the marquee's 16px is `rounded-xl`. More radii means more drift; the
+decision between the four above must always be unambiguous. A container is `rounded-lg`; a chip is
+`rounded`; only the Boss Card marquee is `rounded-xl`.
 
 ## Future Expansion
 
 This design system can be extended with:
 - Spacing scale (`--space-*` variables)
 - Shadow system (`--shadow-*` variants)
-- Border radius tokens (`--radius-*`)
 - Animation/transition standards
 - Component-specific design tokens
 

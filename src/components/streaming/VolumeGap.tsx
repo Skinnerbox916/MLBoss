@@ -225,7 +225,7 @@ export default function VolumeGap({
       action={action}
       helper={helper}
     >
-      <div className={`mb-4 px-3 py-2 rounded-md border ${verdictTone}`}>
+      <div className={`mb-4 px-3 py-2 rounded-lg border ${verdictTone}`}>
         <Text variant="small" className="font-medium">{verdict.copy}</Text>
       </div>
 

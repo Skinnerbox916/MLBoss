@@ -34,7 +34,7 @@ export default function CapPill({ label, used, cap, formatName }: CapPillProps) 
   const usedStr = Number.isFinite(usedNum) ? formatStatValue(usedNum, formatName) : '–';
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-mono font-numeric ${tone}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono font-numeric ${tone}`}
       title={`${label}: ${usedStr} of ${cap} used${isTight ? ' — tight' : ''}`}
     >
       <span className="font-semibold uppercase tracking-wider">{label}</span>

@@ -215,7 +215,7 @@ function RatingHero({
   return (
     <div className={`rounded-lg border ${palette.heroBorder} ${palette.heroBg} p-3`}>
       <div className="flex items-center gap-3">
-        <div className={`flex flex-col items-center justify-center rounded-md px-3 py-2 ${palette.scoreBg} shrink-0`}>
+        <div className={`flex flex-col items-center justify-center rounded-lg px-3 py-2 ${palette.scoreBg} shrink-0`}>
           <span className={`text-3xl font-bold font-mono leading-none ${palette.scoreText}`}>
             {rating.score}
           </span>
@@ -443,7 +443,7 @@ function ContextCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-md border border-border-muted bg-surface-muted/40 px-2.5 py-2">
+    <div className="rounded-lg border border-border-muted bg-surface-muted/40 px-2.5 py-2">
       <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
         {label}
       </p>

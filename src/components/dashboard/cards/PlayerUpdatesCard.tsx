@@ -17,9 +17,9 @@ function getStatusTier(player: RosterEntry): StatusTier | null {
 }
 
 const tierConfig: Record<StatusTier, { label: string; bg: string; text: string; border: string; order: number }> = {
-  dtd:  { label: 'DTD',  bg: 'bg-accent-50',   text: 'text-accent-800',   border: 'border-accent',          order: 0 },
-  il:   { label: 'IL',   bg: 'bg-error-50',    text: 'text-error-800',    border: 'border-error',           order: 1 },
-  na:   { label: 'OUT',  bg: 'bg-primary-50',  text: 'text-primary-800',  border: 'border-muted-foreground', order: 2 },
+  dtd:  { label: 'DTD',  bg: 'bg-accent/10',   text: 'text-accent-900',   border: 'border-accent',          order: 0 },
+  il:   { label: 'IL',   bg: 'bg-error/10',    text: 'text-error-900',    border: 'border-error',           order: 1 },
+  na:   { label: 'OUT',  bg: 'bg-primary/10',  text: 'text-primary-900',  border: 'border-muted-foreground', order: 2 },
 };
 
 export default function PlayerUpdatesCard() {
@@ -47,7 +47,7 @@ export default function PlayerUpdatesCard() {
               {healthy} of {roster.length} healthy
             </span>
             {playersWithStatus.length > 0 && (
-              <span className="text-xs px-1.5 py-0.5 bg-error-100 text-error-800 rounded font-medium">
+              <span className="text-xs px-1.5 py-0.5 bg-error-100 text-error-900 rounded font-medium">
                 {playersWithStatus.length} flagged
               </span>
             )}

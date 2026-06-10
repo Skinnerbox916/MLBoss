@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { FiCalendar, FiSlash, FiRotateCcw } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Panel from '@/components/ui/Panel';
@@ -85,6 +85,13 @@ export default function GamePlanPanel({
     [analysis.rows, side],
   );
 
+  // Mobile-only: which category's detail is open under the chip cluster.
+  // On small screens the tiles collapse to stat-name chips (color = status)
+  // and one tapped category at a time expands to its full projection.
+  const [expandedStatId, setExpandedStatId] = useState<number | null>(null);
+  const handleChipTap = (statId: number) =>
+    setExpandedStatId(prev => (prev === statId ? null : statId));
+
   const grouped = useMemo(() => {
     const inPlay: AnalyzedMatchupRow[] = [];
     const conceded: AnalyzedMatchupRow[] = [];
@@ -92,8 +99,16 @@ export default function GamePlanPanel({
       if (isConceded(row.statId)) conceded.push(row);
       else inPlay.push(row);
     }
-    // In-play: most-contested (highest pivotality weight) first.
-    inPlay.sort((a, b) => (categoryWeights[b.statId] ?? 0) - (categoryWeights[a.statId] ?? 0));
+    // In-play: signal-bearing rows first (sorted by most-contested = highest
+    // pivotality weight), then no-signal rows at the bottom. Without the signal
+    // tier, a no-signal row reads `margin=0 → pivotality=1.0` (the max) and
+    // floats above genuinely contested cats with a "no signal yet" caption.
+    inPlay.sort((a, b) => {
+      const aSig = rowHasComparablePair(a) ? 1 : 0;
+      const bSig = rowHasComparablePair(b) ? 1 : 0;
+      if (aSig !== bSig) return bSig - aSig;
+      return (categoryWeights[b.statId] ?? 0) - (categoryWeights[a.statId] ?? 0);
+    });
     // Conceded: most out-of-reach first.
     conceded.sort((a, b) => a.margin - b.margin);
     return { inPlay, conceded };
@@ -163,35 +178,25 @@ export default function GamePlanPanel({
         <GroupSection
           label="In play"
           tone="success"
-          count={grouped.inPlay.length}
+          rows={grouped.inPlay}
           empty="Nothing in play — every category is conceded."
-        >
-          {grouped.inPlay.map(row => (
-            <CategoryTile
-              key={row.statId}
-              row={row}
-              conceded={false}
-              autoConceded={false}
-              onToggleConcede={onToggleConcede}
-            />
-          ))}
-        </GroupSection>
+          conceded={false}
+          isAutoConceded={isAutoConceded}
+          onToggleConcede={onToggleConcede}
+          expandedStatId={expandedStatId}
+          onChipTap={handleChipTap}
+        />
         <GroupSection
           label="Conceded"
           tone="muted"
-          count={grouped.conceded.length}
+          rows={grouped.conceded}
           empty="Nothing conceded — contesting every category."
-        >
-          {grouped.conceded.map(row => (
-            <CategoryTile
-              key={row.statId}
-              row={row}
-              conceded
-              autoConceded={isAutoConceded(row.statId)}
-              onToggleConcede={onToggleConcede}
-            />
-          ))}
-        </GroupSection>
+          conceded
+          isAutoConceded={isAutoConceded}
+          onToggleConcede={onToggleConcede}
+          expandedStatId={expandedStatId}
+          onChipTap={handleChipTap}
+        />
         <SlotPressureRow dailyBaselines={dailyBaselines} />
       </div>
     </Panel>
@@ -199,35 +204,175 @@ export default function GamePlanPanel({
 }
 
 // ---------------------------------------------------------------------------
-// GroupSection — header + flex-wrap container (In play / Conceded)
+// GroupSection — header + tile/chip container (In play / Conceded)
+//
+// Two renderings of the same rows: full CategoryTiles on sm+, and a compact
+// stat-name chip cluster on mobile where one tapped category at a time
+// expands to a detail block (per the design system's mobile Game Plan spec —
+// mlboss-design-system/project/preview/mobile-cards.html). Chip tint encodes
+// status, so the cluster reads as a heatmap of the matchup.
 // ---------------------------------------------------------------------------
 
 function GroupSection({
   label,
   tone,
-  count,
+  rows,
   empty,
-  children,
+  conceded,
+  isAutoConceded,
+  onToggleConcede,
+  expandedStatId,
+  onChipTap,
 }: {
   label: string;
   tone: 'success' | 'muted';
-  count: number;
+  rows: AnalyzedMatchupRow[];
   empty: string;
-  children: React.ReactNode;
+  conceded: boolean;
+  isAutoConceded: (statId: number) => boolean;
+  onToggleConcede: (statId: number) => void;
+  expandedStatId: number | null;
+  onChipTap: (statId: number) => void;
 }) {
   const labelTone = tone === 'success' ? 'text-success' : 'text-muted-foreground';
+  const expandedRow = rows.find(r => r.statId === expandedStatId);
   return (
-    <div className="bg-surface-muted/30 rounded-md p-2.5">
+    <div className="bg-surface-muted/30 rounded-lg p-2.5">
       <div className={`flex items-center gap-1.5 ${labelTone} text-caption font-semibold uppercase tracking-wide`}>
         <Icon icon={tone === 'success' ? FiCalendar : FiSlash} size={11} />
         <span>{label}</span>
-        <span className="text-muted-foreground/70">· {count}</span>
+        <span className="text-muted-foreground/70">· {rows.length}</span>
       </div>
-      {count === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-caption text-muted-foreground/60 mt-1.5">{empty}</p>
       ) : (
-        <div className="mt-2 flex flex-wrap gap-2">{children}</div>
+        <>
+          {/* Desktop: full tiles */}
+          <div className="mt-2 hidden sm:flex flex-wrap gap-2">
+            {rows.map(row => (
+              <CategoryTile
+                key={row.statId}
+                row={row}
+                conceded={conceded}
+                autoConceded={conceded && isAutoConceded(row.statId)}
+                onToggleConcede={onToggleConcede}
+              />
+            ))}
+          </div>
+
+          {/* Mobile: compact chips, tap to expand one detail at a time */}
+          <div className="mt-2 flex flex-wrap gap-1.5 sm:hidden">
+            {rows.map(row => {
+              const active = row.statId === expandedStatId;
+              return (
+                <button
+                  key={row.statId}
+                  type="button"
+                  onClick={() => onChipTap(row.statId)}
+                  aria-expanded={active}
+                  className={`px-2.5 py-1 rounded-full text-xs font-mono font-bold tracking-wide transition-colors ${chipTone(row, conceded)} ${
+                    active ? 'ring-2 ring-offset-1 ring-offset-surface ring-current' : ''
+                  }`}
+                >
+                  {row.label}
+                </button>
+              );
+            })}
+          </div>
+          {expandedRow && (
+            <div className="sm:hidden">
+              <ChipDetail
+                row={expandedRow}
+                conceded={conceded}
+                autoConceded={conceded && isAutoConceded(expandedRow.statId)}
+                onToggleConcede={onToggleConcede}
+              />
+            </div>
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+/** Chip tint = at-a-glance status: deep green locked win, green lead, amber
+ *  lead-narrowing, red behind, dashed muted conceded, plain neutral. */
+function chipTone(row: AnalyzedMatchupRow, conceded: boolean): string {
+  if (conceded) return 'border border-dashed border-border bg-muted text-muted-foreground';
+  if (!rowHasComparablePair(row)) return 'border border-border bg-surface text-muted-foreground';
+  if (row.margin > 0) {
+    if (row.swing !== undefined && row.swing < -SWING_NOTABLE) {
+      return 'bg-accent/20 text-accent-700';
+    }
+    if (row.margin >= LOCKED) return 'bg-success/20 text-success-700';
+    return 'bg-success/10 text-success';
+  }
+  if (row.margin < 0) return 'bg-error/10 text-error';
+  return 'border border-border bg-surface text-foreground';
+}
+
+/** Mobile detail block for the tapped chip — label, status, you/opp
+ *  current → projected, and the concede/restore action. */
+function ChipDetail({
+  row,
+  conceded,
+  autoConceded,
+  onToggleConcede,
+}: {
+  row: AnalyzedMatchupRow;
+  conceded: boolean;
+  autoConceded: boolean;
+  onToggleConcede: (statId: number) => void;
+}) {
+  const showSwing =
+    row.rawMyVal !== undefined && row.rawOppVal !== undefined &&
+    (row.rawMyVal !== row.myVal || row.rawOppVal !== row.oppVal);
+
+  const myTone = conceded
+    ? 'text-muted-foreground font-bold'
+    : row.margin > 0 ? 'text-success font-bold'
+    : row.margin < 0 ? 'text-error font-bold'
+    : 'text-foreground font-bold';
+
+  const reason = conceded
+    ? (autoConceded ? 'conceded · out of reach' : 'conceded')
+    : getReason(row);
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-surface px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-bold text-foreground tracking-wide">{row.label}</span>
+        {reason && (
+          <span className="flex-1 text-right text-caption italic text-muted-foreground mr-1 truncate">
+            {reason}
+          </span>
+        )}
+        <ConcedeToggle statId={row.statId} conceded={conceded} onToggle={onToggleConcede} />
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-baseline gap-x-4 gap-y-1 tabular-nums">
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-micro font-mono uppercase text-muted-foreground">you</span>
+          <TileSegment
+            rawVal={row.rawMyVal}
+            val={row.myVal}
+            name={row.name}
+            showSwing={showSwing}
+            size="my"
+            tone={myTone}
+          />
+        </span>
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-micro font-mono uppercase text-muted-foreground">opp</span>
+          <TileSegment
+            rawVal={row.rawOppVal}
+            val={row.oppVal}
+            name={row.name}
+            showSwing={showSwing}
+            size="opp"
+            tone="text-muted-foreground"
+          />
+        </span>
+      </div>
     </div>
   );
 }
@@ -293,7 +438,7 @@ function CategoryTile({
     (row.rawMyVal !== row.myVal || row.rawOppVal !== row.oppVal);
 
   const borderTone = conceded
-    ? 'border-border bg-surface-muted/40 opacity-70'
+    ? 'border-dashed border-border bg-surface-muted/40 opacity-70'
     : row.margin > 0 ? 'border-success/30 bg-success/5'
     : row.margin < 0 ? 'border-error/30 bg-error/5'
     : 'border-border bg-background';

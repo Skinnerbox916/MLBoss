@@ -55,7 +55,7 @@ export default function LeverageBar({
       <div className="flex items-end justify-between gap-3 mb-1.5">
         <span
           className={`font-mono font-numeric text-3xl sm:text-4xl font-bold leading-none ${
-            isLeading ? 'text-accent' : 'text-foreground'
+            isLeading ? 'text-success' : 'text-foreground'
           }`}
         >
           {myDisplay}
@@ -83,17 +83,18 @@ export default function LeverageBar({
 
         {/* Fill — anchored at center, expanding outward toward the leader's
             corner. The user's team sits on the LEFT, opponent on the RIGHT,
-            so a positive leverage (we're winning) fills leftward in gold,
-            and a negative leverage fills rightward in red. */}
+            so a positive leverage (we're winning) fills leftward in green,
+            and a negative leverage fills rightward in red — matching the
+            DivergingRow win/loss convention. */}
         {isLeading && (
           <div
-            className="absolute top-0 bottom-0 right-1/2 bg-accent rounded-l-full transition-[width] duration-500 ease-out"
+            className="absolute top-0 bottom-0 right-1/2 bg-success rounded-l-full transition-[width] duration-500 ease-out"
             style={{ width: `${animPct / 2}%` }}
           />
         )}
         {isLosing && (
           <div
-            className="absolute top-0 bottom-0 left-1/2 bg-error/70 rounded-r-full transition-[width] duration-500 ease-out"
+            className="absolute top-0 bottom-0 left-1/2 bg-error rounded-r-full transition-[width] duration-500 ease-out"
             style={{ width: `${animPct / 2}%` }}
           />
         )}

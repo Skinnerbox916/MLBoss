@@ -94,7 +94,7 @@ export function FocusSection({ label, tone, icon, count, empty, children }: Focu
 
   if (count === 0) {
     return (
-      <div className="bg-surface-muted/30 rounded-md p-2.5">
+      <div className="bg-surface-muted/30 rounded-lg p-2.5">
         <SectionHeader label={label} count={0} icon={icon} tone={labelTone} />
         <p className="text-caption text-muted-foreground/60 mt-1.5">{empty}</p>
       </div>
@@ -102,7 +102,7 @@ export function FocusSection({ label, tone, icon, count, empty, children }: Focu
   }
 
   return (
-    <div className="bg-surface-muted/30 rounded-md p-2.5">
+    <div className="bg-surface-muted/30 rounded-lg p-2.5">
       <SectionHeader label={label} count={count} icon={icon} tone={labelTone} />
       <div className="mt-2 flex flex-wrap gap-2">
         {children}
@@ -196,7 +196,7 @@ export function FocusSegmentedControl({
 }: FocusSegmentedControlProps) {
   return (
     <div
-      className="relative inline-flex items-center gap-px rounded-md bg-surface ring-1 ring-border-muted/60 p-0.5"
+      className="relative inline-flex items-center gap-px rounded-lg bg-surface ring-1 ring-border-muted/60 p-0.5"
       role="radiogroup"
       aria-label={`Focus for stat ${statId}`}
     >
@@ -282,7 +282,7 @@ export function FocusResetButton({ onReset, hasOverrides }: FocusResetButtonProp
       type="button"
       onClick={onReset}
       disabled={!hasOverrides}
-      className="text-caption px-2 py-0.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-accent/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      className="text-caption px-2 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-accent/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       title={hasOverrides ? 'Reset all focus picks to MLBoss suggestions' : 'No overrides — already showing suggestions'}
     >
       Reset

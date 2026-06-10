@@ -113,7 +113,7 @@ export default function LineupIssuesCard() {
         {issues.length > 0 ? (
           <>
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-error-100 text-error-800">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-error-100 text-error-900">
                 {issues.length} {issues.length === 1 ? 'Issue' : 'Issues'}
               </span>
             </div>
@@ -121,7 +121,7 @@ export default function LineupIssuesCard() {
               {issues.map((issue, i) => (
                 <div
                   key={i}
-                  className={`flex items-start gap-2 p-2 rounded ${issue.severity === 'error' ? 'bg-error-50' : 'bg-accent-50'}`}
+                  className={`flex items-start gap-2 p-2 rounded ${issue.severity === 'error' ? 'bg-error/10' : 'bg-accent/10'}`}
                 >
                   <span className={`text-sm mt-0.5 shrink-0 ${issue.severity === 'error' ? 'text-error' : 'text-accent'}`}>
                     {issue.severity === 'error' ? '✕' : '!'}

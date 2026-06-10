@@ -49,7 +49,7 @@ export default function Tabs<T extends string = string>({
               aria-selected={active}
               onClick={() => onChange(item.id)}
               className={cn(
-                'flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors',
+                'flex-1 py-2 px-3 rounded text-sm font-medium transition-colors',
                 active
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground',

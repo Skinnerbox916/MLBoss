@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { IconType } from 'react-icons';
 import DashboardCard from '../DashboardCard';
-import DivergingRow from '@/components/ui/DivergingRow';
+import DivergingTable, { type DivergingDatum } from '@/components/ui/DivergingRow';
 import { useFantasy } from '../FantasyProvider';
 import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useStandings } from '@/lib/hooks/useStandings';
@@ -13,18 +13,9 @@ import { formatStatDelta, formatStatValue } from '@/lib/formatStat';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
 import type { AnalyzedMatchupRow } from '@/lib/matchup/analysis';
 
-interface CategoryRow {
-  label: string;
-  myVal: string;
-  oppVal: string;
-  relDelta: number;
-  winning: boolean | null;
-  deltaStr: string;
-}
-
 // composeCorrectedRows formats every numeric projection (IP included)
 // as a plain decimal string, so parseFloat is safe across all stats.
-function rowToCategory(row: AnalyzedMatchupRow): CategoryRow | null {
+function rowToCategory(row: AnalyzedMatchupRow): DivergingDatum | null {
   const my = parseFloat(row.myVal);
   const opp = parseFloat(row.oppVal);
   if (!Number.isFinite(my) || !Number.isFinite(opp)) return null;
@@ -86,11 +77,11 @@ export default function MatchupProjectionCard({
   const battingRows = analysis.rows
     .filter(r => r.isBatterStat)
     .map(rowToCategory)
-    .filter((r): r is CategoryRow => r !== null);
+    .filter((r): r is DivergingDatum => r !== null);
   const pitchingRows = analysis.rows
     .filter(r => r.isPitcherStat)
     .map(rowToCategory)
-    .filter((r): r is CategoryRow => r !== null);
+    .filter((r): r is DivergingDatum => r !== null);
   const allRows = [...battingRows, ...pitchingRows];
   const maxRel = allRows.reduce((m, r) => Math.max(m, r.relDelta), 0);
   const activeRows = activeTab === 'batting' ? battingRows : pitchingRows;
@@ -125,23 +116,19 @@ export default function MatchupProjectionCard({
           </div>
 
           {isPlayoffs && (
-            <span className="inline-block px-2 py-0.5 bg-accent-100 text-accent-800 text-xs rounded font-medium">
+            <span className="inline-block px-2 py-0.5 bg-accent-100 text-accent-900 text-xs rounded font-medium">
               Playoffs
             </span>
           )}
 
           {hasRows ? (
-            <>
-              <p className="text-xs text-muted-foreground border-t border-border pt-2">
-                Projected vs. <span className="font-medium text-foreground">{opponentName ?? 'opponent'}</span>
-              </p>
-
+            <div className="border-t border-border pt-2 space-y-2">
               <div className="flex space-x-1 bg-secondary rounded-lg p-0.5">
                 {(['batting', 'pitching'] as const).map(tab => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
-                    className={`flex-1 py-1 px-2 rounded-md text-xs font-medium transition-colors ${
+                    className={`flex-1 py-1 px-2 rounded text-xs font-medium transition-colors ${
                       activeTab === tab
                         ? 'bg-background text-foreground shadow-sm'
                         : 'text-muted-foreground hover:text-foreground'
@@ -152,27 +139,16 @@ export default function MatchupProjectionCard({
                 ))}
               </div>
 
-              <div className="space-y-0.5">
-                {activeRows.length > 0 ? (
-                  activeRows.map(row => (
-                    <DivergingRow
-                      key={row.label}
-                      label={row.label}
-                      myVal={row.myVal}
-                      oppVal={row.oppVal}
-                      relDelta={row.relDelta}
-                      maxRel={maxRel}
-                      winning={row.winning}
-                      deltaStr={row.deltaStr}
-                      valueWidth="w-10"
-                      deltaWidth="w-12"
-                    />
-                  ))
-                ) : (
-                  <p className="text-xs text-muted-foreground text-center py-2">No {activeTab} data</p>
-                )}
-              </div>
-            </>
+              {activeRows.length > 0 ? (
+                <DivergingTable
+                  rows={activeRows}
+                  oppLabel={opponentName ?? 'Opp'}
+                  maxRel={maxRel}
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground text-center py-2">No {activeTab} data</p>
+              )}
+            </div>
           ) : (
             <p className="text-xs text-muted-foreground border-t border-border pt-2">
               Projection data unavailable

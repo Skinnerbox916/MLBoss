@@ -44,7 +44,7 @@ export default function WaiversCard() {
             {pendingClaims.map(tx => (
               <div
                 key={tx.transaction_key}
-                className="flex justify-between items-center px-2 py-1.5 bg-accent-50 rounded text-sm"
+                className="flex justify-between items-center px-2 py-1.5 bg-accent/10 rounded text-sm"
               >
                 <span className="font-medium">
                   {tx.players.find(p => p.type === 'add')?.name ?? 'Unknown'}
@@ -74,7 +74,7 @@ export default function WaiversCard() {
                     {player.display_position}
                   </span>
                   {player.ownership_type === 'waivers' && (
-                    <span className="text-[11px] px-1.5 py-0.5 bg-primary-50 rounded font-medium text-primary">
+                    <span className="text-[11px] px-1.5 py-0.5 bg-primary/10 rounded font-medium text-primary">
                       W
                     </span>
                   )}

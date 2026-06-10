@@ -6,6 +6,7 @@ import { FiSettings, FiUser, FiLogOut } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import { Text } from '@/components/typography';
 import { cn } from '@/lib/utils';
+import LeagueSwitcher from './LeagueSwitcher';
 
 interface AccountMenuContentProps {
   onNavigate: () => void;
@@ -39,6 +40,8 @@ export default function AccountMenuContent({
       </div>
 
       <div className="px-2 py-3 space-y-1">
+        <LeagueSwitcher onNavigate={onNavigate} />
+
         <div className="mb-3">
           <p className="px-3 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
             User

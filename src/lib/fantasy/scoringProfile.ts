@@ -1,7 +1,17 @@
 import { YahooFantasyAPI } from '@/lib/yahoo-fantasy-api';
 import { withCache, CACHE_CATEGORIES } from './cache';
+import {
+  POINTS_SCORING_TYPES,
+  HEAD_TO_HEAD_SCORING_TYPES,
+  scoringModeForType,
+  type ScoringMode,
+} from './scoringMode';
 
-export type ScoringMode = 'categories' | 'points';
+// Pure, client-safe mode helpers live in `./scoringMode` (no server imports);
+// re-exported here so existing `@/lib/fantasy/scoringProfile` consumers keep
+// working. Client components should import from `./scoringMode` directly.
+export { scoringModeForType };
+export type { ScoringMode };
 
 /**
  * Canonical description of how a Yahoo league is scored. One profile per
@@ -18,6 +28,12 @@ export interface ScoringProfile {
   leagueKey: string;
   /** Raw Yahoo `scoring_type` value, kept for debugging / display. */
   scoringType: string;
+  /**
+   * True when competition is decided by weekly head-to-head matchups
+   * ('head' / 'headpoint'); false for season-long standings ('roto' / 'point').
+   * Points mode + headToHead → weekly "points to beat" framing.
+   */
+  headToHead: boolean;
   /** stat_id → points-per-unit (empty for categories mode). */
   weights: Record<number, number>;
   /** stat_ids with non-zero weight, sorted ascending (empty for categories). */
@@ -41,17 +57,15 @@ export async function getScoringProfile(
     `${CACHE_CATEGORIES.STATIC.prefix}:scoring-profile:${leagueKey}`,
     CACHE_CATEGORIES.STATIC.ttl,
     async () => {
-      // Detection rule: only Yahoo `scoring_type === 'points'` (season-long
-      // cumulative) routes to points mode for now. H2H Points support would
-      // also key off non-zero stat_modifiers on a `'head'` league — add when
-      // we get there.
-      const isPoints = scoringType === 'points';
+      const isPoints = POINTS_SCORING_TYPES.has(scoringType);
+      const headToHead = HEAD_TO_HEAD_SCORING_TYPES.has(scoringType);
 
       if (!isPoints) {
         return {
           mode: 'categories' as const,
           leagueKey,
           scoringType,
+          headToHead,
           weights: {},
           scoredStatIds: [],
         };
@@ -73,6 +87,7 @@ export async function getScoringProfile(
         mode: 'points' as const,
         leagueKey,
         scoringType,
+        headToHead,
         weights,
         scoredStatIds,
       };

@@ -3,7 +3,10 @@
 import { useState, useMemo, useCallback } from 'react';
 import Panel from '@/components/ui/Panel';
 import { Heading, Text } from '@/components/typography';
-import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
+import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
+import { useScoringProfile } from '@/lib/hooks/useScoringProfile';
+import { batterPointsScore, type BatterPointsScore } from '@/lib/points/lineupScoring';
+import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import { useRoster } from '@/lib/hooks/useRoster';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
@@ -49,7 +52,13 @@ interface LineupManagerProps {
 }
 
 export default function LineupManager({ mode = 'batting', embedded = false }: LineupManagerProps) {
-  const { teamKey, leagueKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
+  // Active league (primary, or whatever the switcher selected). `leagueMode`
+  // is the scoring family (categories | points); the `mode` prop is the
+  // batting/pitching side.
+  const { teamKey, leagueKey, mode: leagueMode, scoringType, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
+  const isPoints = leagueMode === 'points';
+  // Per-stat point weights for client-side points scoring (points mode only).
+  const { profile: pointsProfile } = useScoringProfile(leagueKey, scoringType, isPoints);
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
 
@@ -97,9 +106,12 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     isLoading: matchupLoading,
     myProjection,
     oppProjection,
-  } = useCorrectedMatchupAnalysis(leagueKey, teamKey);
+    // Points leagues have no category matchup — pass undefined so the SWR
+    // keys go null and we DON'T fire the (slow, wasted) batter-team /
+    // pitcher-team category projections behind this hook.
+  } = useCorrectedMatchupAnalysis(isPoints ? undefined : leagueKey, isPoints ? undefined : teamKey);
 
-  const { opponentName } = useMatchupHeader(leagueKey, teamKey);
+  const { opponentName } = useMatchupHeader(isPoints ? undefined : leagueKey, isPoints ? undefined : teamKey);
 
   const batterStatIds = useMemo(() => {
     const set = new Set<number>();
@@ -155,6 +167,22 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       return matchupIndex.get(teamAbbr.toUpperCase()) ?? null;
     },
     [matchupIndex],
+  );
+
+  // Points scorer — projected points for the selected day. The points analog
+  // of the categories `getBatterRating` path; drives the points roster sort
+  // and the optimizer. Idle players → 0 (sink in sort/optimize).
+  const pointsScoreFor = useCallback(
+    (p: RosterEntry): BatterPointsScore => {
+      if (!pointsProfile) return { today: 0, perGame: 0, weekly: 0 };
+      const abbr = p.editorial_team_abbr.toUpperCase();
+      const gameCount = matchupIndex.get(abbr) ? (dhTeams.has(abbr) ? 2 : 1) : 0;
+      return batterPointsScore(getPlayerLine(p.name, p.editorial_team_abbr), pointsProfile, {
+        battingOrder: p.batting_order,
+        gameCount,
+      });
+    },
+    [pointsProfile, matchupIndex, dhTeams, getPlayerLine],
   );
 
   // Sit-for-ratio mode. When the game plan punts counting cats and chases a
@@ -225,6 +253,20 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, batterCategoryWeights, sitForRatio, avgAnchor],
   );
 
+  // Score the optimizer/grid consumes — points or categories. Idle players
+  // collapse to -1 so any real game wins a slot (mirrors the categories
+  // no-game handling).
+  const gridGetPlayerScore = useCallback(
+    (p: { name: string; editorial_team_abbr: string; batting_order: number | null }) => {
+      if (isPoints) {
+        const s = pointsScoreFor(p as RosterEntry);
+        return s.today > 0 ? s.today : -1;
+      }
+      return getPlayerScore(p);
+    },
+    [isPoints, pointsScoreFor, getPlayerScore],
+  );
+
   // Optimize-week state. Runs the optimizer for every remaining day in the
   // current fantasy week (Mon–Sun) so the user can't forget mid-week.
   const [weekRunning, setWeekRunning] = useState(false);
@@ -236,6 +278,34 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     const start = selectedDate < today ? today : selectedDate;
     setWeekRunning(true);
     setWeekStatus('Starting…');
+
+    // Points mode: the optimize+write loop runs server-side (points scoring
+    // lives server-side), so we POST and report the per-day result.
+    if (isPoints) {
+      try {
+        const res = await fetch('/api/points/optimize-week', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ teamKey, leagueKey, scoringType }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        const saved = body.days.filter((d: { saved: boolean }) => d.saved).length;
+        const noop = body.days.filter((d: { saved: boolean; error?: string }) => !d.saved && !d.error).length;
+        const parts: string[] = [];
+        if (saved > 0) parts.push(`${saved} saved`);
+        if (noop > 0) parts.push(`${noop} already optimal`);
+        if ((body.failed ?? 0) > 0) parts.push(`${body.failed} failed`);
+        setWeekStatus(parts.join(' · ') || 'No changes needed');
+        mutateRoster();
+      } catch (e) {
+        setWeekStatus(`Failed: ${e instanceof Error ? e.message : 'unknown error'}`);
+      } finally {
+        setWeekRunning(false);
+      }
+      return;
+    }
+
     try {
       const result = await optimizeWeek(
         start,
@@ -265,7 +335,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, sitForRatio, avgAnchor]);
+  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, sitForRatio, avgAnchor, isPoints, leagueKey, scoringType]);
 
   // Sit-for-ratio advisory: today's batters who are in a starting slot but
   // whose net matchup-value is negative — the optimizer will bench these to
@@ -355,7 +425,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           suggestions without leaving the page. The same panel sits on
           the streaming batter tab; toggles here flow into the lineup
           optimizer (focusMap is shared with `getBatterRating` below). */}
-      {mode === 'batting' && scoredBatterCategories.length > 0 && (
+      {!isPoints && mode === 'batting' && scoredBatterCategories.length > 0 && (
         <GamePlanPanel
           analysis={matchupAnalysis}
           isCorrected={isCorrected}
@@ -374,7 +444,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       {/* Sit-for-ratio advisory — only when the game plan punts counting and
           chases a ratio/K cat. Explains who the optimizer will bench (to an
           empty slot if needed) and why. */}
-      {mode === 'batting' && sitCandidates.length > 0 && (
+      {!isPoints && mode === 'batting' && sitCandidates.length > 0 && (
         <Panel className="border-l-4 border-l-accent/70">
           <Heading as="h3" className="text-sm">Sit to protect ratios</Heading>
           <Text variant="caption" className="text-muted-foreground">
@@ -432,6 +502,8 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               getPlayerLine={getPlayerLine}
               scoredBatterCategories={scoredBatterCategories}
               categoryWeights={batterCategoryWeights}
+              leagueMode={leagueMode}
+              pointsScoreFor={isPoints ? pointsScoreFor : undefined}
             />
           </Panel>
 
@@ -444,7 +516,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               date={selectedDate}
               rosterPositions={rosterPositions}
               onSaved={() => mutateRoster()}
-              getPlayerScore={getPlayerScore}
+              getPlayerScore={gridGetPlayerScore}
               allowEmptyOnOptimize={sitForRatio}
             />
           </Panel>

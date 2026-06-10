@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import Tabs from '@/components/ui/Tabs';
 import { Heading } from '@/components/typography';
-import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
+import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
 import LineupManager from './LineupManager';
 import TodayPitchers from './TodayPitchers';
+import PointsPitchers from './PointsPitchers';
 
 function todayStr(): string {
   const d = new Date();
@@ -18,13 +19,13 @@ function todayStr(): string {
 type Tab = 'batters' | 'pitchers';
 
 /**
- * Tab shell for the Lineup page. Owns the tab state. Each tab's child
- * (`LineupManager` / `TodayPitchers`) renders its own `GamePlanPanel`
- * above its content so the user always sees the chase/hold/punt framing
- * for the side they're acting on.
+ * Tab shell for the Lineup page — one shell for BOTH league types. The
+ * batters tab (`LineupManager`) is mode-aware internally (categories rating vs
+ * points scoring, Game Plan only in categories). The pitchers tab swaps the
+ * categories `TodayPitchers` for `PointsPitchers` in points mode.
  */
 export default function LineupShell() {
-  const { teamKey } = useFantasyContext();
+  const { teamKey, leagueKey, scoringType, mode: leagueMode } = useActiveLeague();
   const [tab, setTab] = useState<Tab>('batters');
 
   return (
@@ -51,6 +52,8 @@ export default function LineupShell() {
 
       {tab === 'batters' ? (
         <LineupManager mode="batting" embedded />
+      ) : leagueMode === 'points' ? (
+        <PointsPitchers leagueKey={leagueKey} teamKey={teamKey} scoringType={scoringType} />
       ) : (
         <TodayPitchers teamKey={teamKey} date={todayStr()} />
       )}

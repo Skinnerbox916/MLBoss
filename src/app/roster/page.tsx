@@ -1,5 +1,5 @@
 import AppLayout from '@/components/layout/AppLayout';
-import RosterManager from '@/components/roster/RosterManager';
+import RosterModeRouter from '@/components/roster/RosterModeRouter';
 
 export default async function RosterPage() {
   // Authentication handled by middleware
@@ -7,7 +7,7 @@ export default async function RosterPage() {
   return (
     <AppLayout>
       <main className="flex-1 overflow-y-auto bg-background">
-        <RosterManager />
+        <RosterModeRouter />
       </main>
     </AppLayout>
   );

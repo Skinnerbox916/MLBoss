@@ -6,7 +6,11 @@ import type { PlayerStatLine } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
+import type { ScoringMode } from '@/lib/fantasy/scoringMode';
+import type { BatterPointsScore } from '@/lib/points/lineupScoring';
 import PlayerRow from './PlayerRow';
+import PointsPlayerRow from './PointsPlayerRow';
+import { pointsTierForPerGame } from './tierStyle';
 import { type LineupMode, getRowStatus, isPitcher } from './types';
 
 function filterByMode(players: RosterEntry[], mode: LineupMode): RosterEntry[] {
@@ -40,6 +44,11 @@ interface RosterListProps {
    *  docs/pivotality-migration.md). Must match the optimizer's weights so
    *  displayed scores and lineup picks agree. */
   categoryWeights: Record<number, number>;
+  /** Active league scoring mode. 'points' swaps the sort + row to points. */
+  leagueMode?: ScoringMode;
+  /** Points scorer (required in points mode) — projected points per player
+   *  for the selected day. Provided by LineupManager so sort/optimizer agree. */
+  pointsScoreFor?: (p: RosterEntry) => BatterPointsScore;
 }
 
 export default function RosterList({
@@ -52,7 +61,10 @@ export default function RosterList({
   getPlayerLine,
   scoredBatterCategories,
   categoryWeights,
+  leagueMode = 'categories',
+  pointsScoreFor,
 }: RosterListProps) {
+  const isPoints = leagueMode === 'points' && !!pointsScoreFor;
   const { sorted, noGameCount } = useMemo(() => {
     const scoped = filterByMode(roster, mode);
     const filtered = filterByPosition(scoped, selectedPosition);
@@ -81,6 +93,7 @@ export default function RosterList({
     // Using two different scores for sort vs. display was the source
     // of apparently-random ordering.
     const scoreFor = (p: RosterEntry): number => {
+      if (isPoints) return pointsScoreFor!(p).today;
       const context = getMatchupContext(p.editorial_team_abbr);
       const line = getPlayerLine(p.name, p.editorial_team_abbr);
       return getBatterRating({
@@ -94,7 +107,7 @@ export default function RosterList({
     const _sorted = withGame.slice().sort((a, b) => scoreFor(b) - scoreFor(a));
 
     return { sorted: _sorted, noGameCount: _noGameCount };
-  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, categoryWeights]);
+  }, [roster, mode, selectedPosition, getMatchupContext, getPlayerLine, scoredBatterCategories, categoryWeights, isPoints, pointsScoreFor]);
 
   if (isLoading) {
     return (
@@ -134,16 +147,30 @@ export default function RosterList({
 
   return (
     <div className="space-y-1">
-      {sorted.map(player => (
-        <PlayerRow
-          key={player.player_key}
-          player={player}
-          context={getMatchupContext(player.editorial_team_abbr)}
-          seasonStats={getPlayerLine(player.name, player.editorial_team_abbr)}
-          scoredBatterCategories={scoredBatterCategories}
-          categoryWeights={categoryWeights}
-        />
-      ))}
+      {sorted.map(player => {
+        if (isPoints) {
+          const s = pointsScoreFor!(player);
+          return (
+            <PointsPlayerRow
+              key={player.player_key}
+              player={player}
+              context={getMatchupContext(player.editorial_team_abbr)}
+              score={s}
+              tier={pointsTierForPerGame(s.perGame)}
+            />
+          );
+        }
+        return (
+          <PlayerRow
+            key={player.player_key}
+            player={player}
+            context={getMatchupContext(player.editorial_team_abbr)}
+            seasonStats={getPlayerLine(player.name, player.editorial_team_abbr)}
+            scoredBatterCategories={scoredBatterCategories}
+            categoryWeights={categoryWeights}
+          />
+        );
+      })}
       {noGameCount > 0 && (
         <p className="text-xs text-muted-foreground text-center pt-2">
           {noGameCount} player{noGameCount !== 1 ? 's' : ''} not shown (no game today)

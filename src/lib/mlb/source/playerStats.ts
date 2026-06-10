@@ -42,6 +42,8 @@ export interface RawStat {
   pitchesPerInning?: string;
   wins?: number;
   losses?: number;
+  saves?: number;
+  gamesFinished?: number;
   groundOuts?: number;
   airOuts?: number;
   earnedRuns?: number;

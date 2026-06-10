@@ -170,6 +170,12 @@ export interface PitcherOverallLine {
   /** Overall ERA — distinct from the SP-filtered ERA in PitcherSeasonLine
    *  (which is starts-only). Carried for breakdown/debug surfaces. */
   era: number | null;
+  /** Season saves. Drives the points-league closer signal (observed save
+   *  pace = saves / gamesPitched). 0 for non-closers. */
+  saves: number;
+  /** Games finished. A secondary closer-role cue (closers finish games);
+   *  carried for completeness, not yet consumed. */
+  gamesFinished: number;
 }
 
 /** Parse a pitcher's OVERALL season line from the season-group response.
@@ -185,6 +191,8 @@ export function parsePitchingOverallLine(raw: RawStat): PitcherOverallLine {
     gamesStarted: raw.gamesStarted ?? 0,
     ip: n(raw.inningsPitched) ?? 0,
     era: n(raw.era),
+    saves: raw.saves ?? 0,
+    gamesFinished: raw.gamesFinished ?? 0,
   };
 }
 

@@ -56,11 +56,9 @@ function greedyUpgrades(
 
   const swaps: SuggestedSwap[] = [];
   const usedRoster = new Set<number>();
-  let faIdx = 0;
 
   for (const fa of faSorted) {
     if (swaps.length >= maxPerKind) break;
-    faIdx += 1;
     // Find the weakest rostered player this FA still beats and that we
     // haven't already dropped.
     let dropIdx = -1;

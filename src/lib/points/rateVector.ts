@@ -52,8 +52,9 @@ const STAT_R = 7, STAT_H = 8, STAT_1B = 9, STAT_2B = 10, STAT_3B = 11;
 const STAT_HR = 12, STAT_RBI = 13, STAT_SB = 16, STAT_BB = 18, STAT_HBP = 20;
 const STAT_BK = 21, STAT_TB = 23;
 
-// Pitcher stat_ids.
-const STAT_W = 28, STAT_SV = 32, STAT_OUT = 33, STAT_HA = 34, STAT_ER = 37;
+// Pitcher stat_ids. (W and SV are contextual outcomes scored in the forecast
+// layer, not per-IP rates, so they don't appear in this vector.)
+const STAT_OUT = 33, STAT_HA = 34, STAT_ER = 37;
 const STAT_PBB = 39, STAT_PHBP = 41, STAT_PK = 42;
 
 // ---------------------------------------------------------------------------

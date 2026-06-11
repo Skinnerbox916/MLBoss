@@ -168,7 +168,7 @@ const CONTESTED_RATIO = 0.5;
  * chase/hold/punt gate captured this via `focus === 'chase'` (chase ≡
  * `margin ≤ 0`); we lost it in the Phase-4 weights-only rewrite, then
  * restored it after the empty-lineup regression on a winning week. See
- * [sit-to-flip-prd.md](../../../docs/sit-to-flip-prd.md) step 1.
+ * `docs/history.md` "2026-06 — Opponent-total sit-to-flip PRD pulled".
  */
 export function isGamePlanSitWorthy(
   categoryWeights: Record<number, number>,

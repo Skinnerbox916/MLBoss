@@ -33,14 +33,12 @@ This index is the single authoritative table of contents for all Markdown docs i
 
 - **[product-spec.md](./product-spec.md)** — Product vision, key features, high-level architecture.
 - **[setup.md](./setup.md)** — Environment variables and Yahoo OAuth configuration.
-- **[for-ai-developers.md](./for-ai-developers.md)** — Reading order and patterns for LLM contributors.
 - **[yahoo-api-reference.md](./yahoo-api-reference.md)** — Yahoo Fantasy Sports API guide.
 - **[mlb-api-reference.md](./mlb-api-reference.md)** — MLB Stats API guide: hydrate params, splits, early-season gap, disambiguation.
 
 ### In-flight migrations and proposals
 
 - **[pivotality-migration.md](./pivotality-migration.md)** — Retiring chase/hold/punt as the weight driver; replacing with continuous `pivotality(margin)` + concede/contest. Phases 1-5 shipped for the matchup pages; L6 roster + Phase 6 cleanup outstanding.
-- **[sit-to-flip-prd.md](./sit-to-flip-prd.md)** — PRD for the opponent-total / sit-just-enough sit engine that replaces the current `computeBatterSitValue`. Not built; implement against the PRD when prioritized.
 
 ---
 

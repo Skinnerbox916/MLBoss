@@ -6,14 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "doc:gen-index": "node scripts/generateDocsIndex.js"
-  },
-  "mlbossDocs": {
-    "baseDir": "docs",
-    "indexFile": "docs/index.json",
-    "simpleIndexFile": "docs/index-simple.json",
-    "version": "2025.01"
+    "lint": "next lint"
   },
   "dependencies": {
     "clsx": "^2.1.1",

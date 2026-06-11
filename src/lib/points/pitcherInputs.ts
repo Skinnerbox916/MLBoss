@@ -19,6 +19,14 @@ import { computePitcherTalent } from '@/lib/pitching/talent';
 import { resolveMLBId } from '@/lib/mlb/identity';
 import { getPitcherSeasonLines, getPitcherOverallLines } from '@/lib/mlb/players';
 import { fetchStatcastPitchers } from '@/lib/mlb/savant';
+import { withCacheGated, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
+
+/** Small stable hash for the cache key (avoids multi-KB keys for the FA pool). */
+function hashKey(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
 
 export interface PointsPitcherInput {
   talent: PitcherTalent;
@@ -40,15 +48,33 @@ function key(name: string, team: string): string {
 /**
  * Assemble talent + role + save signal for a list of pitchers.
  * Result keyed by `name|team` (lowercased); pitchers that fail identity
- * resolution are omitted. The underlying line / Savant fetches are all
- * cached, so repeated calls within a session are cheap.
+ * resolution are omitted.
+ *
+ * Cached as a batch (10 min, gated on ≥70% resolution): each pitcher needs an
+ * identity resolve + season + overall line fetch (the per-pitcher lines are
+ * uncached upstream), and this is called for the roster + the ~40-pitcher FA
+ * pool — the dominant cost behind the points pitchers tab / pipeline rebuild.
  */
 export async function getPointsPitcherInputs(
   players: Array<{ name: string; team: string }>,
   season: number = new Date().getFullYear(),
 ): Promise<Record<string, PointsPitcherInput>> {
   if (players.length === 0) return {};
+  const sortedKey = players.map(p => key(p.name, p.team)).sort().join(',');
+  const cacheKey = `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-pitcher-inputs:${season}:${hashKey(sortedKey)}`;
+  const minCoverage = Math.max(1, Math.ceil(players.length * 0.7));
+  return withCacheGated(
+    cacheKey,
+    CACHE_CATEGORIES.SEMI_DYNAMIC.ttlMedium,
+    () => computePointsPitcherInputs(players, season),
+    result => Object.keys(result).length >= minCoverage,
+  );
+}
 
+async function computePointsPitcherInputs(
+  players: Array<{ name: string; team: string }>,
+  season: number,
+): Promise<Record<string, PointsPitcherInput>> {
   const [savantCurrent, savantPrior] = await Promise.all([
     fetchStatcastPitchers(season),
     fetchStatcastPitchers(season - 1),

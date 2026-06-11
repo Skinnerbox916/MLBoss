@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getTeamRosterByDate } from '@/lib/fantasy';
+import { getTeamRosterByDate, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy/stats';
@@ -61,27 +61,26 @@ export async function GET(request: Request) {
     // (Sunday streaming pivot — describe next week's matchup, not the
     // closed one).
     const targetWeek: WeekTarget = searchParams.get('targetWeek') === 'next' ? 'next' : 'current';
+
+    // Cache the assembled projection (see sibling batter-team route). Fanned
+    // out by useCorrectedMatchupAnalysis (my+opp); 5-min TTL; single-flight in
+    // withCache collapses concurrent my/opp calls.
+    const payload = await withCache(
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:proj-pitcher-team:${teamKey}:${targetWeek}`,
+      CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
+      async () => {
     const days = getWeekDays(new Date(), targetWeek);
     const remaining = days.filter(d => d.isRemaining);
     const weekStart = days[0]?.date;
     const weekEnd = days[days.length - 1]?.date;
     const daysElapsed = days.filter(d => !d.isRemaining).length;
 
-    if (remaining.length === 0) {
-      return NextResponse.json({
-        teamKey,
-        weekStart,
-        weekEnd,
-        daysElapsed,
-        byCategory: {},
-        perPlayer: [],
-        perReliever: [],
-        weeklySpIp: 0,
-        weeklyRpIp: 0,
-        weeklyIp: 0,
-        contributorCount: 0,
-      });
-    }
+    const empty = {
+      teamKey, weekStart, weekEnd, daysElapsed,
+      byCategory: {}, perPlayer: [], perReliever: [],
+      weeklySpIp: 0, weeklyRpIp: 0, weeklyIp: 0, contributorCount: 0,
+    };
+    if (remaining.length === 0) return empty;
 
     // Roster as of the LAST remaining day of the matchup week — captures
     // pickups effective for upcoming starts that aren't on today's roster
@@ -99,21 +98,7 @@ export async function GET(request: Request) {
     // `getRowStatus` so engine and lineup UI agree.
     const activeRoster = roster.filter(p => isPitcher(p) && getRowStatus(p) !== 'injured');
 
-    if (activeRoster.length === 0) {
-      return NextResponse.json({
-        teamKey,
-        weekStart,
-        weekEnd,
-        daysElapsed,
-        byCategory: {},
-        perPlayer: [],
-        perReliever: [],
-        weeklySpIp: 0,
-        weeklyRpIp: 0,
-        weeklyIp: 0,
-        contributorCount: 0,
-      });
-    }
+    if (activeRoster.length === 0) return empty;
 
     // Build per-day game lookup with park resolution. For TODAY's slate
     // we drop any games whose SP has already concluded (or won't happen)
@@ -232,7 +217,7 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json({
+    return {
       teamKey,
       weekStart,
       weekEnd,
@@ -244,7 +229,11 @@ export async function GET(request: Request) {
       weeklyRpIp: projection.weeklyRpIp,
       weeklyIp: projection.weeklyIp,
       contributorCount: projection.contributorCount,
-    });
+    };
+      },
+    );
+
+    return NextResponse.json(payload);
   } catch (error) {
     console.error('/api/projection/pitcher-team failed:', error);
     return NextResponse.json(

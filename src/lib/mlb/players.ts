@@ -669,6 +669,28 @@ export async function getPitcherTalentBatch(
 ): Promise<Record<string, PitcherTalentWithMetadata>> {
   if (players.length === 0) return {};
 
+  // Cache the assembled batch — it fans out resolveMLBId + per-pitcher season
+  // lines + Savant per pitcher, and was recomputed on every forecast / roster
+  // load. Keyed by the sorted player set; gated on ≥70% resolution so a
+  // partial outage isn't pinned. 10-min TTL (talent shifts slowly).
+  const sortedKey = players
+    .map(p => `${p.name.toLowerCase()}|${p.team.toLowerCase()}`)
+    .sort()
+    .join(',');
+  const cacheKey = `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:pitcher-talent-batch:${season}:${hashCode(sortedKey)}`;
+  const minCoverage = Math.max(1, Math.ceil(players.length * 0.7));
+  return withCacheGated(
+    cacheKey,
+    CACHE_CATEGORIES.SEMI_DYNAMIC.ttlMedium,
+    () => computePitcherTalentBatch(players, season),
+    result => Object.keys(result).length >= minCoverage,
+  );
+}
+
+async function computePitcherTalentBatch(
+  players: RosterPlayer[],
+  season: number,
+): Promise<Record<string, PitcherTalentWithMetadata>> {
   const { computePitcherTalent } = await import('@/lib/pitching/talent');
   const { fetchStatcastPitchers } = await import('./savant');
 

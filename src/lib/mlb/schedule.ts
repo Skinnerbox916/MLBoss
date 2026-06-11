@@ -1,4 +1,5 @@
 import { mlbFetchSchedule, mlbFetchTeamStats } from './client';
+import { withCacheGated, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import {
   applyPitcherPlatoon,
   applyPitcherRecentForm,
@@ -404,7 +405,12 @@ function stubPitcher(name: string): ProbablePitcher {
  * runs through the documented enrichment + talent pipeline; this is the
  * canonical stamp point for `pp.talent` per `docs/unified-rating-model.md`.
  */
-export async function getGameDay(date: string): Promise<MLBGame[]> {
+/**
+ * Build the fully-enriched slate for a date — the heavy path (ESPN names +
+ * per-pitcher line/Savant/platoon/form fetches + talent stamping). Wrapped by
+ * the cached `getGameDay` below; don't call this directly.
+ */
+async function buildGameDay(date: string): Promise<MLBGame[]> {
   // No probablePitcher hydrate — ESPN owns that field. We keep venue,
   // weather, team, and lineups (all MLB-only).
   const hydrate = ['venue', 'weather', 'team', 'lineups'].join(',');
@@ -527,6 +533,37 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
   );
 
   return games;
+}
+
+/**
+ * Enriched slate for a date, cached. The enrichment (ESPN names + per-pitcher
+ * stat-line/Savant/platoon/form fetches + talent stamping) is expensive (~1s
+ * warm, ~20s cold) and was previously recomputed on EVERY call — every page,
+ * and N× per page (the projection routes fan out one `getGameDay` per day of
+ * the week). Caching the assembled slate + the single-flight coalescing in
+ * `withCache` collapses that to one build per date per TTL.
+ *
+ * TTL: today/future = 5 min (matches the underlying schedule cache; lineups
+ * and probables shift through the day); past dates are immutable → 1 h. Gated
+ * so an empty/failed slate isn't pinned. The `setLeagueSbAllowedPerIp` side
+ * effect runs OUTSIDE the cache so it stays fresh on hits (the batter SB
+ * forecast reads that module global; it's date-independent and
+ * `fetchTeamStaffSplits` is 24h-cached, so this is ~free).
+ */
+export async function getGameDay(date: string): Promise<MLBGame[]> {
+  const staff = await fetchTeamStaffSplits();
+  setLeagueSbAllowedPerIp(staff.leagueSbAllowedPerIp);
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const ttl = date < todayStr ? CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong : CACHE_CATEGORIES.SEMI_DYNAMIC.ttl;
+
+  return withCacheGated(
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:game-day-enriched:${date}`,
+    ttl,
+    () => buildGameDay(date),
+    games => games.length > 0,
+  );
 }
 
 /**

@@ -206,11 +206,26 @@ export async function listCacheKeys(match: string): Promise<string[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Single-flight (in-process miss coalescing)
+// ---------------------------------------------------------------------------
+//
+// When many components mount at once (dashboard cards, the projection routes
+// that fan out `getGameDay` per day) they hit the SAME uncached key
+// concurrently. Without coalescing, each one runs the full upstream fetch —
+// a "thundering herd" against the rate-limited Yahoo/MLB APIs. This map holds
+// the in-flight promise per key so concurrent callers share ONE fetch.
+//
+// It only dedupes within a single Node process (one dev server / one server
+// instance), which is exactly where the herd happens — a page's parallel
+// requests land on the same process. Cleared when the fetch settles.
+const inFlight = new Map<string, Promise<unknown>>();
+
+// ---------------------------------------------------------------------------
 // withCache — eliminates the check/fetch/store boilerplate
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch data with transparent Redis caching.
+ * Fetch data with transparent Redis caching + in-flight coalescing.
  *
  * Usage:
  *   const leagues = await withCache(key, ttl, () => api.getUserLeagues());
@@ -225,11 +240,23 @@ export async function withCache<T>(
     recordHit(key);
     return cached;
   }
-  recordMiss(key);
 
-  const result = await fetchFn();
-  await cacheResult(key, result, ttl);
-  return result;
+  // Coalesce concurrent misses for the same key onto one upstream fetch.
+  const existing = inFlight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  recordMiss(key);
+  const promise = (async () => {
+    try {
+      const result = await fetchFn();
+      await cacheResult(key, result, ttl);
+      return result;
+    } finally {
+      inFlight.delete(key);
+    }
+  })();
+  inFlight.set(key, promise);
+  return promise;
 }
 
 /**
@@ -261,15 +288,26 @@ export async function withCacheGated<T>(
     recordHit(key);
     return cached;
   }
-  recordMiss(key);
 
-  const result = await fetchFn();
-  if (isAcceptable(result)) {
-    await cacheResult(key, result, ttl);
-  } else {
-    const reason = 'coverage gate rejected';
-    recordGateReject(key, reason);
-    console.warn(`[cache] gate rejected result for key=${key}; skipping cache write`);
-  }
-  return result;
+  // Coalesce concurrent misses (see `inFlight` note above).
+  const existing = inFlight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  recordMiss(key);
+  const promise = (async () => {
+    try {
+      const result = await fetchFn();
+      if (isAcceptable(result)) {
+        await cacheResult(key, result, ttl);
+      } else {
+        recordGateReject(key, 'coverage gate rejected');
+        console.warn(`[cache] gate rejected result for key=${key}; skipping cache write`);
+      }
+      return result;
+    } finally {
+      inFlight.delete(key);
+    }
+  })();
+  inFlight.set(key, promise);
+  return promise;
 }

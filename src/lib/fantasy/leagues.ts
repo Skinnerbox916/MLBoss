@@ -1,5 +1,5 @@
 import { YahooFantasyAPI, League, Team } from '@/lib/yahoo-fantasy-api';
-import { withCache, CACHE_CATEGORIES } from './cache';
+import { withCache, withCacheGated, CACHE_CATEGORIES } from './cache';
 
 // ---------------------------------------------------------------------------
 // Result types — discriminated union so consumers can handle failures
@@ -123,6 +123,23 @@ export async function checkUserFantasyAccess(userId: string): Promise<{ hasAcces
  * between "no data" and "something broke".
  */
 export async function analyzeUserFantasyLeagues(
+  userId: string,
+  gameKeys?: string[],
+): Promise<Result<LeagueAnalysis>> {
+  // Cache the ASSEMBLED analysis (not just the sub-fetches) — this runs on
+  // every page via /api/fantasy/context. Gate so only a successful result is
+  // pinned; a transient Yahoo error retries next request. 5-min TTL: leagues
+  // and team membership change rarely.
+  const cacheKey = `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-analysis:${userId}:${(gameKeys ?? []).join(',') || 'all'}`;
+  return withCacheGated(
+    cacheKey,
+    CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
+    () => computeUserFantasyLeagues(userId, gameKeys),
+    (r) => r.ok,
+  );
+}
+
+async function computeUserFantasyLeagues(
   userId: string,
   gameKeys?: string[],
 ): Promise<Result<LeagueAnalysis>> {

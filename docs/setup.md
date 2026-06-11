@@ -49,7 +49,7 @@ MLBoss uses a custom OAuth 2.0 integration (no NextAuth). Below is a condensed o
 ## Security Notes
 
 * All sensitive variables must be supplied via environment configuration – never hard-code them.
-* Use HTTPS in development (ngrok or similar) so Yahoo will redirect properly.
+* Use HTTPS in development (the Cloudflare tunnel below) so Yahoo will redirect properly.
 
 ## Local Development
 

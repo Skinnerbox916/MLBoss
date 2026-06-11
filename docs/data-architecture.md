@@ -336,6 +336,7 @@ For per-stat level discipline (raw counting / raw rate / regressed talent / matc
 - **Dev server must run on port 3000.** The Cloudflare tunnel maps `mlboss-dev.skibri.us` to `localhost:3000` for HTTPS (Yahoo OAuth requires it).
 - **Yahoo rate limit ~60-100 req/hr.** Lean hard on tiered caching; never bypass it for "just one quick check".
 - **Yahoo JSON has numeric keys.** XML is sometimes more reliable for nested structures.
+- **`position_types` from Yahoo JSON is unreliable.** The field can be absent, a plain string (`"B"`), a nested object (`{"position_type":"B"}`), or a numeric-key object (`{"position_type":{"0":"B","count":1}}`). Always parse it through `normalizePositionTypes()` in `yahoo-fantasy-api.ts`. `getEnrichedLeagueStatCategories` falls back to `COMMON_MLB_STATS` (`src/constants/statCategories.ts`) as a last resort.
 - **`hydrate=currentTeam` omits `abbreviation`.** Always match same-name MLB players (the two Max Muncys, etc.) on `currentTeam.id`, not on the abbreviation string.
 - **Per-host concurrency is low (~8).** Don't fan out unbounded `Promise.all` over hundreds of player IDs — `mlbFetch` will queue them, but request bursts can still time out individual entries. Use `withCacheGated` so partial outages don't poison the cache.
 

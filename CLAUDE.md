@@ -120,7 +120,7 @@ Per-layer / per-concept reference:
 - `docs/ui-patterns.md` — shared UI components and display patterns
 - `docs/design-system.md` — colors, typography, container intent rubric
 - `docs/stats.md` — `stat_id` architecture
-- `docs/setup.md`, `docs/yahoo-api-reference.md`, `docs/mlb-api-reference.md`, `docs/for-ai-developers.md`, `docs/product-spec.md` — setup and API refs
+- `docs/setup.md`, `docs/yahoo-api-reference.md`, `docs/mlb-api-reference.md`, `docs/product-spec.md` — setup and API refs
 
 ### Documentation discipline
 

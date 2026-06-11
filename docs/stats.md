@@ -34,7 +34,8 @@ Each stat_id maps to metadata that includes:
 import { getStatCategories, getStatCategoryMap } from '@/lib/fantasy';
 
 // Get stat categories with automatic caching (48-hour TTL)
-const categories = await getStatCategories('458'); // MLB 2025
+// '458' is an example game key — fetch the current one via getCurrentMLBGameKey()
+const categories = await getStatCategories('458');
 
 // Get pre-built lookup map
 const categoryMap = await getStatCategoryMap('458');

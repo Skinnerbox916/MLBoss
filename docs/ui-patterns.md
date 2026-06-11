@@ -100,9 +100,11 @@ import { GiBaseballBat } from 'react-icons/gi';
 <Icon icon={GiBaseballBat} size={24} className="text-accent" />
 ```
 
-### Focus Controls (chase / punt / neutral)
+### Focus Controls (chase / punt / neutral) — roster page only
 
-All chase/punt/neutral focus UI lives in [`src/components/shared/focusPanel.tsx`](../src/components/shared/focusPanel.tsx). The `FocusSegmentedControl` is the canonical control — used per-row inside [`GamePlanPanel`](../src/components/shared/GamePlanPanel.tsx) (Lineup and Streaming) and per-tile inside [`RosterFocusPanel`](../src/components/roster/RosterFocusPanel.tsx). It cycles `neutral → chase → punt → neutral` and renders an override dot when the user's effective focus differs from MLBoss's *suggested* focus. The shared section chrome (`FocusSectionTrio`, `FocusResetButton`, `deriveFocusSection`) lives in the same file. When adding focus toggling to a new surface, consume from `focusPanel.tsx` — do not build a sibling control.
+The chase/punt/neutral focus UI in [`src/components/shared/focusPanel.tsx`](../src/components/shared/focusPanel.tsx) is now **roster-page-only**: `FocusSegmentedControl` is used per-tile inside [`RosterFocusPanel`](../src/components/roster/RosterFocusPanel.tsx). It cycles `neutral → chase → punt → neutral` and renders an override dot when the user's effective focus differs from MLBoss's *suggested* focus. The shared section chrome (`FocusSectionTrio`, `FocusResetButton`, `deriveFocusSection`) lives in the same file.
+
+The Lineup and Streaming pages migrated to pivotality weights (see [pivotality-migration.md](pivotality-migration.md)): [`GamePlanPanel`](../src/components/shared/GamePlanPanel.tsx) there renders **In play / Conceded** shelves with a 2-state concede/contest toggle, not the 3-state segmented control. `focusPanel.tsx` is slated for deletion once `RosterFocusPanel` converts (Phase 6) — don't add new consumers.
 
 ## Shared Utilities (`src/lib/`)
 
@@ -191,7 +193,7 @@ When adding a primary destination: add it to `navigation.ts` and it shows up in 
 - **Don't wrap non-dashboard sections in hand-rolled `bg-surface rounded-lg shadow p-4`.** Use `Panel`.
 - **Don't hand-roll tab styles.** Use `Tabs` (segment for mode switches, underline for peer views).
 - **Don't reinvent `GamePlanPanel` per page.** It lives in `src/components/shared/` and is extended via props (`side: 'batting' | 'pitching'`). It's the consolidated action-surface header on Lineup and Streaming.
-- **Don't ship a sibling focus control.** `FocusSegmentedControl` in [`focusPanel.tsx`](../src/components/shared/focusPanel.tsx) is the only chase/punt/neutral toggle. Add a prop if you need a tweak.
+- **Don't ship a sibling focus control.** `FocusSegmentedControl` in [`focusPanel.tsx`](../src/components/shared/focusPanel.tsx) is the only chase/punt/neutral toggle (roster page only — see Focus Controls above). Add a prop if you need a tweak; don't add new consumers.
 - **Don't build a new comparison visualization** when `DivergingRow` or `GamePlanPanel` already handles it.
 - **Don't add a new color system.** Use the semantic colors: `primary`, `accent`, `success`, `error`, `muted-foreground`. See `docs/design-system.md`.
 - **Don't create new loading states.** Use `Skeleton` or `DashboardCard`'s built-in `isLoading`.

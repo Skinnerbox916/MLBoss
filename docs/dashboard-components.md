@@ -7,7 +7,7 @@ The dashboard is built from **self-contained React components** ("cards") render
 | Page  | `src/app/dashboard/page.tsx` | Declares which cards appear and their order/size. |
 | Layout | `src/components/dashboard/GridLayout.tsx` | Responsive CSS grid (swap for drag-and-drop library later). |
 | Wrapper | `src/components/dashboard/DashboardCard.tsx` | Shared chrome, sizing, loading skeleton, footer. |
-| Cards | `src/components/dashboard/cards/*` | Eight domain-specific UI widgets (Matchup, Batting, Pitching, etc.). |
+| Cards | `src/components/dashboard/cards/*` | Domain-specific UI widgets (Lineup Issues, Matchup Projection, Opponent Status, Waivers, etc.). |
 
 ## Data flow
 
@@ -32,8 +32,6 @@ flowchart TD
 - `getStatCategories()` / `getStatCategoryMap()` — stat metadata
 - `enrichStats()` — add metadata to raw Yahoo stats
 - `getEnrichedLeagueStatCategories()` — league-specific scored categories
-
-_Note: dashboard cards currently use dummy data; hooks will be connected as data integration progresses._
 
 ## Adding a new card
 

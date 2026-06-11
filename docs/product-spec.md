@@ -15,7 +15,7 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
 - Primary: Individual fantasy baseball managers
 - Scale: Designed for 1-25 concurrent users
 - Usage Patterns: Supports both casual (weekly) and active (daily) users
-- League Support: Compatible with any Yahoo Fantasy Baseball league
+- League Support: Compatible with any Yahoo Fantasy Baseball league — both head-to-head categories and head-to-head points scoring (points leagues get mode-routed views on every page)
 
 ## Key Features
 
@@ -28,7 +28,7 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
 
 ### Pitcher Analysis
 - **Today's Pitcher Sit/Start**
-  - On the Today page alongside batter lineup — rostered pitchers grouped by Active / Bench / Injured with today's matchup context (opponent offense, park, weather) so you can sit a starter walking into Coors.
+  - On the Lineup page alongside batter lineup — rostered pitchers grouped by Active / Bench / Injured with today's matchup context (opponent offense, park, weather) so you can sit a starter walking into Coors.
 - **Streaming Board** (dedicated `/streaming` page)
   - Free-agent and waiver starting pitchers with probable starts for the selected day
   - Multi-day date strip covering **D+1 through D+5** — Yahoo only publishes probables for tomorrow, but MLB's schedule hydrates probables 3-5 days out, letting you plan pickups against the 6-moves-per-week cap.
@@ -38,7 +38,7 @@ To provide fantasy baseball managers with data-driven insights for daily lineup 
   - Team OPS vs LHP / RHP (handedness-aware matchup strength)
   - Team strikeout rate and runs per game
 - **Matchup Pulse**
-  - Live head-to-head category scoreboard vs this week's opponent, pinned above both Today and Streaming so pickup/lineup decisions know which categories to chase.
+  - Live head-to-head category scoreboard vs this week's opponent, pinned above both Lineup and Streaming so pickup/lineup decisions know which categories to chase.
 
 ### Performance Context
 - **Hot/Cold Tracking**
@@ -74,7 +74,7 @@ Pages are organized around the **time horizon of the decision** being made rathe
 Five primary pages in the sidebar, in order of decision cadence:
 
 1. **Dashboard** — reference/mixed-horizon snapshot
-2. **Today** — daily sit/start for batters and pitchers
+2. **Lineup** — daily sit/start for batters and pitchers
 3. **Streaming** — D+1 through D+5 pitcher pickups
 4. **Roster** — long-term roster construction (add/drop batters and pitchers)
 5. **League** — standings and statistical reference
@@ -82,7 +82,7 @@ Five primary pages in the sidebar, in order of decision cadence:
 ### Dedicated Pages
 
 - **Dashboard** — card-based grid of key metrics and alerts. Absorbs the head-to-head category scoreboard (`CurrentScoreCard`) and season-comparison view that formerly lived on a separate Matchup page, and adds `OpponentStatusCard` (opponent injuries + probable pitchers) for scouting.
-- **Today** — tabs for Batters and Pitchers. Both share a live **Matchup Pulse** at the top showing where you're winning and losing categories this week, so sit/start decisions are made with category leverage in mind.
+- **Lineup** — tabs for Batters and Pitchers. Both share a live **Matchup Pulse** at the top showing where you're winning and losing categories this week, so sit/start decisions are made with category leverage in mind.
 - **Streaming** — standalone page for pitcher pickups. Date strip spans D+1 through D+5 so the 6-moves-per-week budget can be planned against advance probables; per-row pills call out QS / K / W / ERA / WHIP fit; composite score tints each row.
 - **Roster** — tabs for Batters and Pitchers. The page is forward-looking by design: `RosterFocusPanel` (auto-suggested chase/hold/punt with override) seeds the talent-blended scoring, `DepthChart` exposes structural gaps, and `Suggested Moves` ranks net-positive swaps **and pure adds** (when open slots exist) through the same engine. There is intentionally no top-of-page rank strip — YTD ranks are warped by injuries and cold streaks and would contradict the suggestion logic. League rankings live one click away on the **League** page. Batters tab is a full depth-chart + move optimizer; Pitchers tab lists rostered + available pitchers (full pitcher optimizer is on the roadmap).
 - **League Overview** — standings, rankings, statistics.

@@ -84,10 +84,9 @@ Logic is organized by resource: `stats.ts`, `leagues.ts`, `roster.ts`, `players.
 ## Documentation Index
 - `docs/ui-patterns.md`: UI inventory and anti-patterns.
 - `docs/data-architecture.md`: Caching, identity contract, and API reference.
-- `docs/scoring-conventions.md`: Stat levels and calibration knobs.
+- `docs/stat-levels.md`: The four stat levels (raw counting / raw rate / regressed talent / matchup-adjusted).
 - `docs/recommendation-system.md`: Matchup-state layer and focus suggestions.
 - `docs/stats.md`: Stat ID architecture.
-- `docs/for-ai-developers.md`: Specific tips for LLM contributors.
 
 ---
 

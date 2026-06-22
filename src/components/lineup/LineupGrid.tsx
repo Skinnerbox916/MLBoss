@@ -205,9 +205,10 @@ interface LineupGridProps {
   rosterPositions?: RosterPositionSlot[];
   onSaved?: () => void;
   getPlayerScore?: (player: RosterEntry) => number;
-  /** When true, "Optimize" may leave a starting slot empty rather than start
-   *  a net-harmful bat (sit-for-ratio). Pairs with a `getPlayerScore` that
-   *  returns net matchup-value (can be negative). See sitValue.ts. */
+  /** When true, "Optimize" may leave a starting slot empty rather than fill
+   *  it with a negative-score player. Set when the endgame sit plan has
+   *  bats to bench (they score below the empty slot's cost). See
+   *  `computeSitPlan` in sitValue.ts. */
   allowEmptyOnOptimize?: boolean;
 }
 

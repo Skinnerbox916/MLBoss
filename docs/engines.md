@@ -87,6 +87,7 @@ Standings → category strategy. The bridge layer (reads from L4, writes `focusM
 
 - `analyzeMatchup` — [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts)
 - `withSwing` — [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts)
+- Endgame sit plan (`computeSitPlan`, per-bat `computeBatterSitValue`) — [src/lib/lineup/sitValue.ts](../src/lib/lineup/sitValue.ts) — today-only bench decisions to flip a losing K/AVG race; arms only when every counting cat is decided and the locks survive the benches. See [history.md](./history.md) "2026-06 — Endgame rewrite of auto-sit".
 - Corrected matchup analysis (`useCorrectedMatchupAnalysis`) — [src/lib/hooks/useCorrectedMatchupAnalysis.ts](../src/lib/hooks/useCorrectedMatchupAnalysis.ts)
 - Suggested focus hook (`useSuggestedFocus`) — [src/lib/hooks/useSuggestedFocus.ts](../src/lib/hooks/useSuggestedFocus.ts)
 - Corrected rows (`composeCorrectedRows`) — [src/lib/matchup/correctedRows.ts](../src/lib/matchup/correctedRows.ts)
@@ -111,6 +112,26 @@ One-line synthesis. Reads from L5; never picks categories independently.
 
 - Boss Brief (`getBossBrief`) — [src/lib/dashboard/bossBrief.ts](../src/lib/dashboard/bossBrief.ts)
 - Lineup issues rules (`LineupIssuesCard`) — [src/components/dashboard/cards/LineupIssuesCard.tsx](../src/components/dashboard/cards/LineupIssuesCard.tsx) (orthogonal: health / eligibility checks, not matchup-state recommendations)
+
+---
+
+## Points-league engines (`src/lib/points/`)
+
+Points leagues swap the category machinery (L3 ratings, L5 matchup state, focus) for one currency — expected fantasy points — while reusing the L1 talent substrate and the shared volume/optimizer primitives. The pipeline is documented in the source headers; there is no separate detail doc yet.
+
+- Per-event rate vectors (`batterPointsRateVector`, `pitcherPointsRateVector`) — [src/lib/points/rateVector.ts](../src/lib/points/rateVector.ts) — L1-analog: per-PA / per-IP event rates dotted with the league's `ScoringProfile.weights`
+- Talent-neutral value (`batterPointsValue`, `pitcherPointsValue`) — [src/lib/points/pointsValue.ts](../src/lib/points/pointsValue.ts) — rate × role-typical weekly volume (mirrors `neutralWeek.ts` constants)
+- Schedule volume (`resolveBatterVolume`, `resolvePitcherStartVolume`, `resolveReliefVolume`) — [src/lib/points/schedule.ts](../src/lib/points/schedule.ts) — L2-analog: games / probable starts / relief pace over a day window
+- Horizon forecast (`forecastBatterPoints`, `forecastPitcherPoints`) — [src/lib/points/forecast.ts](../src/lib/points/forecast.ts) — L4-analog: rate × resolved volume, no new math
+- Daily lineup optimizer (`optimizePointsLineup`) — [src/lib/points/lineupOptimizer.ts](../src/lib/points/lineupOptimizer.ts) — reuses the shared Hungarian `optimizeLineup` with a points day-score
+- Week write-optimizer (`optimizePointsWeek`, `optimizePointsWeekly`) — [src/lib/points/optimizeWeek.ts](../src/lib/points/optimizeWeek.ts) — server-side optimize + Yahoo write; daily cadence loops remaining days, weekly cadence does one week-sum solve written for next Monday
+- Replacement / VOR (`replacementByPosition`, `valueOverReplacement`) — [src/lib/points/replacement.ts](../src/lib/points/replacement.ts) — L6-analog: 3rd-best-FA floor per position
+- Suggested swaps (`recommendSwaps`) — [src/lib/points/moves.ts](../src/lib/points/moves.ts) — L6-analog: drop → add upgrades by weekly gain
+- Team analysis orchestrator (`analyzePointsTeam`) — [src/lib/points/analyzeTeam.ts](../src/lib/points/analyzeTeam.ts) — single entry point behind `/api/points/team`
+- Streaming analysis (`analyzePointsStreaming`) — [src/lib/points/streaming.ts](../src/lib/points/streaming.ts) — per-day slot coverage (via the lineup optimizer), FA pitcher starts ranked by matchup-adjusted expected points, FA bats ranked by exact marginal lineup gain; cadence-aware (daily plug window vs weekly locked-lineup next-week window); behind `/api/points/streaming`. See [streaming-page.md](./streaming-page.md#points-league-view).
+- Matchup-adjusted points rates (`adjustedBatterPointsPerPA`, `adjustedPitcherStartPoints`, `meanTeamOffense`) — [src/lib/points/matchupAdjust.ts](../src/lib/points/matchupAdjust.ts) — L2-analog, the designed swap-in day scorer. NO new matchup math: batters re-dot the canonical `buildBatterForecast` adjusted rates (park / platoon / opp staff / weather) with the league weights; pitchers apply the `buildGameForecast` context-vs-neutral RATIO to the talent-anchored per-start baseline, with the neutral twin anchored to the slate-mean offense (the static `teams.ts` league anchors are calibrated for the relative 0–100 scale, not absolute points — a stale anchor showed up as a +12% systematic pitcher boost before the slate-mean fix).
+
+Matchup-adjustment boundary (deliberate): applied ONLY to day/week lineup-decision scorers — lineup day scores (`analyzeTeam` / `optimizeWeek` / client `lineupScoring`), streaming coverage / plugs / per-start stream points. Roster-construction values (`weeklyPoints`, VOR, `thisWeekPoints`, suggested season swaps) stay talent-neutral, matching the roster page's matchup-vacuum philosophy: park context tells you who to START this week, not who to OWN.
 
 ---
 

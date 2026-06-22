@@ -1,13 +1,13 @@
 'use client';
 
 import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
-import PointsComingSoon from '@/components/points/PointsComingSoon';
+import PointsStreamingManager from './PointsStreamingManager';
 import StreamingManager from './StreamingManager';
 
-/** Routes /streaming by active-league mode. Points view is follow-up. */
+/** Routes /streaming by active-league mode. */
 export default function StreamingModeRouter() {
   const { mode, isLoading, leagueKey } = useActiveLeague();
   if (isLoading && !leagueKey) return null;
-  if (mode === 'points') return <PointsComingSoon page="Streaming" />;
+  if (mode === 'points') return <PointsStreamingManager />;
   return <StreamingManager />;
 }

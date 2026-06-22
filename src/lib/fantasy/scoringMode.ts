@@ -23,3 +23,17 @@ export const HEAD_TO_HEAD_SCORING_TYPES = new Set(['head', 'headpoint']);
 export function scoringModeForType(scoringType: string | undefined | null): ScoringMode {
   return scoringType && POINTS_SCORING_TYPES.has(scoringType) ? 'points' : 'categories';
 }
+
+export type LineupCadence = 'daily' | 'weekly';
+
+/**
+ * Map Yahoo's league `weekly_deadline` to a lineup cadence. Yahoo reports
+ * `'intraday'` (or empty) for daily-lineup leagues and a day value (e.g. `'1'`
+ * = Monday) for leagues whose lineups lock for the whole week. Weekly cadence
+ * flips every points decision horizon to NEXT week — pickups and lineup
+ * changes can't take effect mid-week.
+ */
+export function lineupCadenceForDeadline(weeklyDeadline: string | undefined | null): LineupCadence {
+  if (!weeklyDeadline || weeklyDeadline === 'intraday') return 'daily';
+  return 'weekly';
+}

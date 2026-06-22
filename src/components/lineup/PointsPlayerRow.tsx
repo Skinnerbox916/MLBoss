@@ -67,11 +67,22 @@ export default function PointsPlayerRow({
       expanded={expanded}
       onToggle={() => setExpanded(e => !e)}
     >
-      <div className="grid grid-cols-4 gap-3 px-3 py-3 bg-surface-muted/30 border-t border-border-muted">
-        <StatCard label="today" value={score.today.toFixed(1)} />
-        <StatCard label="pts/G" value={score.perGame.toFixed(1)} />
-        <StatCard label="pts/wk" value={score.weekly.toFixed(0)} />
-        <StatCard label="slot" value={player.selected_position} />
+      <div className="px-3 py-3 bg-surface-muted/30 border-t border-border-muted space-y-2">
+        <div className="grid grid-cols-4 gap-3">
+          <StatCard label="today" value={score.today.toFixed(1)} />
+          <StatCard label="pts/G" value={score.perGame.toFixed(1)} />
+          <StatCard label="pts/wk" value={score.weekly.toFixed(0)} />
+          <StatCard label="slot" value={player.selected_position} />
+        </div>
+        {/* Today = pts/G nudged by the matchup; show the why when it moved. */}
+        {Math.abs(score.matchup.multiplier - 1) >= 0.02 && (
+          <div className="flex items-baseline gap-2 text-[11px] font-mono">
+            <span className={score.matchup.multiplier >= 1 ? 'text-success font-bold' : 'text-error font-bold'}>
+              {score.matchup.multiplier >= 1 ? '+' : ''}{Math.round((score.matchup.multiplier - 1) * 100)}% matchup
+            </span>
+            {score.matchup.hint && <span className="text-muted-foreground truncate">{score.matchup.hint}</span>}
+          </div>
+        )}
       </div>
     </PlayerRowShell>
   );

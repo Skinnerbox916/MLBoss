@@ -4,8 +4,6 @@ import type { MLBGame, ParkData, PlayerStatLine } from '@/lib/mlb/types';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
-import { computeBatterSitValue } from './sitValue';
-import { expectedPAperGame } from '@/lib/projection/batterTeam';
 import { optimizeLineup } from './optimize';
 
 const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
@@ -28,20 +26,6 @@ export interface OptimizeWeekDeps {
    * enough that we don't refetch per date.
    */
   getPlayerLine: (name: string, teamAbbr: string) => PlayerStatLine | null;
-  /**
-   * When true, each day is optimized on net matchup-value (sit-for-ratio)
-   * instead of the composite rating, and a starting slot may be left empty
-   * rather than start a net-harmful bat. Set by LineupManager only when the
-   * game plan is sit-worthy (punted counting + chased K/AVG). See
-   * [sitValue.ts](./sitValue.ts).
-   */
-  sitForRatio?: boolean;
-  /**
-   * AVG dilution anchor for the sit-value calc: `oppAvg` is the opponent's
-   * projected team AVG (the bar to beat), `myWeekAB` my projected AB volume.
-   * Counting + K terms work without it; AVG is skipped when absent.
-   */
-  avgAnchor?: { oppAvg: number; myWeekAB: number };
 }
 
 export interface DayResult {
@@ -182,27 +166,16 @@ async function optimizeOneDay(
       categoryWeights: deps.categoryWeights,
       battingOrder: p.batting_order,
     });
-    if (deps.sitForRatio) {
-      // Net matchup-value: doubleheaders double expectedPA (and thus both
-      // harm and value), so no separate DH boost — a net-harmful DH bat
-      // should be benched harder, not force-started.
-      const gameCount = dhTeams.has(abbr) ? 2 : 1;
-      const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
-      return computeBatterSitValue({
-        rating,
-        expectedPA,
-        avgAnchor: deps.avgAnchor,
-        categoryWeights: deps.categoryWeights,
-      }).net;
-    }
     const boost = dhTeams.has(abbr) ? DH_BOOST : 0;
     return boost + rating.score / 100;
   };
 
+  // Optimize Week always fills the lineup. The endgame sit plan
+  // (`computeSitPlan`) is a today-only decision made on the lineup page —
+  // pre-benching a future day from today's margins would spend information
+  // we don't have yet, and each day gets re-decided daily anyway.
   const slotDefs = buildBattingSlots(deps.rosterPositions);
-  const overrides = optimizeLineup(slotDefs, roster, getScore, {
-    allowEmpty: deps.sitForRatio ?? false,
-  });
+  const overrides = optimizeLineup(slotDefs, roster, getScore);
 
   if (overrides.size === 0) {
     return { date, saved: false, changeCount: 0 };

@@ -1,6 +1,11 @@
 import { useFantasyContext, type FantasyLeagueContext } from './useFantasyContext';
 import { useActiveLeagueKey } from './activeLeagueStore';
-import { scoringModeForType, type ScoringMode } from '@/lib/fantasy/scoringMode';
+import {
+  scoringModeForType,
+  lineupCadenceForDeadline,
+  type ScoringMode,
+  type LineupCadence,
+} from '@/lib/fantasy/scoringMode';
 
 export interface ActiveLeague {
   /** All of the user's leagues this season (for the switcher). */
@@ -11,6 +16,8 @@ export interface ActiveLeague {
   leagueName: string | undefined;
   /** Engine family for the active league — drives which UI a page renders. */
   mode: ScoringMode;
+  /** Daily lineup changes vs lineups locked for the week (Yahoo `weekly_deadline`). */
+  lineupCadence: LineupCadence;
   isLoading: boolean;
   isError: boolean;
 }
@@ -38,6 +45,7 @@ export function useActiveLeague(): ActiveLeague {
     scoringType: active?.scoring_type,
     leagueName: active?.league_name,
     mode: scoringModeForType(active?.scoring_type),
+    lineupCadence: lineupCadenceForDeadline(active?.weekly_deadline),
     isLoading: ctx.isLoading,
     isError: ctx.isError,
   };

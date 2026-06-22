@@ -232,7 +232,7 @@ export function optimizeLineup(
   return overrides;
 }
 
-function isInjured(p: RosterEntry): boolean {
+export function isInjured(p: RosterEntry): boolean {
   if (p.on_disabled_list) return true;
   if (p.status === 'IL' || p.status === 'IL10' || p.status === 'IL60' || p.status === 'DL' || p.status === 'NA') return true;
   if (p.selected_position === 'IL' || p.selected_position === 'IL+' || p.selected_position === 'NA') return true;

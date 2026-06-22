@@ -7,6 +7,8 @@ export interface FantasyLeagueContext {
   league_name: string;
   league_type: string;
   scoring_type: string;
+  /** Yahoo lineup deadline: '' / 'intraday' = daily; a day value = weekly. */
+  weekly_deadline?: string;
   current_week?: string;
   total_teams: number;
   is_finished?: number;

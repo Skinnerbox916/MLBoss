@@ -17,7 +17,9 @@ import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useCategoryWeights } from '@/lib/hooks/useCategoryWeights';
 import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/analysis';
 import { getBatterRating } from '@/lib/mlb/batterRating';
-import { computeBatterSitValue, isGamePlanSitWorthy } from '@/lib/lineup/sitValue';
+import { computeSitPlan, type SitPlan, type SitPlanCandidate, type SitPlanRow } from '@/lib/lineup/sitValue';
+import { isInjured } from '@/lib/lineup/optimize';
+import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
 import { expectedPAperGame } from '@/lib/projection/batterTeam';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import { optimizeWeek } from '@/lib/lineup/optimizeWeek';
@@ -40,7 +42,9 @@ function todayStr(): string {
 // rank between multiple DH players by their underlying matchup score.
 const DH_BOOST = 1000;
 
-const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
+// Score for a bat the endgame sit plan benches: below idle (-1) and below
+// the optimizer's empty-slot cost (0), so a planned sit never takes a slot.
+const SAT_SCORE = -2;
 
 interface LineupManagerProps {
   mode?: LineupMode;
@@ -55,7 +59,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // Active league (primary, or whatever the switcher selected). `leagueMode`
   // is the scoring family (categories | points); the `mode` prop is the
   // batting/pitching side.
-  const { teamKey, leagueKey, mode: leagueMode, scoringType, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
+  const { teamKey, leagueKey, mode: leagueMode, scoringType, lineupCadence, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
   const isPoints = leagueMode === 'points';
   // Per-stat point weights for client-side points scoring (points mode only).
   const { profile: pointsProfile } = useScoringProfile(leagueKey, scoringType, isPoints);
@@ -174,36 +178,17 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // and the optimizer. Idle players → 0 (sink in sort/optimize).
   const pointsScoreFor = useCallback(
     (p: RosterEntry): BatterPointsScore => {
-      if (!pointsProfile) return { today: 0, perGame: 0, weekly: 0 };
+      if (!pointsProfile) return { today: 0, perGame: 0, weekly: 0, matchup: { multiplier: 1, hint: '' } };
       const abbr = p.editorial_team_abbr.toUpperCase();
-      const gameCount = matchupIndex.get(abbr) ? (dhTeams.has(abbr) ? 2 : 1) : 0;
+      const context = matchupIndex.get(abbr) ?? null;
+      const gameCount = context ? (dhTeams.has(abbr) ? 2 : 1) : 0;
       return batterPointsScore(getPlayerLine(p.name, p.editorial_team_abbr), pointsProfile, {
         battingOrder: p.batting_order,
         gameCount,
+        context,
       });
     },
     [pointsProfile, matchupIndex, dhTeams, getPlayerLine],
-  );
-
-  // Sit-for-ratio mode. When the game plan punts counting cats and chases a
-  // ratio/K cat, a bat whose K/AVG harm outweighs the (now-worthless)
-  // counting value he'd add is worth benching — even to an empty slot. We
-  // switch the optimizer objective to net matchup-value and let it leave
-  // slots empty. Otherwise the optimizer keeps its "always fill" behavior.
-  // See docs/recommendation-system.md and src/lib/lineup/sitValue.ts.
-  // Per-cat corrected margin (positive = winning) — gates the sit-for-ratio
-  // mode so it only fires when a manageable cat is contested AND being lost,
-  // never when you're already winning (which would bench the whole lineup
-  // "to protect" a number that's already on the right side).
-  const marginByStatId = useMemo(() => {
-    const map: Record<number, number> = {};
-    for (const row of matchupAnalysis.rows) map[row.statId] = row.margin;
-    return map;
-  }, [matchupAnalysis]);
-
-  const sitForRatio = useMemo(
-    () => isGamePlanSitWorthy(batterCategoryWeights, marginByStatId),
-    [batterCategoryWeights, marginByStatId],
   );
 
   // AVG dilution anchor for the sit-value calc. The bar is the OPPONENT's
@@ -220,6 +205,80 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
       myWeekAB: myAvgRow.expectedDenom,
     };
   }, [oppProjection, myProjection]);
+
+  // Endgame sit plan — which bats (if any) the optimizer should bench today
+  // to protect a losing K/AVG race. Arms only when EVERY counting cat is
+  // decided (locked or conceded), the locks survive the benches, and each
+  // benched bat's harm clears the noise deadband. Today-only by design:
+  // future days get re-decided daily with fresh information. Empty when
+  // disarmed → the optimizer keeps its "always fill" behavior.
+  // See computeSitPlan in src/lib/lineup/sitValue.ts.
+  const sitPlan = useMemo<SitPlan>(() => {
+    const empty: SitPlan = { sits: [] };
+    if (isPoints || mode !== 'batting' || !isCorrected) return empty;
+    if (selectedDate !== todayStr()) return empty;
+    if (batterStatIds.size === 0) return empty;
+
+    // Numeric corrected totals for every scored batter cat. Bail to the
+    // always-fill behavior if any cat lacks a comparable pair — we can't
+    // verify it's safe to sacrifice what we can't see.
+    const rows: SitPlanRow[] = [];
+    for (const row of matchupAnalysis.rows) {
+      if (!batterStatIds.has(row.statId)) continue;
+      const my = parseFloat(row.myVal);
+      const opp = parseFloat(row.oppVal);
+      if (!Number.isFinite(my) || !Number.isFinite(opp)) return empty;
+      rows.push({ statId: row.statId, betterIs: row.betterIs, my, opp });
+    }
+    if (rows.length !== batterStatIds.size) return empty;
+
+    const concededSet = new Set<number>();
+    for (const id of batterStatIds) {
+      if (isConceded(id)) concededSet.add(id);
+    }
+
+    // Movable game-day batters — mirrors the optimizer's own movable set
+    // (editable, not injured, not NS) so the plan never benches someone
+    // the Hungarian can't move.
+    const candidates: SitPlanCandidate[] = [];
+    for (const p of roster) {
+      if (isPitcher(p)) continue;
+      if (!p.is_editable || isInjured(p) || p.starting_status === 'NS') continue;
+      const abbr = p.editorial_team_abbr.toUpperCase();
+      const context = matchupIndex.get(abbr) ?? null;
+      if (!context) continue;
+      const rating = getBatterRating({
+        context,
+        stats: getPlayerLine(p.name, p.editorial_team_abbr),
+        scoredCategories: scoredBatterCategories,
+        categoryWeights: batterCategoryWeights,
+        battingOrder: p.batting_order,
+      });
+      const gameCount = dhTeams.has(abbr) ? 2 : 1;
+      candidates.push({
+        key: p.player_key,
+        name: p.name,
+        rating,
+        expectedPA: expectedPAperGame(p.batting_order) * gameCount,
+      });
+    }
+    if (candidates.length === 0) return empty;
+
+    const finished = getMatchupWeekDays().filter(d => !d.isRemaining).length;
+    return computeSitPlan({
+      rows,
+      concededSet,
+      candidates,
+      avgAnchor,
+      daysElapsed: finished + 0.5,
+    });
+  }, [
+    isPoints, mode, isCorrected, selectedDate, batterStatIds, matchupAnalysis,
+    isConceded, roster, matchupIndex, dhTeams, getPlayerLine,
+    scoredBatterCategories, batterCategoryWeights, avgAnchor,
+  ]);
+
+  const satKeys = useMemo(() => new Set(sitPlan.sits.map(s => s.key)), [sitPlan]);
 
   // Optimizer score. A player with a rough matchup is still strictly better
   // than a player who isn't playing at all — we want the counting stats.
@@ -239,32 +298,26 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         categoryWeights: batterCategoryWeights,
         battingOrder: p.batting_order,
       });
-      if (sitForRatio) {
-        // Net matchup-value: doubleheaders double expectedPA (so both harm
-        // and value double) — no DH boost, since a net-harmful DH bat should
-        // be benched harder, not force-started.
-        const gameCount = dhTeams.has(abbr) ? 2 : 1;
-        const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
-        return computeBatterSitValue({ rating, expectedPA, avgAnchor, categoryWeights: batterCategoryWeights }).net;
-      }
       const dhBoost = dhTeams.has(abbr) ? DH_BOOST : 0;
       return dhBoost + rating.score / 100;
     },
-    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, batterCategoryWeights, sitForRatio, avgAnchor],
+    [matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, batterCategoryWeights],
   );
 
   // Score the optimizer/grid consumes — points or categories. Idle players
   // collapse to -1 so any real game wins a slot (mirrors the categories
-  // no-game handling).
+  // no-game handling). Planned sits collapse below idle AND below the empty
+  // slot (cost 0), so the Hungarian benches them and leaves the slot open.
   const gridGetPlayerScore = useCallback(
-    (p: { name: string; editorial_team_abbr: string; batting_order: number | null }) => {
+    (p: { player_key: string; name: string; editorial_team_abbr: string; batting_order: number | null }) => {
       if (isPoints) {
         const s = pointsScoreFor(p as RosterEntry);
         return s.today > 0 ? s.today : -1;
       }
+      if (satKeys.has(p.player_key)) return SAT_SCORE;
       return getPlayerScore(p);
     },
-    [isPoints, pointsScoreFor, getPlayerScore],
+    [isPoints, pointsScoreFor, getPlayerScore, satKeys],
   );
 
   // Optimize-week state. Runs the optimizer for every remaining day in the
@@ -315,8 +368,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           scoredBatterCategories,
           categoryWeights: batterCategoryWeights,
           getPlayerLine,
-          sitForRatio,
-          avgAnchor,
         },
         (date, i, total) => {
           setWeekStatus(`Optimizing ${date} (${i + 1}/${total})…`);
@@ -335,40 +386,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, sitForRatio, avgAnchor, isPoints, leagueKey, scoringType]);
-
-  // Sit-for-ratio advisory: today's batters who are in a starting slot but
-  // whose net matchup-value is negative — the optimizer will bench these to
-  // protect the chased ratio/K cats. This is the one-line justification for
-  // an action the algorithm takes, not a diagnostic the user has to scan.
-  const sitCandidates = useMemo(() => {
-    if (!sitForRatio || mode !== 'batting') return [];
-    const out: { key: string; name: string; net: number; reasons: string[] }[] = [];
-    for (const p of roster) {
-      if (isPitcher(p)) continue;
-      if (RESERVE_POSITIONS.has(p.selected_position)) continue; // already benched
-      const abbr = p.editorial_team_abbr.toUpperCase();
-      const context = matchupIndex.get(abbr) ?? null;
-      if (!context) continue; // no game today — not a sit decision
-      const rating = getBatterRating({
-        context,
-        stats: getPlayerLine(p.name, p.editorial_team_abbr),
-        scoredCategories: scoredBatterCategories,
-        categoryWeights: batterCategoryWeights,
-        battingOrder: p.batting_order,
-      });
-      const gameCount = dhTeams.has(abbr) ? 2 : 1;
-      const expectedPA = expectedPAperGame(p.batting_order) * gameCount;
-      const sit = computeBatterSitValue({ rating, expectedPA, avgAnchor, categoryWeights: batterCategoryWeights });
-      if (!sit.shouldSit) continue;
-      const reasons = sit.perCat
-        .filter(c => c.marginDelta < 0)
-        .slice(0, 2)
-        .map(c => c.note);
-      out.push({ key: p.player_key, name: p.name, net: sit.net, reasons });
-    }
-    return out.sort((a, b) => a.net - b.net);
-  }, [sitForRatio, mode, roster, matchupIndex, dhTeams, getPlayerLine, scoredBatterCategories, batterCategoryWeights, avgAnchor]);
+  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, isPoints, leagueKey, scoringType]);
 
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
@@ -382,6 +400,9 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   const gridHeading = mode === 'pitching' ? 'Current Staff' : 'Current Lineup';
 
   const showWeekButton = mode === 'batting' && !!teamKey;
+  // Weekly-cadence points leagues lock lineups Monday: the server writes ONE
+  // week-sum-optimal lineup dated next Monday instead of a per-day loop.
+  const isWeeklyPoints = isPoints && lineupCadence === 'weekly';
   const weekButton = showWeekButton ? (
     <div className="flex flex-col items-end gap-1">
       <button
@@ -389,9 +410,11 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         onClick={handleOptimizeWeek}
         disabled={weekRunning}
         className="px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed whitespace-nowrap"
-        title="Optimize lineup for every remaining day this fantasy week (Mon–Sun)"
+        title={isWeeklyPoints
+          ? 'Lineups lock for the week — set the optimal lineup for next Mon–Sun'
+          : 'Optimize lineup for every remaining day this fantasy week (Mon–Sun)'}
       >
-        {weekRunning ? 'Optimizing…' : 'Optimize Week'}
+        {weekRunning ? 'Optimizing…' : isWeeklyPoints ? "Set Next Week's Lineup" : 'Optimize Week'}
       </button>
       {weekStatus && (
         <Text variant="caption">{weekStatus}</Text>
@@ -441,17 +464,18 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         />
       )}
 
-      {/* Sit-for-ratio advisory — only when the game plan punts counting and
-          chases a ratio/K cat. Explains who the optimizer will bench (to an
-          empty slot if needed) and why. */}
-      {!isPoints && mode === 'batting' && sitCandidates.length > 0 && (
+      {/* Endgame sit advisory — only when every counting cat is decided and
+          a K/AVG race is live. Explains who Optimize will bench (leaving the
+          slot empty) and why, straight from the same plan the optimizer
+          executes, so the action and the explanation can't disagree. */}
+      {!isPoints && mode === 'batting' && sitPlan.sits.length > 0 && (
         <Panel className="border-l-4 border-l-accent/70">
-          <Heading as="h3" className="text-sm">Sit to protect ratios</Heading>
+          <Heading as="h3" className="text-sm">Endgame: sit to flip the ratio race</Heading>
           <Text variant="caption" className="text-muted-foreground">
-            Counting cats are locked/punted, so these starters cost you more in K/AVG than they add. Optimize will bench them — leaving the slot empty if you have no better bat.
+            Every counting category is already decided, so these bats cost more in the live K/AVG race than their production adds. Optimize will bench them and leave the slot open.
           </Text>
           <ul className="mt-2 space-y-1">
-            {sitCandidates.map(c => (
+            {sitPlan.sits.map(c => (
               <li key={c.key} className="text-sm">
                 <span className="font-semibold">{c.name}</span>
                 {c.reasons.length > 0 && (
@@ -517,7 +541,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               rosterPositions={rosterPositions}
               onSaved={() => mutateRoster()}
               getPlayerScore={gridGetPlayerScore}
-              allowEmptyOnOptimize={sitForRatio}
+              allowEmptyOnOptimize={satKeys.size > 0}
             />
           </Panel>
         </div>

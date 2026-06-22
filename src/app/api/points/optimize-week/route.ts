@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getScoringProfile, invalidateCachePattern, CACHE_CATEGORIES } from '@/lib/fantasy';
-import { optimizePointsWeek } from '@/lib/points/optimizeWeek';
+import { getScoringProfile, getLineupCadence, invalidateCachePattern, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { optimizePointsWeek, optimizePointsWeekly } from '@/lib/points/optimizeWeek';
 
 /**
  * POST /api/points/optimize-week
  * Body: { teamKey, leagueKey, scoringType }
  *
- * Sets the optimal points lineup in Yahoo for every remaining day of the
- * current fantasy week. Mutation — only the team owner's session can write.
- * 400s for non-points leagues.
+ * Sets the optimal points lineup in Yahoo. Daily-cadence leagues: one write
+ * per remaining day of the current week. Weekly-cadence leagues (lineups
+ * lock Monday): one week-sum optimization written for next Monday. Cadence
+ * is derived server-side from the league's `weekly_deadline`. Mutation —
+ * only the team owner's session can write. 400s for non-points leagues.
  */
 export async function POST(request: Request) {
   try {
@@ -32,7 +34,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `League ${leagueKey} is ${profile.mode}, not points` }, { status: 400 });
     }
 
-    const result = await optimizePointsWeek(user.id, leagueKey, teamKey, profile);
+    const cadence = await getLineupCadence(user.id, leagueKey);
+    const result = cadence === 'weekly'
+      ? await optimizePointsWeekly(user.id, leagueKey, teamKey, profile)
+      : await optimizePointsWeek(user.id, leagueKey, teamKey, profile);
 
     // The week's lineups changed → drop the cached team analysis so the
     // dashboard / roster / pitchers tab reflect the new lineup immediately.

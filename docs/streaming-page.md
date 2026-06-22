@@ -226,6 +226,29 @@ The reason: we don't project K/9 / BB/9 / H/9 separately. Ratio fidelity for tho
 
 For batter AVG, the blend works in mid-week (batters' AB is recoverable from H / AVG) and reduces to a clean projected AVG in pivot mode (`projected H / projected AB`). See [recommendation-system.md](./recommendation-system.md) for the matchup-margin engine details.
 
+## Points-league view
+
+Points leagues get a different /streaming experience ([StreamingModeRouter](../src/components/streaming/StreamingModeRouter.tsx) → [PointsStreamingManager](../src/components/streaming/PointsStreamingManager.tsx)). There are no categories to chase or punt, so everything above about category fit, GamePlanPanel, and the Volume Gap does **not** apply; the points page is built on a strategy premise instead: *in points, streaming is volume*. A pitcher start is found points (worth ~2–3 batter-games), and a starting batter slot that sits empty on a light schedule day is foregone points.
+
+Engine: `analyzePointsStreaming` ([src/lib/points/streaming.ts](../src/lib/points/streaming.ts)), served by `/api/points/streaming` (cached semi-dynamic as a unit, like points-team). Same pickup window and Sunday pivot as the categories board (`getPickupPlayableDays`). Three outputs:
+
+- **Coverage by day** — per playable day, how many starting batter slots the roster fills with a bat that actually plays, computed by the Phase 3 Hungarian lineup optimizer (a max-points assignment with per-player scores is also a max-coverage assignment). Open slots per day, with position labels.
+- **Pitcher streams** — FA/waiver arms matched to probables (same `isLikelySamePlayer` matching as above), ranked by **matchup-adjusted** expected points per start: the talent-neutral baseline (Phase 1 rate × Phase 2 volume) scaled by the `buildGameForecast` context-vs-neutral ratio (opposing offense vs the slate mean, park, weather). A streamable arm at Coors against a strong offense now ranks below his volume; per-start hints name the driver ("weak offense (0.681 OPS)").
+- **Batter plugs** — FA bats ranked by **exact marginal gain**: the engine re-solves the optimal lineup with the bat added for each day he plays, so eligibility and displacement chains are handled by the optimizer, not heuristics. Filling an otherwise-empty slot credits his full day value; upgrading over a current starter credits only the delta. Day values are matchup-adjusted via `adjustedBatterPointsPerPA` ([matchupAdjust.ts](../src/lib/points/matchupAdjust.ts) — canonical L2 `buildBatterForecast` rates re-dotted with the league weights), so a Coors series or an SB-permissive opposing staff is priced in; chips carry the hint.
+
+The header is [PointsWeekPlan](../src/components/streaming/PointsWeekPlan.tsx): weekly moves budget (`getMovesBudget` — league cap + `roster_adds` used, via `/api/fantasy/moves` / `useMovesBudget`, falls back to the Yahoo-default 6 cap), open slot-days, my remaining SP starts, and the day-by-day coverage strip. Advice does not yet pivot on moves-left (display only — follow-up).
+
+### Weekly lineup cadence
+
+Leagues whose lineups lock for the week (Yahoo `weekly_deadline` ≠ ''/'intraday'; detected by `lineupCadenceForDeadline` in [scoringMode.ts](../src/lib/fantasy/scoringMode.ts), derived server-side per league by `getLineupCadence`) invert the streaming frame from "what can I still change" to "what am I about to lock in":
+
+- **Window** = the full next Mon–Sun (a pickup can't play sooner). ESPN's projected starters cover ~80–100% of pitcher slots 9 days out, so full-next-week start counts — including two-start weeks — are real, not just posted probables.
+- **Coverage** = idle slot-days of the optimal *week-sum* lineup (one Hungarian solve over rate × all next week's games — schedule density is part of every bat's value). An idle day is a baked-in zero, not a pluggable hole.
+- **Batter value** = one week-sum marginal re-solve per FA (`totalGain`), with `gameDays` chips showing his schedule instead of per-day plug marginals. A 7-game mediocre bat correctly outranks a 6-game better one when the marginal says so.
+- **Lineup write** = `optimizePointsWeekly` ([optimizeWeek.ts](../src/lib/points/optimizeWeek.ts)): one optimization, one `setTeamRoster` dated next Monday. The `/api/points/optimize-week` route branches on the server-derived cadence.
+
+The `cadence` query param on `/api/points/streaming` overrides detection for smoke testing. **The weekly roster WRITE path is not yet validated against a live weekly league** (no test league available); the first weekly-league user is the validation path.
+
 ## What lives elsewhere
 
 - **Today page** ([TodayPitchers.tsx](../src/components/lineup/TodayPitchers.tsx)) handles the daily sit/start decision for **rostered** pitchers. No streaming logic, pills, composite score, or date strip — those belong here.

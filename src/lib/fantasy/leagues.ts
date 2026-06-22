@@ -1,5 +1,6 @@
 import { YahooFantasyAPI, League, Team } from '@/lib/yahoo-fantasy-api';
 import { withCache, withCacheGated, CACHE_CATEGORIES } from './cache';
+import { lineupCadenceForDeadline, type LineupCadence } from './scoringMode';
 
 // ---------------------------------------------------------------------------
 // Result types — discriminated union so consumers can handle failures
@@ -26,6 +27,8 @@ export interface LeagueAnalysisEntry {
   league_name: string;
   league_type: string;
   scoring_type: string;
+  /** Yahoo lineup deadline: '' / 'intraday' = daily; a day value = weekly. */
+  weekly_deadline?: string;
   total_teams: number;
   user_team: {
     team_key: string;
@@ -85,6 +88,17 @@ export async function getUserLeagues(userId: string): Promise<League[]> {
     CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
     () => new YahooFantasyAPI(userId).getUserLeagues(),
   );
+}
+
+/**
+ * Authoritative lineup cadence for a league, derived server-side from the
+ * Yahoo `weekly_deadline` league setting (via the cached league list). Routes
+ * that branch daily-vs-weekly behavior use this rather than trusting a client
+ * param.
+ */
+export async function getLineupCadence(userId: string, leagueKey: string): Promise<LineupCadence> {
+  const leagues = await getUserLeagues(userId);
+  return lineupCadenceForDeadline(leagues.find(l => l.league_key === leagueKey)?.weekly_deadline);
 }
 
 /**
@@ -176,6 +190,7 @@ async function computeUserFantasyLeagues(
             league_name: league.name,
             league_type: league.league_type,
             scoring_type: league.scoring_type,
+            weekly_deadline: league.weekly_deadline,
             total_teams: teams.length,
             user_team: userTeam
               ? {
@@ -198,6 +213,7 @@ async function computeUserFantasyLeagues(
             league_name: league.name,
             league_type: league.league_type,
             scoring_type: league.scoring_type,
+            weekly_deadline: league.weekly_deadline,
             total_teams: 0,
             user_team: null,
             draft_status: league.draft_status,

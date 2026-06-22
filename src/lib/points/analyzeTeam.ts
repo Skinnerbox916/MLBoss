@@ -26,8 +26,10 @@ import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 import type { EnrichedGame } from '@/lib/mlb/types';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
+import { resolveMatchup } from '@/lib/mlb/analysis';
 import { getPointsPitcherInputs } from './pitcherInputs';
-import { batterPointsValue, pitcherPointsValue, batterPointsPerPA } from './pointsValue';
+import { batterPointsValue, pitcherPointsValue } from './pointsValue';
+import { adjustedBatterPointsPerPA } from './matchupAdjust';
 import { resolveBatterVolume, resolvePitcherStartVolume, resolveReliefVolume } from './schedule';
 import { forecastBatterPoints, forecastPitcherPoints } from './forecast';
 import { replacementByPosition, valueOverReplacement, primaryPosition } from './replacement';
@@ -242,7 +244,14 @@ export async function analyzePointsTeam(
       const posted = pl.batting_order;
       const spot = posted && posted >= 1 && posted <= 9 ? posted : (lineupSpots.get(stats.mlbId) ?? null);
       const vol = resolveBatterVolume(pl.editorial_team_abbr, spot, gamesByDate, [targetDay]);
-      return batterPointsPerPA(stats, profile) * vol.expectedPA;
+      if (vol.expectedPA <= 0) return 0;
+      // Day score is matchup-adjusted (park / platoon / opp staff); the
+      // weekly/VOR values above stay talent-neutral by design.
+      const ctx = resolveMatchup(gamesByDate.get(targetDay.date) ?? [], null, pl.editorial_team_abbr, {
+        hand: stats.bats ?? null,
+        battingOrder: spot,
+      });
+      return adjustedBatterPointsPerPA(stats, profile, ctx, spot).pointsPerPA * vol.expectedPA;
     };
     const base = optimizePointsLineup(roster as RosterEntry[], rosterPositions, getDayPoints);
 

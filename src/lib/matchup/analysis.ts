@@ -140,7 +140,7 @@ export interface MatchupAnalysis {
   lockedCount: number;
 }
 
-const LOCKED_THRESHOLD = 0.7;
+export const LOCKED_THRESHOLD = 0.7;
 
 /**
  * Does this row carry enough signal to drive a recommendation?

@@ -81,8 +81,10 @@ function rate(stats: BatterSeasonStats, statId: number): number {
  *   nonHR_TB = 1B + 2·2B + 3·3B
  * ⇒ 2B = nonHR_TB − nonHR_H − 2·3B ;  1B = nonHR_H − 2B − 3B
  * Clamps keep noisy inputs from producing negative rates.
+ * Exported for `matchupAdjust.ts`, which re-decomposes from matchup-adjusted
+ * H/TB/HR so hit types inherit park/SP/platoon through the aggregates.
  */
-function decomposeHits(hPerPA: number, tbPerPA: number, hrPerPA: number) {
+export function decomposeHits(hPerPA: number, tbPerPA: number, hrPerPA: number) {
   const nonHrH = Math.max(0, hPerPA - hrPerPA);
   const nonHrTb = Math.max(0, tbPerPA - 4 * hrPerPA);
   const triples = Math.min(LEAGUE_3B_PER_PA, nonHrH);
@@ -253,6 +255,7 @@ export function pitcherPointsRateVector(
 export const POINTS_RATE_CONSTANTS = {
   LEAGUE_3B_PER_PA,
   LEAGUE_HBP_PER_PA,
+  LEAGUE_PITCHER_HBP_PER_PA,
   BASE_P_WIN_PER_START,
   W_QUALITY_SLOPE,
   W_DEPTH_SLOPE,

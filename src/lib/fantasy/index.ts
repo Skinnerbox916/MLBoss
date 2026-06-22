@@ -33,6 +33,7 @@ export {
   getCurrentMLBGameKey,
   getUserLeagues,
   getLeagueTeams,
+  getLineupCadence,
   checkUserFantasyAccess,
   analyzeUserFantasyLeagues,
 } from './leagues';
@@ -59,8 +60,8 @@ export {
   getLeagueRosterPositions,
 } from './roster';
 
-export { getLeagueLimits } from './limits';
-export type { LeagueLimits } from './limits';
+export { getLeagueLimits, getMovesBudget } from './limits';
+export type { LeagueLimits, MovesBudget } from './limits';
 
 export { getLeagueTransactions } from './transactions';
 

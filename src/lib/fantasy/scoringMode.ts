@@ -37,3 +37,30 @@ export function lineupCadenceForDeadline(weeklyDeadline: string | undefined | nu
   if (!weeklyDeadline || weeklyDeadline === 'intraday') return 'daily';
   return 'weekly';
 }
+
+/**
+ * When does a roster add/drop made *now* first take effect? Yahoo's three
+ * roster-change modes, keyed off `weekly_deadline` (verified against a live
+ * next-day and immediate league — see docs/yahoo-api-reference.md#roster-change-timing):
+ *
+ *   - `'intraday'`     → **immediate** (Daily-Today): players lock at their
+ *                        own game time; a pickup can play in today's not-yet-
+ *                        started games.
+ *   - `''` / undefined → **next-day** (Daily-Tomorrow): the nightly 11:59pm PT
+ *                        deadline; today's roster is locked, a pickup plays
+ *                        tomorrow. This is the app's historical assumption, so
+ *                        an unknown value defaults here (conservative).
+ *   - day number (`'1'`…) → **weekly**: the whole lineup locks for the week;
+ *                        a pickup can't play until next week.
+ *
+ * `edit_key` (the earliest roster date the API will currently let you edit) is
+ * the authoritative *date* — this enum is for labeling and as the fallback
+ * when `edit_key` is unavailable. See `resolveEarliestPlayableDate`.
+ */
+export type RosterMoveTiming = 'immediate' | 'next-day' | 'weekly';
+
+export function moveTimingForDeadline(weeklyDeadline: string | undefined | null): RosterMoveTiming {
+  if (weeklyDeadline === 'intraday') return 'immediate';
+  if (!weeklyDeadline) return 'next-day'; // '' or undefined
+  return 'weekly';
+}

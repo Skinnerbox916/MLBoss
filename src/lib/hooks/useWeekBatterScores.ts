@@ -44,12 +44,11 @@ interface UseWeekBatterScoresResult {
  * Filtering: callers should filter the FA pool upstream (ownership floor,
  * IL exclusions, etc.). The hook scores everyone passed in.
  *
- * Time window: the projection iterates `getPickupPlayableDays()`, which is
- * tomorrow through Sunday on Mon-Sat and the full next Mon-Sun on Sunday.
- * A streamer added today doesn't enter a roster until the next calendar
- * day, so today is always excluded from the value calculation. The grid
- * for game-day fetches is `getStreamingGridDays()` — same shape (7 days)
- * but rolled forward to next week on Sunday.
+ * Time window: the projection iterates `getPickupPlayableDays(now,
+ * earliestPlayableDate)`, floored at the league's earliest playable date —
+ * today for immediate leagues (games not yet started), tomorrow→Sunday for
+ * next-day leagues, full next Mon-Sun on Sunday / weekly. The grid for
+ * game-day fetches is `getStreamingGridDays()` — same shape (7 days).
  *
  * Performance: ~100 FAs × ~5 remaining days × pure-CPU rating call —
  * runs in well under a second in a typical browser.
@@ -58,9 +57,10 @@ export function useWeekBatterScores(
   faPool: FreeAgentPlayer[],
   scoredCategories: EnrichedLeagueStatCategory[],
   categoryWeights?: Record<number, number>,
+  earliestPlayableDate?: string,
 ): UseWeekBatterScoresResult {
-  const gridDays = useMemo(() => getStreamingGridDays(), []);
-  const playableDays = useMemo(() => getPickupPlayableDays(), []);
+  const gridDays = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
+  const playableDays = useMemo(() => getPickupPlayableDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
 
   // Stable hook order: always seven `useGameDay` calls regardless of how
   // many days are playable. Filtering happens in the projection deps.

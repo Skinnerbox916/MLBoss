@@ -3,8 +3,9 @@
  * /streaming. In a points league the streaming game is pure volume: every
  * pitcher start is found points, and every starting batter slot that sits
  * empty on a light schedule day is foregone points. This module answers the
- * page's three questions over the pickup-playable window (tomorrow → end of
- * the matchup week, Sunday-pivoted like the categories board):
+ * page's three questions over the pickup-playable window (floored at the
+ * league's earliest playable date — today for immediate leagues, tomorrow for
+ * next-day — and Sunday-pivoted like the categories board):
  *
  *   1. Coverage — per day, how many starting batter slots can my roster
  *      actually fill with a bat that plays? (Reuses the Phase 3 Hungarian
@@ -201,13 +202,16 @@ export async function analyzePointsStreaming(
   leagueKey: string,
   teamKey: string,
   profile: ScoringProfile,
-  opts: { cadence?: LineupCadence } = {},
+  opts: { cadence?: LineupCadence; earliestPlayableDate?: string } = {},
 ): Promise<PointsStreamingAnalysis> {
   const cadence = opts.cadence ?? 'daily';
-  // Weekly lineups lock Monday: the only week a pickup can affect is the
-  // full next Mon–Sun. Daily keeps the pickup-playable window (tomorrow →
-  // Sunday, with the Sunday pivot).
-  const days = cadence === 'weekly' ? getWeekDays(new Date(), 'next') : getPickupPlayableDays(new Date());
+  // Weekly lineups lock Monday: the only week a pickup can affect is the full
+  // next Mon–Sun. Daily uses the pickup-playable window floored at the
+  // league's earliest playable date — today for immediate (Daily-Today)
+  // leagues, tomorrow for next-day, Sunday-pivoted at week's end.
+  const days = cadence === 'weekly'
+    ? getWeekDays(new Date(), 'next')
+    : getPickupPlayableDays(new Date(), opts.earliestPlayableDate);
   const today = new Date().toISOString().slice(0, 10);
   const rosterDate = cadence === 'weekly' ? days[0].date : today;
 

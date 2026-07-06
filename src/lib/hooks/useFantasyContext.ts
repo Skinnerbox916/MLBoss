@@ -9,6 +9,8 @@ export interface FantasyLeagueContext {
   scoring_type: string;
   /** Yahoo lineup deadline: '' / 'intraday' = daily; a day value = weekly. */
   weekly_deadline?: string;
+  /** Earliest editable roster date (YYYY-MM-DD) — when a move made now hits. */
+  edit_key?: string;
   current_week?: string;
   total_teams: number;
   is_finished?: number;

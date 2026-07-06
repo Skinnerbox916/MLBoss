@@ -19,6 +19,8 @@
  * Extendable to `'previous'` or absolute week numbers if a historical view
  * is ever needed; the union keeps the names self-documenting at call sites.
  */
+import { moveTimingForDeadline } from '@/lib/fantasy/scoringMode';
+
 export type WeekTarget = 'current' | 'next';
 
 export interface WeekDay {
@@ -126,35 +128,100 @@ function buildWeek(monday: Date, todayYmd: string): WeekDay[] {
   return days;
 }
 
-/**
- * Seven-day grid the streaming page should render and fetch game-day data
- * for. On Sunday this rolls forward to next Mon..Sun (per `isSundayPivot`)
- * because pickups made on a Sunday won't play until next Monday — the
- * current matchup is effectively closed for streaming purposes. Mon..Sat
- * returns the current matchup week (same as `getMatchupWeekDays`).
- */
-export function getStreamingGridDays(now: Date = new Date()): WeekDay[] {
-  return getWeekDays(now, isSundayPivot(now) ? 'next' : 'current');
+/** Strict YYYY-MM-DD guard — Yahoo's `edit_key` is a date string for MLB
+ *  daily leagues, but type it defensively (it's declared loosely upstream). */
+function isYmd(s: unknown): s is string {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
 /**
- * The subset of `getStreamingGridDays` where a pickup made right now CAN
- * actually play. A streamer added today doesn't enter a roster until the
- * next calendar day, so today is always excluded.
+ * The earliest calendar date a roster add made *now* can first play — the
+ * floor of the pickup-playable window. Everything about "when a move hits"
+ * flows from this one value.
  *
- *   - Mon..Sat: tomorrow through Sunday of the current matchup week
- *   - Sunday  : next Mon..Sun in full (the grid itself)
- *
- * This drives FA value calculations and the day-strip render on the
- * streaming page, where "today" is misleading: the user can't act on it.
+ * Yahoo's `edit_key` is the earliest roster date the API will currently let
+ * you edit; it already folds in the league's roster-change mode AND time-of-
+ * day game locks (it rolls to tomorrow once today's games have locked), so
+ * it's the authoritative signal. When it's missing/malformed we fall back to
+ * the move timing derived from `weekly_deadline`:
+ *   immediate → today, next-day → tomorrow, weekly → next Monday.
+ * Never returns a date before today.
  */
-export function getPickupPlayableDays(now: Date = new Date()): WeekDay[] {
-  const grid = getStreamingGridDays(now);
-  if (isSundayPivot(now)) return grid; // grid is already next Mon..Sun
+export function resolveEarliestPlayableDate(opts: {
+  now?: Date;
+  editKey?: string | null;
+  weeklyDeadline?: string | null;
+}): string {
+  const now = opts.now ?? new Date();
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const todayYmd = ymd(today);
+
+  // edit_key is authoritative when present and not in the past.
+  if (isYmd(opts.editKey) && opts.editKey >= todayYmd) return opts.editKey;
+
+  const timing = moveTimingForDeadline(opts.weeklyDeadline);
+  if (timing === 'immediate') return todayYmd;
+  if (timing === 'weekly') return ymd(targetMonday(now, 'next'));
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return ymd(tomorrow); // next-day
+}
+
+/**
+ * The app's historical window floor when no per-league signal is supplied: a
+ * pickup lands tomorrow, and on Sunday the current matchup is closed so it
+ * lands next Monday. Kept so the no-arg calls below behave exactly as before.
+ */
+function legacyFloor(now: Date): string {
+  if (isSundayPivot(now)) return ymd(targetMonday(now, 'next'));
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowYmd = ymd(tomorrow);
-  return grid.filter(d => d.date >= tomorrowYmd);
+  return ymd(tomorrow);
+}
+
+/** Which matchup week a pickup landing on `floorYmd` belongs to. */
+function weekTargetForFloor(now: Date, floorYmd: string): WeekTarget {
+  return floorYmd >= ymd(targetMonday(now, 'next')) ? 'next' : 'current';
+}
+
+/**
+ * The matchup (`current` | `next`) the streaming page should frame, given the
+ * earliest date a pickup can play. Replaces the pure day-of-week Sunday check:
+ * a next-day league still pivots on Sunday (floor = next Monday), but an
+ * immediate league whose Sunday pickup still plays Sunday stays on `current`.
+ * With no floor supplied it reproduces the old `isSundayPivot` behavior.
+ */
+export function getStreamingWeekTarget(now: Date = new Date(), earliestPlayableDate?: string): WeekTarget {
+  return weekTargetForFloor(now, earliestPlayableDate ?? legacyFloor(now));
+}
+
+/**
+ * Seven-day grid the streaming page should render and fetch game-day data
+ * for — the full Mon..Sun of whichever matchup the pickup window lands in.
+ * `earliestPlayableDate` (a pickup's floor, typically Yahoo `edit_key`)
+ * decides current vs next week; omit it for the legacy Sunday-pivot behavior.
+ */
+export function getStreamingGridDays(now: Date = new Date(), earliestPlayableDate?: string): WeekDay[] {
+  const floor = earliestPlayableDate ?? legacyFloor(now);
+  return getWeekDays(now, weekTargetForFloor(now, floor));
+}
+
+/**
+ * The subset of `getStreamingGridDays` where a pickup made right now CAN
+ * actually play — every grid day on or after the window floor.
+ *
+ *   - immediate league: today (if games remain) through Sunday
+ *   - next-day league : tomorrow through Sunday of the current matchup week
+ *   - Sunday / weekly : next Mon..Sun in full (the grid itself)
+ *
+ * With no `earliestPlayableDate` this is the historical "today excluded"
+ * behavior (floor = tomorrow, or next Monday on Sunday). Drives FA value
+ * calculations and the day-strip render.
+ */
+export function getPickupPlayableDays(now: Date = new Date(), earliestPlayableDate?: string): WeekDay[] {
+  const floor = earliestPlayableDate ?? legacyFloor(now);
+  return getStreamingGridDays(now, floor).filter(d => d.date >= floor);
 }

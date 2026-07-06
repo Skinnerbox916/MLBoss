@@ -21,7 +21,7 @@ type StreamTab = 'pitchers' | 'batters';
  * PlayerRowShell so rows match the points lineup page.
  */
 export default function PointsStreamingManager() {
-  const { leagueKey, teamKey, scoringType, lineupCadence, isError } = useActiveLeague();
+  const { leagueKey, teamKey, scoringType, lineupCadence, moveTiming, isError } = useActiveLeague();
   const { data, isLoading } = usePointsStreaming(leagueKey, teamKey, scoringType);
   const { data: moves } = useMovesBudget(leagueKey, teamKey);
   const [tab, setTab] = useState<StreamTab>('pitchers');
@@ -50,6 +50,13 @@ export default function PointsStreamingManager() {
             ? 'Lineups lock for the week — build next week’s roster: two-start arms and dense schedules win.'
             : 'Stream pitcher starts and plug open lineup days — in points, the game is volume.'}
         </p>
+        {cadence !== 'weekly' && (
+          <p className="text-xs text-accent mt-0.5">
+            {moveTiming === 'immediate'
+              ? 'Moves are immediate — today’s not-yet-started games count.'
+              : 'Moves hit tomorrow — today’s lineup is already locked.'}
+          </p>
+        )}
       </div>
 
       <PointsWeekPlan

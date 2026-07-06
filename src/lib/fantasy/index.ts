@@ -34,6 +34,7 @@ export {
   getUserLeagues,
   getLeagueTeams,
   getLineupCadence,
+  getEarliestPlayableDate,
   checkUserFantasyAccess,
   analyzeUserFantasyLeagues,
 } from './leagues';

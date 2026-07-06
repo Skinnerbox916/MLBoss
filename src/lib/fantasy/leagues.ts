@@ -1,6 +1,7 @@
 import { YahooFantasyAPI, League, Team } from '@/lib/yahoo-fantasy-api';
 import { withCache, withCacheGated, CACHE_CATEGORIES } from './cache';
 import { lineupCadenceForDeadline, type LineupCadence } from './scoringMode';
+import { resolveEarliestPlayableDate } from '@/lib/dashboard/weekRange';
 
 // ---------------------------------------------------------------------------
 // Result types — discriminated union so consumers can handle failures
@@ -29,6 +30,8 @@ export interface LeagueAnalysisEntry {
   scoring_type: string;
   /** Yahoo lineup deadline: '' / 'intraday' = daily; a day value = weekly. */
   weekly_deadline?: string;
+  /** Earliest editable roster date (YYYY-MM-DD) — when a move made now hits. */
+  edit_key?: string;
   total_teams: number;
   user_team: {
     team_key: string;
@@ -99,6 +102,22 @@ export async function getUserLeagues(userId: string): Promise<League[]> {
 export async function getLineupCadence(userId: string, leagueKey: string): Promise<LineupCadence> {
   const leagues = await getUserLeagues(userId);
   return lineupCadenceForDeadline(leagues.find(l => l.league_key === leagueKey)?.weekly_deadline);
+}
+
+/**
+ * Authoritative earliest date a pickup made now can play (YYYY-MM-DD), derived
+ * server-side from the league's Yahoo `edit_key` (falling back to
+ * `weekly_deadline`-derived timing). Routes that compute the streaming window
+ * use this rather than trusting a client-supplied date. See
+ * `resolveEarliestPlayableDate`.
+ */
+export async function getEarliestPlayableDate(userId: string, leagueKey: string): Promise<string> {
+  const leagues = await getUserLeagues(userId);
+  const league = leagues.find(l => l.league_key === leagueKey);
+  return resolveEarliestPlayableDate({
+    editKey: league?.edit_key,
+    weeklyDeadline: league?.weekly_deadline,
+  });
 }
 
 /**
@@ -191,6 +210,7 @@ async function computeUserFantasyLeagues(
             league_type: league.league_type,
             scoring_type: league.scoring_type,
             weekly_deadline: league.weekly_deadline,
+            edit_key: league.edit_key,
             total_teams: teams.length,
             user_team: userTeam
               ? {
@@ -214,6 +234,7 @@ async function computeUserFantasyLeagues(
             league_type: league.league_type,
             scoring_type: league.scoring_type,
             weekly_deadline: league.weekly_deadline,
+            edit_key: league.edit_key,
             total_teams: 0,
             user_team: null,
             draft_status: league.draft_status,

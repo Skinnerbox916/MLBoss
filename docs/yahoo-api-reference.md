@@ -185,6 +185,20 @@ GET /league/{league_key}                 # metadata
 GET /league/{league_key}/settings        # detailed rules
 ```
 
+### Roster-change timing
+
+**When a roster add/drop takes effect** (immediate vs next-day vs weekly) is not exposed as its own settings flag. Two fields on the **league metadata** object (`GET /league/{key}` → surfaced by `getUserLeagues`) encode it. Verified against a live next-day and a live immediate league — every other add/waiver setting (`waiver_type`, `waiver_rule`, `uses_faab`, `post_draft_players`, `player_pool`, `max_adds`) was identical across the two; only these differed:
+
+| `weekly_deadline` | Yahoo mode | Meaning | `edit_key` (today = Mon) |
+|---|---|---|---|
+| `""` (empty) | **Daily-Tomorrow** | Nightly 11:59pm PT deadline; a pickup plays **next day** — today's roster is locked. | tomorrow's date |
+| `"intraday"` | **Daily-Today** | No deadline; players lock at their own game time; a pickup can play in today's **not-yet-started** games. | today's date (rolls to tomorrow once all today's games lock) |
+| day number (`"1"`…) | **Weekly** | Whole lineup locks at the deadline day's first game; a pickup can't play until next week. | next Monday |
+
+**`edit_key` is the authoritative, operational signal** — it's the earliest roster date the API will *currently* let you edit, already folding in the roster-change mode **and** time-of-day game locks. Prefer it over re-deriving timing from `weekly_deadline`. It arrives as a `YYYY-MM-DD` string for MLB daily leagues (the `League.edit_key` field), not the number its historical type claimed.
+
+MLBoss maps these in `src/lib/fantasy/scoringMode.ts` (`moveTimingForDeadline` → `RosterMoveTiming`) and resolves the operational floor in `src/lib/dashboard/weekRange.ts` (`resolveEarliestPlayableDate`). See [streaming-page.md](./streaming-page.md#pickup-window) for how the streaming window consumes it.
+
 ### Standings & Scoreboard
 
 ```http

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getScoringProfile, getLineupCadence, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getScoringProfile, getLineupCadence, getEarliestPlayableDate, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { analyzePointsStreaming } from '@/lib/points/streaming';
 
 /**
@@ -39,14 +39,22 @@ export async function GET(request: Request) {
       ? cadenceParam
       : await getLineupCadence(user.id, leagueKey);
 
+    // Earliest date a pickup can play (Yahoo edit_key → floors the daily
+    // window; immediate leagues include today). A `floor` query param overrides
+    // for smoke testing, mirroring the `cadence` override.
+    const floorParam = searchParams.get('floor');
+    const earliestPlayableDate = /^\d{4}-\d{2}-\d{2}$/.test(floorParam ?? '')
+      ? (floorParam as string)
+      : await getEarliestPlayableDate(user.id, leagueKey);
+
     // Cache the assembled analysis as a unit (mirrors points-team): the FA
     // pools, game days, and stat batches underneath are each cached, but the
     // ~60 FA × per-day optimizer fan-out is worth skipping on every render.
-    // The window itself only changes at midnight, well past any 5-min TTL.
+    // Keyed on the window floor so the analysis rolls when edit_key advances.
     const analysis = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-streaming:${leagueKey}:${teamKey}:${cadence}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-streaming:${leagueKey}:${teamKey}:${cadence}:${earliestPlayableDate}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
-      () => analyzePointsStreaming(user.id, leagueKey, teamKey, profile, { cadence }),
+      () => analyzePointsStreaming(user.id, leagueKey, teamKey, profile, { cadence, earliestPlayableDate }),
     );
     return NextResponse.json({ leagueKey, teamKey, scoringType, ...analysis });
   } catch (error) {

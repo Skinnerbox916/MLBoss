@@ -45,6 +45,7 @@ export async function GET() {
       league_type: league.league_type,
       scoring_type: league.scoring_type,
       weekly_deadline: league.weekly_deadline,
+      edit_key: league.edit_key,
       current_week: league.current_week,
       total_teams: league.total_teams,
       is_finished: league.is_finished,

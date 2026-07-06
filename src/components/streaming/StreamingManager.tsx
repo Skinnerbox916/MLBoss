@@ -18,8 +18,9 @@ import { useWeekBatterScores } from '@/lib/hooks/useWeekBatterScores';
 import { useWeekPitcherScores } from '@/lib/hooks/useWeekPitcherScores';
 import { useSlotAwareStreaming } from '@/lib/hooks/useSlotAwareStreaming';
 import { useLeagueLimits } from '@/lib/hooks/useLeagueLimits';
-import { getStreamingGridDays, isSundayPivot } from '@/lib/dashboard/weekRange';
+import { getStreamingGridDays, getStreamingWeekTarget, resolveEarliestPlayableDate } from '@/lib/dashboard/weekRange';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
+import { moveTimingForDeadline } from '@/lib/fantasy/scoringMode';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 import StreamingBoard from './StreamingBoard';
 import BatterStreamingBoard from './BatterStreamingBoard';
@@ -61,13 +62,27 @@ function faShouldShow(p: FreeAgentPlayer): boolean {
  * and per-FA scores already aim at next Mon-Sun via `getStreamingGridDays`.
  */
 export default function StreamingManager() {
-  const { leagueKey, teamKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
+  const { context, leagueKey, teamKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
   const [tab, setTab] = useState<StreamTab>('pitchers');
 
-  // The Sunday rule lives in `weekRange.ts`. We resolve it once here and
-  // thread `targetWeek` through every downstream consumer; the panels
-  // own their own week-aware copy (chip, title, helper text).
-  const targetWeek: WeekTarget = useMemo(() => isSundayPivot() ? 'next' : 'current', []);
+  // When does a pickup made now first play? Yahoo `edit_key` (folds in the
+  // league's roster-change mode + time-of-day game locks), falling back to
+  // `weekly_deadline`-derived timing. This floors the pickup window and picks
+  // the matchup to frame.
+  const activeLeague = context?.leagues.find(l => l.league_key === leagueKey);
+  const earliestPlayableDate = useMemo(
+    () => resolveEarliestPlayableDate({ editKey: activeLeague?.edit_key, weeklyDeadline: activeLeague?.weekly_deadline }),
+    [activeLeague?.edit_key, activeLeague?.weekly_deadline],
+  );
+  const moveTiming = moveTimingForDeadline(activeLeague?.weekly_deadline);
+
+  // The matchup we frame follows the pickup floor: a next-day league still
+  // pivots to next week on Sunday (floor = Monday); an immediate league whose
+  // Sunday pickup still plays Sunday stays on the current matchup.
+  const targetWeek: WeekTarget = useMemo(
+    () => getStreamingWeekTarget(new Date(), earliestPlayableDate),
+    [earliestPlayableDate],
+  );
 
   // ----- Shared inputs (used by either tab) -----------------------------
   const { categories: leagueCategories } = useLeagueCategories(leagueKey);
@@ -133,7 +148,7 @@ export default function StreamingManager() {
   // tomorrow's slate just lose their opp-side adjustment (forecast
   // degrades gracefully to neutral). Acceptable trade for the simpler
   // wiring; revisit if the gap matters.
-  const tomorrowDate = useMemo(() => getStreamingGridDays()[0]?.date, []);
+  const tomorrowDate = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate)[0]?.date, [earliestPlayableDate]);
   const { games: tomorrowGames } = useGameDay(tomorrowDate);
   const opposingTeamIds = useMemo(() => {
     const ids = new Set<number>();
@@ -146,7 +161,7 @@ export default function StreamingManager() {
   const { teams: teamOffense } = useTeamOffense(opposingTeamIds);
 
   const { scored: pitcherWeekScores, days: pitcherPickupDays, isLoading: pitcherScoresLoading } =
-    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, teamOffense, pitcherCategoryWeights);
+    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, teamOffense, pitcherCategoryWeights, earliestPlayableDate);
 
   // ----- Batter tab inputs ---------------------------------------------
   const { batters: batterFAs, isLoading: batterFaLoading } = useAvailableBatters(leagueKey, true);
@@ -186,7 +201,7 @@ export default function StreamingManager() {
   // Mon-Sun on Sunday — so today is automatically excluded from value
   // calculations.
   const { scored: batterFAScores, days: pickupDays, isLoading: batterScoresLoading } =
-    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterCategoryWeights);
+    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterCategoryWeights, earliestPlayableDate);
 
   // Slot-aware streaming value: per-day assignStarters with and without
   // each FA. Captures position competition, multi-step rebalancing, and
@@ -202,6 +217,16 @@ export default function StreamingManager() {
   const pitcherHelper = targetWeek === 'next'
     ? 'Sunday picks land on next week\'s matchup — week-aggregate scores reflect Mon-Sun coverage.'
     : 'Multi-day window: rankings reward two-start pitchers when matchups favor it. MLB probables thin out past D+3.';
+
+  // When a pickup made now first takes effect — sets expectations for whether
+  // today's column is actionable. Driven by the league's Yahoo roster-change
+  // mode (edit_key / weekly_deadline).
+  const moveTimingHelper =
+    moveTiming === 'immediate'
+      ? 'Moves are immediate — today’s not-yet-started games count toward this matchup.'
+      : moveTiming === 'weekly'
+        ? 'Lineups lock for the week — pickups play next week.'
+        : 'Moves hit tomorrow — today’s lineup is already locked.';
 
   if (ctxError) {
     return (
@@ -221,6 +246,7 @@ export default function StreamingManager() {
           <p className="text-xs text-muted-foreground mt-0.5">
             Pick up free agents for favourable matchups. Spend your 6-moves-per-week budget wisely.
           </p>
+          <p className="text-xs text-accent mt-0.5">{moveTimingHelper}</p>
         </div>
       </div>
 

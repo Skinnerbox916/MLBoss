@@ -15,7 +15,11 @@ export interface League {
   logo_url?: string;
   draft_status: string;
   num_teams: number;
-  edit_key: number;
+  /** Earliest roster date the API will currently let you edit (YYYY-MM-DD).
+   *  The authoritative "when will my move hit" signal — folds in the league's
+   *  roster-change mode and time-of-day game locks. See
+   *  docs/yahoo-api-reference.md#roster-change-timing. */
+  edit_key: string;
   weekly_deadline?: string;
   league_update_timestamp?: string;
   scoring_type: string;

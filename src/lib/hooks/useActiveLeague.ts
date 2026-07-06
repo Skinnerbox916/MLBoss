@@ -3,9 +3,12 @@ import { useActiveLeagueKey } from './activeLeagueStore';
 import {
   scoringModeForType,
   lineupCadenceForDeadline,
+  moveTimingForDeadline,
   type ScoringMode,
   type LineupCadence,
+  type RosterMoveTiming,
 } from '@/lib/fantasy/scoringMode';
+import { resolveEarliestPlayableDate } from '@/lib/dashboard/weekRange';
 
 export interface ActiveLeague {
   /** All of the user's leagues this season (for the switcher). */
@@ -18,6 +21,11 @@ export interface ActiveLeague {
   mode: ScoringMode;
   /** Daily lineup changes vs lineups locked for the week (Yahoo `weekly_deadline`). */
   lineupCadence: LineupCadence;
+  /** When a roster move made now takes effect (immediate / next-day / weekly). */
+  moveTiming: RosterMoveTiming;
+  /** Earliest date (YYYY-MM-DD) a pickup made now can play — the streaming
+   *  window floor. Derived from Yahoo `edit_key`, falling back to timing. */
+  earliestPlayableDate: string;
   isLoading: boolean;
   isError: boolean;
 }
@@ -46,6 +54,11 @@ export function useActiveLeague(): ActiveLeague {
     leagueName: active?.league_name,
     mode: scoringModeForType(active?.scoring_type),
     lineupCadence: lineupCadenceForDeadline(active?.weekly_deadline),
+    moveTiming: moveTimingForDeadline(active?.weekly_deadline),
+    earliestPlayableDate: resolveEarliestPlayableDate({
+      editKey: active?.edit_key,
+      weeklyDeadline: active?.weekly_deadline,
+    }),
     isLoading: ctx.isLoading,
     isError: ctx.isError,
   };

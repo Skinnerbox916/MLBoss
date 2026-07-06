@@ -19,9 +19,17 @@ The pitcher tab additionally leads with a [`VolumeGap`](../src/components/stream
 
 ## Pickup window
 
-Both tabs operate over the same time horizon: the **pickup-playable window**. Any pickup made now lands on a roster *tomorrow*, so today is excluded from value calculations. Window primitives live in [dashboard/weekRange.ts](../src/lib/dashboard/weekRange.ts); see [projection.md](./projection.md#pickup-window).
+Both tabs operate over the same time horizon: the **pickup-playable window** — the grid days on or after the **earliest date a pickup can play**. That floor is **league-aware**, resolved from Yahoo's roster-change timing (`resolveEarliestPlayableDate` in [dashboard/weekRange.ts](../src/lib/dashboard/weekRange.ts), keyed off `edit_key` with a `weekly_deadline` fallback — see [yahoo-api-reference.md](./yahoo-api-reference.md#roster-change-timing)):
 
-Implications for pitcher streaming:
+- **Next-day league** (`weekly_deadline: ''`): floor = tomorrow. Today's roster is locked, so today is excluded — the app's historical behavior.
+- **Immediate league** (`weekly_deadline: 'intraday'`): floor = today. A pickup can play in today's not-yet-started games, so **today is included** in value calculations.
+- **Weekly league** (day-number deadline): floor = next Monday (see [Weekly lineup cadence](#weekly-lineup-cadence)).
+
+`edit_key` also rolls the floor to tomorrow automatically once all of today's games lock, so the immediate-league window self-corrects through the day. (Residual: mid-afternoon, an immediate league's `today` column still counts games that already started — a per-game intraday-lock filter is a follow-up.)
+
+The floor flows to the client via `useActiveLeague().earliestPlayableDate` (or, on the categories page, resolved in `StreamingManager` from the league context) and into `getStreamingGridDays` / `getPickupPlayableDays`. Omitting it reproduces the legacy "today excluded, Sunday-pivots" behavior exactly. See [projection.md](./projection.md#pickup-window).
+
+Implications for pitcher streaming (next-day league):
 
 - Sun/Mon picks see ~7 days — plenty of two-start coverage.
 - Wed picks see ~4 days — at most one start per pitcher.
@@ -30,9 +38,11 @@ The engine just iterates the window; two-start coverage falls out naturally.
 
 ## Sunday pivot
 
-On Sunday the current matchup is closed for streaming purposes — any pickup lands on next week's roster and contributes only to next week's matchup. The streaming page pivots the entire upper UI (Volume Gap, Game Plan chase/hold/punt, opponent label, W/L projection) to describe **next week** instead of the closing one. The streaming grid and per-FA week scores already point at next Mon–Sun via [`getStreamingGridDays`](../src/lib/dashboard/weekRange.ts), so the pivot brings the matchup framing into alignment.
+On Sunday a pickup that can't play until Monday lands on next week's roster and contributes only to next week's matchup, so the streaming page pivots the entire upper UI (Volume Gap, Game Plan chase/hold/punt, opponent label, W/L projection) to describe **next week**. The streaming grid and per-FA week scores follow via [`getStreamingGridDays`](../src/lib/dashboard/weekRange.ts).
 
-Vocabulary: a `WeekTarget = 'current' | 'next'` flows from [`StreamingManager`](../src/components/streaming/StreamingManager.tsx) through every consumer (analysis hook, projection hooks, panels). The Sunday rule itself lives in one place — `isSundayPivot()` in [weekRange.ts](../src/lib/dashboard/weekRange.ts) — and is consulted by both `StreamingManager` (to derive the target) and the streaming-grid helpers (to roll the date strip).
+The pivot is **floor-driven, not a bare day-of-week check**: the matchup we frame is whichever week contains the pickup floor (`getStreamingWeekTarget`). A **next-day** league on Sunday floors at Monday → pivots to next week (the historical behavior). An **immediate** league whose Sunday pickup still plays Sunday floors at Sunday → **stays on the current matchup**. This is why the target derives from `earliestPlayableDate` rather than `isSundayPivot` alone.
+
+Vocabulary: a `WeekTarget = 'current' | 'next'` flows from [`StreamingManager`](../src/components/streaming/StreamingManager.tsx) through every consumer (analysis hook, projection hooks, panels). `getStreamingWeekTarget(now, earliestPlayableDate)` in [weekRange.ts](../src/lib/dashboard/weekRange.ts) is the single source; with no floor it falls back to the legacy `isSundayPivot()` behavior.
 
 Mechanism — one canonical hook, one option, two explicit modes:
 
@@ -268,6 +278,7 @@ MLB's `weather` hydrate is only populated ~2 hours before first pitch. For futur
 
 ## Open follow-ups
 
+- **Intraday game-lock filter for immediate leagues.** The pickup window now includes today for immediate (`weekly_deadline: 'intraday'`) leagues, but the `today` column still counts games that have already started. `edit_key` rolls the whole day out once *all* games lock; a per-game filter (drop already-started games from today's value) would tighten the mid-afternoon read. See [Pickup window](#pickup-window).
 - **Sequence planner.** A "Plan" mode that lets the user select 1–2 pickups and shows a coverage strip ("Mon: covered by X, Tue: open, Wed: covered by Y…"). The by-day view today gives the read manually; an explicit planner would close the loop.
 - **Persisted focus overrides per league.** Currently the inline-pill override resets per session. Persisting in localStorage keyed on `leagueKey + statId` would make "always punt SV" a one-time setup rather than a per-session re-toggle.
 - **Pitcher cap awareness.** Some leagues set `max_weekly_innings_pitched` / `max_weekly_games_started`. The hooks (`useLeagueLimits`) exist and BossCard already consumes them; the streaming engine could fold a cap discount into the FA week score. Not currently wired (per design call: leagues without caps don't need it).

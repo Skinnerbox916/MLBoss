@@ -24,8 +24,9 @@ export interface WeekPitcherScore {
 
 interface UseWeekPitcherScoresResult {
   scored: WeekPitcherScore[];
-  /** Pickup-playable window — tomorrow→Sunday on Mon-Sat, full next
-   *  Mon-Sun on Sunday. */
+  /** Pickup-playable window, floored at `earliestPlayableDate` — includes
+   *  today for immediate leagues, tomorrow→Sunday for next-day, full next
+   *  Mon-Sun on Sunday / weekly. */
   days: WeekDay[];
   isLoading: boolean;
 }
@@ -53,9 +54,10 @@ export function useWeekPitcherScores(
   scoredCategories: EnrichedLeagueStatCategory[],
   teamOffense?: Record<number, TeamOffense>,
   categoryWeights?: Record<number, number>,
+  earliestPlayableDate?: string,
 ): UseWeekPitcherScoresResult {
-  const gridDays = useMemo(() => getStreamingGridDays(), []);
-  const playableDays = useMemo(() => getPickupPlayableDays(), []);
+  const gridDays = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
+  const playableDays = useMemo(() => getPickupPlayableDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
 
   const day0 = useGameDay(gridDays[0]?.date);
   const day1 = useGameDay(gridDays[1]?.date);

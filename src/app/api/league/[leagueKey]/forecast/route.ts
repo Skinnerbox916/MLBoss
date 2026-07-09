@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getLeagueStandings, getTeamRosterByDate } from '@/lib/fantasy';
+import { getLeagueStandings, getTeamRoster, getTeamRosterByDate } from '@/lib/fantasy';
 import { getTeamStatsSeason } from '@/lib/fantasy/teamStats';
 import { getLeagueRosterPositions } from '@/lib/fantasy/roster';
 import { getAvailableBatters } from '@/lib/fantasy/players';
@@ -8,9 +8,10 @@ import { getEnrichedLeagueStatCategories, type EnrichedLeagueStatCategory } from
 import {
   getRosterSeasonStats,
   getPitcherTalentBatch,
+  hashCode,
   type PitcherTalentWithMetadata,
 } from '@/lib/mlb/players';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { isPitcher } from '@/components/lineup/types';
 import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import {
@@ -60,6 +61,11 @@ import type { BatterSeasonStats } from '@/lib/mlb/types';
  *    league at SEMI_DYNAMIC.ttlLong (1 h). Cache key is league-scoped
  *    and not date-scoped — the projection depends only on rosters and
  *    season stats, not on what day it is.
+ *  - The key also carries a fingerprint of the viewer's current roster
+ *    (60 s dynamic-tier fetch), so the viewer's own adds/drops force a
+ *    bundle recompute within a minute instead of waiting out the hour.
+ *    Other teams' moves still lag up to the full TTL, which is fine —
+ *    the league-wide talent pool shifts slowly.
  *  - The cheap part is the league-wide rank/z/outlier math, which
  *    depends on `myTeamKey`. Runs on every request after the aggregates
  *    load, takes <1 ms.
@@ -85,8 +91,13 @@ export async function GET(
     }
 
     // Cache only the aggregates — they're identical regardless of viewer.
+    // The viewer's roster fingerprints the key (see header comment): the
+    // roster read is warm because the roster page fetches it in parallel.
+    const myRoster = await getTeamRoster(user.id, teamKey);
+    const rosterFp = hashCode(myRoster.map(p => p.player_key).sort().join(','));
+
     const aggregateBundle = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:${leagueKey}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:${leagueKey}:${rosterFp}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong,
       () => computeAggregateBundle(user.id, leagueKey),
     );
@@ -258,7 +269,7 @@ async function projectFreeAgents(args: {
 
   if (activeFAs.length === 0) return [];
 
-  const lineupSpots = await getCachedLineupSpots(activeFAs.map(b => b.mlbId));
+  const lineupSpots = await getObservedLineupSpots(activeFAs.map(b => b.mlbId));
   const deps: NeutralBatterDeps = {
     scoredCategories: batterCategories,
     statsByMlbId,
@@ -368,7 +379,7 @@ async function projectOneTeam(input: {
     if (entries.length > 0) {
       // Project ALL eligible batters once (used by both the team
       // aggregate and the league-wide RUPM pool).
-      const lineupSpots = await getCachedLineupSpots(entries.map(e => e.active.mlbId));
+      const lineupSpots = await getObservedLineupSpots(entries.map(e => e.active.mlbId));
       const deps: NeutralBatterDeps = {
         scoredCategories: batterCategories,
         statsByMlbId,

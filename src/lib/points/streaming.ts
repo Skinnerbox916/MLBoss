@@ -42,7 +42,7 @@ import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 import type { LineupCadence } from '@/lib/fantasy/scoringMode';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getGameDay } from '@/lib/mlb/schedule';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getPickupPlayableDays, getWeekDays, type WeekDay } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
@@ -253,7 +253,7 @@ export async function analyzePointsStreaming(
   const rosterMlbIds = rosterBatters
     .map(p => batterStats[key(p.name, p.editorial_team_abbr)]?.mlbId)
     .filter((id): id is number => typeof id === 'number' && id > 0);
-  const lineupSpots = await getCachedLineupSpots(rosterMlbIds);
+  const lineupSpots = await getObservedLineupSpots(rosterMlbIds);
 
   // Matchup-adjusted per-PA rate (park / platoon / opposing staff via the
   // canonical L2 forecast), memoized per (player, day) — the batter-plug

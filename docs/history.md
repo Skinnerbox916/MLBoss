@@ -8,6 +8,14 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Lineup-spot store moved out of the `cache:` namespace (`getCachedLineupSpots` → `getObservedLineupSpots`)
+
+The per-batter last-observed batting-order store ([src/lib/mlb/lineupSpots.ts](../src/lib/mlb/lineupSpots.ts)) originally wrote through `cacheResult` under `cache:static:batter-lineup-spot:{id}` with a 7-day TTL. Two problems surfaced in a cache audit: the 7-day TTL violated the static tier's 24–48h contract, and — the real bug — an `/admin/cache` Clear All destroyed a week of lineup observations that **cannot be refetched** (MLB only posts lineup cards for D+0; the history exists nowhere upstream). Future-day projections silently lost the batting-order opportunity multiplier until observations re-accumulated.
+
+Moved to `obs:batter-lineup-spot:{id}`, written via `redisUtils` directly, functions renamed `getObservedLineupSpot(s)`. See [data-architecture.md](./data-architecture.md#observation-stores) for the observation-store rule this created.
+
+Don't reintroduce: moving these keys back under `cache:static:` for tier-discipline tidiness — the tier rule applies to *refetchable* data only, and putting observations back in the cache keyspace re-arms the Clear All data-loss bug this entry exists to prevent.
+
 ## 2026-06 — Endgame rewrite of auto-sit: `isGamePlanSitWorthy` one-locked-cat gate replaced by `computeSitPlan`
 
 The shipped sit-for-ratio gate armed on **one** locked counting cat + a contested-losing K/AVG — a normal mid-week state, so an endgame maneuver ran routinely. Worse, once armed the optimizer scored every bat by raw sit-net against a zero-cost empty slot, ignoring `SIT_DEADBAND` (which only gated the advisory). Real-world failure: a bat whose net hovered at ±0.005 (K harm ≈ pivotality-weighted counting value because H/TB were locked) got benched on noise with no explanation, and the decision flip-flopped with every 5-min cache refresh. Verified by replaying the optimizer's exact pipeline against live cache data — his net was +0.005 (start) hours after the optimizer computed it just below 0 (bench).

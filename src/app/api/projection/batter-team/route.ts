@@ -4,7 +4,7 @@ import { getTeamRosterByDate, withCache, CACHE_CATEGORIES } from '@/lib/fantasy'
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy/stats';
 import { getWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
@@ -116,7 +116,7 @@ export async function GET(request: Request) {
           gamesByDate.set(d.date, enriched);
         });
 
-        const lineupSpots = await getCachedLineupSpots(activeBatters.map(b => b.mlbId));
+        const lineupSpots = await getObservedLineupSpots(activeBatters.map(b => b.mlbId));
 
         const deps: ProjectionDeps = {
           days: remaining,

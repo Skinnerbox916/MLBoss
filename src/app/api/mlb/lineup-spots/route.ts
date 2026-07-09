@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 
 /**
  * POST /api/mlb/lineup-spots
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'mlbIds (number[]) required' }, { status: 400 });
     }
     const numericIds = mlbIds.filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
-    const map = await getCachedLineupSpots(numericIds);
+    const map = await getObservedLineupSpots(numericIds);
     const spots: Record<number, number> = {};
     for (const [id, spot] of map) spots[id] = spot;
     return NextResponse.json({ spots });

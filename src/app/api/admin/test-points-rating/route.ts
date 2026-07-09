@@ -12,7 +12,7 @@ import {
 } from '@/lib/fantasy';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getGameDay } from '@/lib/mlb/schedule';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getWeekDays } from '@/lib/dashboard/weekRange';
 import { getPointsPitcherInputs } from '@/lib/points/pitcherInputs';
 import { batterPointsValue, pitcherPointsValue, batterPointsPerPA } from '@/lib/points/pointsValue';
@@ -151,7 +151,7 @@ export async function GET(request: Request) {
       .filter(p => p.owned)
       .map(p => batterStats[key(p.name, p.team)]?.mlbId)
       .filter((id): id is number => typeof id === 'number' && id > 0);
-    const lineupSpots = await getCachedLineupSpots(rosterBatterMlbIds);
+    const lineupSpots = await getObservedLineupSpots(rosterBatterMlbIds);
 
     // ----- Phase 1 values (talent-neutral weekly) + Phase 2 (this week) -----
     const batters = batterInputs

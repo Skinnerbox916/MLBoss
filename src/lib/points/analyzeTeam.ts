@@ -20,7 +20,7 @@ import {
 import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getGameDay } from '@/lib/mlb/schedule';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
@@ -161,7 +161,7 @@ export async function analyzePointsTeam(
     .filter(p => p.owned)
     .map(p => batterStats[key(p.name, p.team)]?.mlbId)
     .filter((id): id is number => typeof id === 'number' && id > 0);
-  const lineupSpots = await getCachedLineupSpots(rosterBatterMlbIds);
+  const lineupSpots = await getObservedLineupSpots(rosterBatterMlbIds);
 
   const batters: PointsPlayerRow[] = batterInputs
     .map((p): PointsPlayerRow | null => {

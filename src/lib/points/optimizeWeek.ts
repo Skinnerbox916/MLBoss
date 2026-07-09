@@ -17,7 +17,7 @@ import { getTeamRosterByDate, getLeagueRosterPositions, setTeamRoster } from '@/
 import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
-import { getCachedLineupSpots } from '@/lib/mlb/lineupSpots';
+import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { datesThroughEndOfWeek } from '@/lib/lineup/optimizeWeek';
 import { getWeekDays } from '@/lib/dashboard/weekRange';
 import { optimizeLineup } from '@/lib/lineup/optimize';
@@ -71,7 +71,7 @@ async function optimizeOneDay(
     const s = statsRecord[key(p.name, p.editorial_team_abbr)];
     if (s) statsByKey.set(key(p.name, p.editorial_team_abbr), s);
   }
-  const lineupSpots = await getCachedLineupSpots([...statsByKey.values()].map(s => s.mlbId).filter(id => id > 0));
+  const lineupSpots = await getObservedLineupSpots([...statsByKey.values()].map(s => s.mlbId).filter(id => id > 0));
 
   const getScore = (p: RosterEntry): number => {
     const stats = statsByKey.get(key(p.name, p.editorial_team_abbr));
@@ -164,7 +164,7 @@ export async function optimizePointsWeekly(
     batters.map(p => ({ name: p.name, team: p.editorial_team_abbr })),
   );
   const key = (name: string, team: string) => `${name.toLowerCase()}|${team.toLowerCase()}`;
-  const lineupSpots = await getCachedLineupSpots(
+  const lineupSpots = await getObservedLineupSpots(
     batters.map(p => statsRecord[key(p.name, p.editorial_team_abbr)]?.mlbId).filter((id): id is number => typeof id === 'number' && id > 0),
   );
 

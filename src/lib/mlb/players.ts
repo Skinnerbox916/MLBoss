@@ -630,7 +630,8 @@ export async function getRosterSeasonStats(
   }
 }
 
-function hashCode(str: string): string {
+/** Short stable hash — used to fingerprint player lists in cache keys. */
+export function hashCode(str: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;

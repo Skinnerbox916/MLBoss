@@ -21,6 +21,7 @@ export function useLeagueForecast(
     : null;
   const { data, error, isLoading } = useSWR<LeagueForecast>(url, fetcher, {
     revalidateOnFocus: false,
+    refreshInterval: 300_000,
   });
   return {
     forecast: data,

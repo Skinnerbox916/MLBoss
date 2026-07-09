@@ -7,7 +7,7 @@ export function useAvailableBatters(leagueKey: string | undefined, extended?: bo
   const { data, error, isLoading } = useSWR(
     leagueKey ? `/api/fantasy/players?leagueKey=${leagueKey}&position=B${countParam}` : null,
     fetcher,
-    { revalidateOnFocus: false },
+    { revalidateOnFocus: false, refreshInterval: 300_000 },
   );
 
   return {

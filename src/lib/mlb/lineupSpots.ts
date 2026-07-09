@@ -1,24 +1,29 @@
 /**
- * Per-batter "typical lineup spot" cache.
+ * Per-batter "typical lineup spot" observation store.
  *
  * Lineup cards are only posted by MLB Stats API for D+0 (and yesterday).
  * For D+1..D+5 the `lineups` arrays are empty, which silently kills the
  * batting-order-driven opportunity multiplier in `getBatterRating` for any
  * future-day projection.
  *
- * The cache here is the workaround: every time we observe a player in a
+ * The store here is the workaround: every time we observe a player in a
  * posted lineup (via `getGameDay`), we record their slot. The forward-
- * projection engine reads the cached spot when a future-day matchup
+ * projection engine reads the observed spot when a future-day matchup
  * context is being assembled. Assumption per user direction: batters stay
  * where they were last observed. When that's wrong we eat the error until
  * the next D+0 observation overwrites the entry.
+ *
+ * NOT a cache — entries are observations that cannot be refetched once
+ * lost, so keys live under `obs:` (outside `cache:*`) where the admin
+ * panel's cache clears can't reach them. See
+ * docs/data-architecture.md#observation-stores.
  *
  * TTL is 7 days — long enough to survive an off-day or an unposted game,
  * short enough that a player who's been demoted out of the lineup for an
  * extended stretch eventually drops back to "no signal".
  */
 
-import { cacheResult, getCachedResult } from '@/lib/fantasy/cache';
+import { redisUtils } from '@/lib/redis';
 
 const TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
@@ -28,19 +33,27 @@ interface LineupSpotEntry {
 }
 
 function key(mlbId: number): string {
-  return `static:batter-lineup-spot:${mlbId}`;
+  return `obs:batter-lineup-spot:${mlbId}`;
 }
 
 /**
  * Return the most recently observed batting-order spot (1-9) for a player,
  * or null when nothing has been recorded within the TTL window.
+ * Best-effort: a Redis error reads as "no signal" rather than failing the
+ * projection that asked.
  */
-export async function getCachedLineupSpot(mlbId: number): Promise<number | null> {
+export async function getObservedLineupSpot(mlbId: number): Promise<number | null> {
   if (!Number.isFinite(mlbId) || mlbId <= 0) return null;
-  const entry = await getCachedResult<LineupSpotEntry>(key(mlbId));
-  if (!entry || typeof entry.spot !== 'number') return null;
-  if (entry.spot < 1 || entry.spot > 9) return null;
-  return entry.spot;
+  try {
+    const raw = await redisUtils.get(key(mlbId));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as LineupSpotEntry;
+    if (typeof entry?.spot !== 'number') return null;
+    if (entry.spot < 1 || entry.spot > 9) return null;
+    return entry.spot;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -48,11 +61,11 @@ export async function getCachedLineupSpot(mlbId: number): Promise<number | null>
  * Returns a Map<mlbId, spot> with only the resolved entries; missing entries
  * are simply absent.
  */
-export async function getCachedLineupSpots(mlbIds: number[]): Promise<Map<number, number>> {
+export async function getObservedLineupSpots(mlbIds: number[]): Promise<Map<number, number>> {
   const out = new Map<number, number>();
   const valid = mlbIds.filter(id => Number.isFinite(id) && id > 0);
   if (valid.length === 0) return out;
-  const results = await Promise.all(valid.map(getCachedLineupSpot));
+  const results = await Promise.all(valid.map(getObservedLineupSpot));
   valid.forEach((id, i) => {
     const spot = results[i];
     if (spot !== null) out.set(id, spot);
@@ -62,7 +75,7 @@ export async function getCachedLineupSpots(mlbIds: number[]): Promise<Map<number
 
 /**
  * Record one observation. Overwrites any prior entry, refreshing TTL.
- * Silently swallows Redis errors — the cache is best-effort and a
+ * Silently swallows Redis errors — the store is best-effort and a
  * write failure should never break the underlying schedule fetch.
  */
 export async function recordLineupSpot(
@@ -73,7 +86,8 @@ export async function recordLineupSpot(
   if (!Number.isFinite(mlbId) || mlbId <= 0) return;
   if (!Number.isFinite(spot) || spot < 1 || spot > 9) return;
   try {
-    await cacheResult(key(mlbId), { spot, observedDate } satisfies LineupSpotEntry, TTL_SECONDS);
+    const entry: LineupSpotEntry = { spot, observedDate };
+    await redisUtils.set(key(mlbId), JSON.stringify(entry), TTL_SECONDS);
   } catch (err) {
     console.warn(`[lineupSpots] failed to record mlbId=${mlbId}:`, err);
   }

@@ -193,6 +193,16 @@ await invalidateCachePattern('semi-dynamic:teams:458.l.12345');
 
 Never call `redis.flushdb()` — it wipes `user:*` and `token:*` keys alongside the cache, breaking all Yahoo API calls until the user re-logs in. The function is no longer exposed on `redisUtils`; call `invalidateCachePattern('static:')` (etc.) or use the `/admin/cache` page instead.
 
+### Observation stores
+
+Some Redis data is **observed, not fetched** — recorded from something we witnessed (a posted lineup card) that no upstream API can re-serve after the fact. Deleting an observation loses it until the world happens to repeat itself. That makes it categorically not cache, so:
+
+- Observation keys live under the **`obs:` namespace**, outside `cache:*`, where the `/admin/cache` tier-clear and Clear All buttons cannot reach them.
+- They are written via `redisUtils` directly from a dedicated store module — the one sanctioned exception to "all Redis writes go through `withCache`/`cacheResult`", because those helpers force the `cache:` prefix.
+- They still carry a TTL when going stale is the desired behavior (decay to "no signal"), chosen by the store, not by the cache tiers.
+
+Current stores: `obs:batter-lineup-spot:{mlbId}` in [src/lib/mlb/lineupSpots.ts](../src/lib/mlb/lineupSpots.ts) — last-observed batting-order slot per batter, 7-day decay, feeds the future-day opportunity multiplier. Before adding a second store, confirm the data truly can't be refetched; "expensive to refetch" is a cache-tier problem, not an observation.
+
 ## Identity contract — Yahoo to MLB
 
 The Yahoo to MLB join is the most fragile boundary in the system. It lives in [src/lib/mlb/identity.ts](../src/lib/mlb/identity.ts) — the only file allowed to do this resolution. Other modules (player stats, schedule enrichment, etc.) import `resolveMLBId` from here.

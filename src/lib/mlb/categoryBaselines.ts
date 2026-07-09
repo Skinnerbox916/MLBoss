@@ -26,7 +26,7 @@
 import { blendRate } from './talentModel';
 import type { BatterSeasonStats } from './types';
 
-export type CategoryStatId = 3 | 7 | 8 | 12 | 13 | 16 | 18 | 21;
+export type CategoryStatId = 3 | 7 | 8 | 12 | 13 | 16 | 18 | 21 | 23;
 
 export interface CategoryBaselineConfig {
   /** Short display label (e.g. "AVG", "HR"). */
@@ -200,7 +200,9 @@ const TALENT_GATE_EFFECTIVE_PA = 100;
 /**
  * Talent-derived rate for cats with strong Statcast signal. Returns null
  * for cats where talent doesn't help (R/RBI/SB depend on lineup context,
- * not pure batter skill) or when the talent vector isn't available.
+ * not pure batter skill; HR has no Savant expected primary — xSLG − xBA
+ * can't isolate the HR share of extra bases) or when the talent vector
+ * isn't available.
  *
  * The rates returned here are PA-denominated per-PA outcome rates —
  * comparable to the raw `s.hits / s.pa` shape — so the downstream
@@ -218,36 +220,65 @@ function talentRateForCategory(
   const kRate = stats.kRate;
   const bbRate = stats.bbRate;
   const xba = stats.xba;
+  const xslg = stats.xslg;
   switch (statId) {
     case 3: // AVG — xBA is the deserved H/AB
       return xba;
     case 8: // H — xBA × (AB/PA); AB/PA ≈ (1 − bbRate)
       return xba !== null && bbRate !== null ? xba * (1 - bbRate) : null;
+    case 23: // TB — xSLG × (AB/PA); SLG is TB/AB, so TB/PA ≈ xSLG × (1 − bbRate)
+      return xslg !== null && bbRate !== null ? xslg * (1 - bbRate) : null;
     case 21: // K — regressed K%
       return kRate;
     case 18: // BB — regressed BB%
       return bbRate;
-    // HR, TB, R, RBI, SB stay on the raw-rate blend. HR and TB will move
-    // here once we expose xSLG-derived signals via a follow-up commit;
-    // R/RBI/SB are lineup-context-dominated and don't benefit from xBA.
+    // HR, R, RBI, SB stay on the raw-rate blend (lineup-context-dominated
+    // or no expected-stat primary).
     default:
       return null;
   }
 }
 
 /**
+ * Cats whose talent rate comes from a Statcast *expected-stat model*
+ * (xBA / xSLG) rather than from regressed actual outcomes. These blend
+ * with the raw actual-rate path at `XSTAT_BLEND_WEIGHT` instead of
+ * replacing it — see `blendedBaselineForCategory`. K/BB are NOT in this
+ * set: their talent rates are Bayesian-regressed actual K%/BB%, so there
+ * is no expected-vs-actual gap to hedge.
+ */
+const XSTAT_MODELED_CATS = new Set([3, 8, 23]);
+
+/**
+ * Weight on the expected-stat-modeled rate when blending with the raw
+ * actual blend for `XSTAT_MODELED_CATS`. Expected stats predict future
+ * rates better than actuals, but only modestly (next-season wOBA:
+ * xwOBA r ≈ .57 vs wOBA r ≈ .54; blends beat both at r ≈ .59–.61), and
+ * they systematically shortchange speed/contact archetypes whose
+ * actual-vs-expected residual is persistent skill. Full replacement
+ * over-trusts the model; 60/40 tracks the literature.
+ * See docs/unified-rating-model.md#calibration-anchors.
+ */
+const XSTAT_BLEND_WEIGHT = 0.6;
+
+/**
  * Bayesian-blended per-PA (or native) rate for one category. Returns null
  * when the stat isn't in the baseline config.
  *
- * Two-path:
- *   1. **Talent path** (preferred when available): batter has Savant talent
- *      with effectivePA ≥ TALENT_GATE_EFFECTIVE_PA AND the cat is one of
- *      the four high-Statcast-signal cats (AVG / H / K / BB). The talent
- *      vector is already Bayesian-regressed inside the talent layer, so
- *      we surface it directly — no second blend.
- *   2. **Raw path** (fallback): the legacy Bayesian blend of raw current
- *      + prior + league. Used when talent isn't ready (thin Savant sample,
- *      rookie pre-debut) or for cats outside the talent-eligible set.
+ * Three-path:
+ *   1. **Regressed-actual talent** (K / BB): batter has Savant talent with
+ *      effectivePA ≥ TALENT_GATE_EFFECTIVE_PA. These talent rates are
+ *      Bayesian-regressed actual outcomes — surfaced directly, no second
+ *      blend and nothing to hedge against.
+ *   2. **Expected-stat blend** (AVG / H / TB): the talent rate comes from
+ *      a Statcast expected model (xBA / xSLG), which predicts future rates
+ *      only modestly better than actuals and systematically shortchanges
+ *      speed/contact archetypes. Blend at `XSTAT_BLEND_WEIGHT` with the
+ *      raw actual blend — the actual side implicitly carries each player's
+ *      persistent actual-vs-expected residual.
+ *   3. **Raw path** (everything else, and the fallback for thin-sample /
+ *      no-Savant players): the legacy Bayesian blend of raw current +
+ *      prior + league.
  */
 export function blendedBaselineForCategory(
   stats: BatterSeasonStats,
@@ -256,23 +287,20 @@ export function blendedBaselineForCategory(
   const cfg = CATEGORY_BASELINE_CONFIG[statId];
   if (!cfg) return null;
 
-  // Talent path: when we have a sufficient-sample talent vector AND the
-  // category has a Statcast-derivable rate, surface that. Talent rates
-  // are already Bayesian-blended inside the talent layer, so we trust
-  // them as-is and pass through the talent's effective PA for the
-  // confidence cue downstream.
   const eff = stats.xwobaEffectivePA;
-  if (eff >= TALENT_GATE_EFFECTIVE_PA) {
-    const talentRate = talentRateForCategory(stats, statId);
-    if (talentRate !== null) {
-      return { rate: talentRate, effectivePA: eff };
-    }
+  const talentRate =
+    eff >= TALENT_GATE_EFFECTIVE_PA ? talentRateForCategory(stats, statId) : null;
+
+  // Regressed-actual talent rates (K%/BB%) stand alone.
+  if (talentRate !== null && !XSTAT_MODELED_CATS.has(statId)) {
+    return { rate: talentRate, effectivePA: eff };
   }
 
-  // Raw path: legacy Bayesian blend of raw current + prior + league.
+  // Raw path: Bayesian blend of raw current + prior + league. Needed both
+  // as the fallback and as the actual side of the expected-stat blend.
   const cur = cfg.getCurrent(stats);
   const prior = stats.priorSeason ? cfg.getPrior(stats.priorSeason) : null;
-  const result = blendRate({
+  const raw = blendRate({
     current: cur,
     currentN: stats.pa,
     prior,
@@ -282,7 +310,16 @@ export function blendedBaselineForCategory(
     priorCap: cfg.priorCap,
     priorReliabilityN: FULL_SAMPLE_PA,
   });
-  return { rate: result.value, effectivePA: result.effectiveN };
+
+  if (talentRate !== null) {
+    const w = XSTAT_BLEND_WEIGHT;
+    return {
+      rate: w * talentRate + (1 - w) * raw.value,
+      effectivePA: Math.round(w * eff + (1 - w) * raw.effectiveN),
+    };
+  }
+
+  return { rate: raw.value, effectivePA: raw.effectiveN };
 }
 
 /**

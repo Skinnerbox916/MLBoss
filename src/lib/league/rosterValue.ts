@@ -137,21 +137,55 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
+ * Pitcher-side distance — z-based until pitcher RUPM exists.
+ *
+ * Pitcher cats have no RUPM (no pitcher FA-pool projection yet — see
+ * docs/roster-strategy.md "Forward focus: v1"), so their distance maps
+ * `zCompetitive` onto the same [−1, +1] scale: z = ±1.5σ (the old v1
+ * LOCKED/HARD_PUNT bands) lands at ±1. This is a continuous port of the
+ * v1 band semantics, replaced by real RUPM distance when the pitcher
+ * pool projection lands.
+ */
+const PITCHER_Z_AT_EDGE = 1.5;
+
+export function forecastDistanceZ(entry: ForecastEntry): number {
+  return clamp(entry.zCompetitive / PITCHER_Z_AT_EDGE, -1, 1);
+}
+
+/** Auto-concede rule for one entry, side-aware (see computeCategoryLeverage). */
+function isAutoConcededEntry(entry: ForecastEntry, useZDistance: boolean): boolean {
+  if (useZDistance) {
+    // v1-band port: catastrophic deficit, or below-average with nothing
+    // reachable above.
+    return (
+      entry.zCompetitive <= -PITCHER_Z_AT_EDGE ||
+      (entry.zCompetitive < -0.5 && entry.targetRank === undefined)
+    );
+  }
+  return entry.me.rank > 2 && entry.targetRank === undefined;
+}
+
+/**
  * Resolve per-category leverage for one side's forecast entries.
  * `overrides` mirrors the L5 concede/contest store (`useCategoryWeights`):
  * user 'concede' forces weight 0, 'contest' un-concedes an auto-conceded
  * cat (it gets its natural — usually small — pivotality weight; the math
  * is honest that a 2-move gap buys little, but the user stays in charge).
+ *
+ * `opts.useZDistance` selects the pitcher-side z-based distance (no
+ * pitcher RUPM yet); default is the batter RUPM distance.
  */
 export function computeCategoryLeverage(
   entries: ForecastEntry[],
   overrides: Record<number, ConcedeState> = {},
+  opts: { useZDistance?: boolean } = {},
 ): RosterLeverage {
   const byStatId = new Map<number, CategoryLeverage>();
+  const useZ = opts.useZDistance ?? false;
 
   for (const entry of entries) {
-    const distance = forecastDistance(entry);
-    const autoConceded = entry.me.rank > 2 && entry.targetRank === undefined;
+    const distance = useZ ? forecastDistanceZ(entry) : forecastDistance(entry);
+    const autoConceded = isAutoConcededEntry(entry, useZ);
     const ov = overrides[entry.statId];
     const conceded = ov === 'concede' ? true : ov === 'contest' ? false : autoConceded;
     const pivotalWeight = pivotality(distance);
@@ -258,7 +292,8 @@ export function playerRosterValue(
  * Owner decision (docs/roster-value-proposal.md#resolved-product-decisions):
  * raw move-units never render. Tables show a 0-100 index scaled within the
  * combined rostered + FA pool: p10 of the pool ≈ 0 (replacement-ish),
- * p95 ≈ 100 (best realistic option). Percentile anchors rather than
+ * p99 ≈ 100 (the single best option — a lower ceiling flattened the top
+ * half-dozen players into identical 100s). Percentile anchors rather than
  * min/max so one outlier can't compress everyone else.
  */
 export function buildIndexScaler(poolValues: number[]): (v: number) => number {
@@ -271,7 +306,7 @@ export function buildIndexScaler(poolValues: number[]): (v: number) => number {
     return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
   };
   const floor = q(0.10);
-  const ceil = q(0.95);
+  const ceil = q(0.99);
   if (ceil <= floor) return () => 50;
   return (v: number) => Math.max(0, Math.min(100, Math.round(((v - floor) / (ceil - floor)) * 100)));
 }

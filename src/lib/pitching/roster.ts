@@ -52,13 +52,16 @@ export function buildNeutralGame(): EnrichedGame {
 export function getPitcherSeasonRating(args: {
   talent: PitcherTalent;
   scoredCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, Focus>;
+  focusMap?: Record<number, Focus>;
+  /** Numeric per-cat weights (0 = conceded). Preferred over `focusMap` —
+   *  the roster page passes leverage weights from `useRosterCategoryWeights`. */
+  categoryWeights?: Record<number, number>;
   metadata?: { role: 'starter' | 'reliever' | 'inactive'; isGhost: boolean };
   status?: string | null;
   ownershipPercent?: number;
   isRostered?: boolean;
 }): PitcherRating {
-  const { talent, scoredCategories, focusMap, metadata, status, ownershipPercent, isRostered } = args;
+  const { talent, scoredCategories, focusMap, categoryWeights, metadata, status, ownershipPercent, isRostered } = args;
   
   const neutralGame = buildNeutralGame();
   
@@ -83,7 +86,8 @@ export function getPitcherSeasonRating(args: {
   const rating = getPitcherRating({
     forecast,
     scoredCategories,
-    focusMap,
+    focusMap: focusMap ?? {},
+    categoryWeights,
   });
 
   // Liveness Gate (2026 Focus): 

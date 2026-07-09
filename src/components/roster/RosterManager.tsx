@@ -40,28 +40,27 @@ import {
   generateSwapSuggestions,
   getDefaultDepth,
 } from '@/lib/roster/depth';
-import {
-  blendedCategoryScore,
-  estimateFullTimePaceRef,
-  estimateFullTimeGpRef,
-  playingTimeFactor,
-} from '@/lib/roster/scoring';
 import RosterFocusPanel from './RosterFocusPanel';
 import { useLeagueForecast } from '@/lib/hooks/useLeagueForecast';
-import { useSuggestedFocus } from '@/lib/hooks/useSuggestedFocus';
 import {
-  forecastToAnalysis,
-  assignFocusForBattingSide,
-  type BattingFocusPlan,
-} from '@/lib/league/forwardFocus';
+  useRosterCategoryWeights,
+  rosterConcedePersistKey,
+  type RosterCategoryWeights,
+} from '@/lib/hooks/useRosterCategoryWeights';
+import {
+  playerContributions,
+  playerRosterValue,
+  buildIndexScaler,
+  type PlayerCatLine,
+} from '@/lib/league/rosterValue';
 import {
   analyzeSwapStrategy,
   type EnrichedSwap,
   type SwapStrategy,
   type CategoryImpact,
+  type CatRole,
 } from '@/lib/league/swapStrategy';
-import type { Focus as FocusState } from '@/lib/rating/focus';
-import type { LeagueForecast } from '@/lib/league/forecast';
+import type { LeagueForecast, ForecastEntry } from '@/lib/league/forecast';
 
 // ---------------------------------------------------------------------------
 // Stat mapping: league stat_id → PlayerStatLine accessor
@@ -275,16 +274,16 @@ function DepthChart({
 // Player stat cells
 // ---------------------------------------------------------------------------
 
-function StatCell({ value, name, chased, punted }: {
+function StatCell({ value, name, contested, conceded }: {
   value: number | null;
   name: string;
-  chased: boolean;
-  punted: boolean;
+  contested: boolean;
+  conceded: boolean;
 }) {
   const formatted = formatStatValue(value, name);
-  const color = chased
+  const color = contested
     ? 'text-success font-semibold'
-    : punted
+    : conceded
       ? 'text-muted-foreground/40'
       : 'text-foreground';
   return <td className={`px-2 py-1.5 text-right text-xs tabular-nums ${color}`}>{formatted}</td>;
@@ -300,7 +299,6 @@ function StatusBadge({ status }: { status: string }) {
 // (Bayesian blended vs. prior-year + league mean) is doing most of the work,
 // so we dim those rows' PA to telegraph "don't read the raw numbers straight".
 const THIN_SAMPLE_PA = 30;
-const IL_STINT_MIN_PERCENT_OWNED = 35;
 
 function PACell({ pa }: { pa: number | null }) {
   if (pa === null) {
@@ -327,19 +325,15 @@ type RosterSortKey = 'name' | 'pa' | 'score' | number; // number = stat_id
 function RosterTable({
   players,
   displayCategories,
-  focusMap,
+  catRoleFor,
   getStats,
-  scoringCategories,
-  fullTimePaceRef,
-  fullTimeGpRef,
+  scoreIndexFor,
 }: {
   players: RosterEntry[];
   displayCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, FocusState>;
+  catRoleFor: (statId: number) => CatRole;
   getStats: (name: string, team: string) => BatterSeasonStats | null;
-  scoringCategories: EnrichedLeagueStatCategory[];
-  fullTimePaceRef: number;
-  fullTimeGpRef: number;
+  scoreIndexFor: (playerKey: string) => number | null;
 }) {
   const [sortKey, setSortKey] = useState<RosterSortKey>('score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -367,24 +361,12 @@ function RosterTable({
   );
 
   const sorted = useMemo(() => {
-    const scoreOf = (p: RosterEntry) => {
-      const s = getStats(p.name, p.editorial_team_abbr);
-      const isOnIL = getRowStatus(p) === 'injured';
-      const ptf = playingTimeFactor(s, {
-        fullTimePaceRef,
-        fullTimeGpRef,
-        isOnIL,
-        percentOwned: p.percent_owned,
-      });
-      return blendedCategoryScore(s, scoringCategories, ptf, isOnIL, focusMap);
-    };
-
     // Pull the comparable value for each row given the active sort key.
     // Names compare as strings; everything else as numbers (with null
     // sinking to the bottom regardless of direction).
     const valueOf = (p: RosterEntry): string | number | null => {
       if (sortKey === 'name') return p.name.toLowerCase();
-      if (sortKey === 'score') return scoreOf(p);
+      if (sortKey === 'score') return scoreIndexFor(p.player_key);
       const s = getStats(p.name, p.editorial_team_abbr);
       if (!s) return null;
       if (sortKey === 'pa') return s.pa;
@@ -404,7 +386,7 @@ function RosterTable({
       }
       return ((va as number) - (vb as number)) * dir;
     });
-  }, [players, getStats, scoringCategories, fullTimePaceRef, fullTimeGpRef, focusMap, sortKey, sortDir]);
+  }, [players, getStats, scoreIndexFor, sortKey, sortDir]);
 
   if (sorted.length === 0) {
     return <p className="text-xs text-muted-foreground p-4">No batters on roster</p>;
@@ -441,9 +423,10 @@ function RosterTable({
               {sortIndicator('pa')}
             </th>
             {displayCategories.map(cat => {
-              const baseColor = focusMap[cat.stat_id] === 'chase'
+              const role = catRoleFor(cat.stat_id);
+              const baseColor = role === 'contested'
                 ? 'text-success'
-                : focusMap[cat.stat_id] === 'punt'
+                : role === 'conceded'
                   ? 'text-muted-foreground/40'
                   : 'text-muted-foreground';
               const isActive = sortKey === cat.stat_id;
@@ -452,6 +435,9 @@ function RosterTable({
                   key={cat.stat_id}
                   className={`text-right px-2 py-1.5 font-medium w-12 cursor-pointer select-none hover:text-foreground ${baseColor}`}
                   onClick={() => handleSort(cat.stat_id)}
+                  title={role === 'contested' ? 'Battleground category — production here carries full weight'
+                    : role === 'conceded' ? 'Conceded — production here carries no weight'
+                    : 'Cushioned lead — production here carries reduced weight'}
                 >
                   <span className={isActive ? 'text-accent' : ''}>{cat.display_name}</span>
                   {sortIndicator(cat.stat_id)}
@@ -471,15 +457,7 @@ function RosterTable({
           {sorted.map(player => {
             const stats = getStats(player.name, player.editorial_team_abbr);
             const rowStatus = getRowStatus(player);
-            const isOnIL = rowStatus === 'injured';
-            const ptf = playingTimeFactor(stats, {
-              fullTimePaceRef,
-              fullTimeGpRef,
-              isOnIL,
-              percentOwned: player.percent_owned,
-            });
-            const score = blendedCategoryScore(stats, scoringCategories, ptf, isOnIL, focusMap);
-            const rowOpacity = isOnIL ? 'opacity-40' : '';
+            const rowOpacity = rowStatus === 'injured' ? 'opacity-40' : '';
             return (
               <tr key={player.player_key} className={`border-b border-border/50 hover:bg-surface-muted/50 ${rowOpacity}`}>
                 <td className="px-2 py-1.5">
@@ -491,23 +469,19 @@ function RosterTable({
                 </td>
                 <td className="px-2 py-1.5 text-muted-foreground">{player.display_position}</td>
                 <PACell pa={stats?.pa ?? null} />
-                {displayCategories.map(cat => (
-                  <StatCell
-                    key={cat.stat_id}
-                    value={stats ? getStatValue(stats, cat.stat_id) : null}
-                    name={cat.display_name}
-                    chased={focusMap[cat.stat_id] === 'chase'}
-                    punted={focusMap[cat.stat_id] === 'punt'}
-                  />
-                ))}
-                <ScoreCell
-                  score={score}
-                  ptf={ptf}
-                  isOnIL={isOnIL}
-                  stats={stats}
-                  fullTimeGpRef={fullTimeGpRef}
-                  percentOwned={player.percent_owned}
-                />
+                {displayCategories.map(cat => {
+                  const role = catRoleFor(cat.stat_id);
+                  return (
+                    <StatCell
+                      key={cat.stat_id}
+                      value={stats ? getStatValue(stats, cat.stat_id) : null}
+                      name={cat.display_name}
+                      contested={role === 'contested'}
+                      conceded={role === 'conceded'}
+                    />
+                  );
+                })}
+                <ScoreCell index={scoreIndexFor(player.player_key)} />
               </tr>
             );
           })}
@@ -517,57 +491,19 @@ function RosterTable({
   );
 }
 
-// Score column with a tooltip that surfaces the playing-time factor so
-// users can see why a counting-stat star got dampened vs. a full-timer.
-function ScoreCell({
-  score,
-  ptf,
-  isOnIL,
-  stats,
-  fullTimeGpRef,
-  percentOwned,
-}: {
-  score: number;
-  ptf: number;
-  isOnIL: boolean;
-  stats: BatterSeasonStats | null;
-  fullTimeGpRef: number;
-  percentOwned: number | undefined;
-}) {
-  const pct = Math.round(ptf * 100);
-  // Mirror the `playingTimeFactor` inferred-IL criteria exactly so the
-  // tooltip tells the truth about why a score came out the way it did.
-  // Keep thresholds in sync with scoring.ts (IL_STINT_* constants).
-  const ilStintShape =
-    !isOnIL &&
-    stats != null &&
-    fullTimeGpRef > 0 &&
-    stats.gp > 0 &&
-    (stats.priorSeason?.gp ?? 0) / 140 >= 0.8 &&
-    stats.gp / fullTimeGpRef < 0.7 &&
-    stats.pa / stats.gp >= 3.5;
-  const marketStillValues = percentOwned === undefined || percentOwned >= IL_STINT_MIN_PERCENT_OWNED;
-  const inferredILStint = ilStintShape && marketStillValues;
-  // Market-overridden: shape matches but ownership has fallen — surface
-  // that we consciously ignored the stint pattern for this player.
-  const demotionSuspected = ilStintShape && !marketStillValues;
-
-  let title: string;
-  if (isOnIL) {
-    title = `PT ${pct}% — using prior-year role (currently on IL)`;
-  } else if (inferredILStint) {
-    title = `PT ${pct}% — inferred IL stint (missed a block of games); using prior-year role until current-season volume catches up`;
-  } else if (demotionSuspected) {
-    title = `PT ${pct}% — stats look like an IL returnee, but only ${Math.round(percentOwned ?? 0)}% owned suggests role demotion; using current-year volume`;
-  } else {
-    title = `PT ${pct}% of a full-time starter's expected volume`;
+// Score column: the 0-100 value index (leverage-weighted value to this
+// team, scaled within the current rostered + FA pool; replacement ~ 0).
+// Raw move-units never render — see docs/roster-value-proposal.md.
+function ScoreCell({ index }: { index: number | null }) {
+  if (index === null) {
+    return <td className="px-2 py-1.5 text-right text-xs tabular-nums text-muted-foreground/40">—</td>;
   }
   return (
     <td
       className="px-2 py-1.5 text-right text-xs tabular-nums text-success font-semibold"
-      title={title}
+      title="Value to your team, 0-100 within the current player pool (replacement ≈ 0). Production is weighted by how contested each category still is — see the Roster Focus panel."
     >
-      {score.toFixed(2)}
+      {index}
     </td>
   );
 }
@@ -579,19 +515,15 @@ function ScoreCell({
 function UpgradeTargetsTable({
   players,
   displayCategories,
-  focusMap,
+  catRoleFor,
   getStats,
-  scoringCategories,
-  fullTimePaceRef,
-  fullTimeGpRef,
+  scoreIndexFor,
 }: {
   players: FreeAgentPlayer[];
   displayCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, FocusState>;
+  catRoleFor: (statId: number) => CatRole;
   getStats: (name: string, team: string) => BatterSeasonStats | null;
-  scoringCategories: EnrichedLeagueStatCategory[];
-  fullTimePaceRef: number;
-  fullTimeGpRef: number;
+  scoreIndexFor: (playerKey: string) => number | null;
 }) {
   const sorted = useMemo(() => {
     return [...players]
@@ -605,26 +537,18 @@ function UpgradeTargetsTable({
         if (isStashableIL(p)) return true;
         return (p.percent_owned ?? 0) >= UPGRADE_TARGET_OWNERSHIP_FLOOR;
       })
-      .map(p => {
-        const stats = getStats(p.name, p.editorial_team_abbr);
-        const isOnIL = isStashableIL(p);
-        const ptf = playingTimeFactor(stats, {
-          fullTimePaceRef,
-          fullTimeGpRef,
-          isOnIL,
-          percentOwned: p.percent_owned,
-        });
-        const score = blendedCategoryScore(stats, scoringCategories, ptf, isOnIL, focusMap);
-        return { player: p, stats, ptf, isOnIL, score };
-      })
-      // Drop rows we have nothing to rank by — players whose stats lookup
-      // returned null (no MLB ID resolved, or no current/prior data) end
-      // up at score 0 and just fill rows with em-dashes. Keeping them
-      // pushes real candidates out of the top 30.
-      .filter(({ stats, score }) => stats !== null && score > 0)
-      .sort((a, b) => b.score - a.score)
+      .map(p => ({
+        player: p,
+        stats: getStats(p.name, p.editorial_team_abbr),
+        index: scoreIndexFor(p.player_key),
+      }))
+      // Drop rows we have nothing to rank by — players with no stats or
+      // no value line just fill rows with em-dashes. Keeping them pushes
+      // real candidates out of the top 30.
+      .filter(({ stats, index }) => stats !== null && index !== null)
+      .sort((a, b) => (b.index ?? 0) - (a.index ?? 0))
       .slice(0, 30);
-  }, [players, getStats, scoringCategories, fullTimePaceRef, fullTimeGpRef, focusMap]);
+  }, [players, getStats, scoreIndexFor]);
 
   if (sorted.length === 0) {
     return <p className="text-xs text-muted-foreground p-4">Loading available players...</p>;
@@ -643,25 +567,28 @@ function UpgradeTargetsTable({
             >
               PA
             </th>
-            {displayCategories.map(cat => (
-              <th
-                key={cat.stat_id}
-                className={`text-right px-2 py-1.5 font-medium w-12 ${
-                  focusMap[cat.stat_id] === 'chase'
-                    ? 'text-success'
-                    : focusMap[cat.stat_id] === 'punt'
-                      ? 'text-muted-foreground/40'
-                      : 'text-muted-foreground'
-                }`}
-              >
-                {cat.display_name}
-              </th>
-            ))}
+            {displayCategories.map(cat => {
+              const role = catRoleFor(cat.stat_id);
+              return (
+                <th
+                  key={cat.stat_id}
+                  className={`text-right px-2 py-1.5 font-medium w-12 ${
+                    role === 'contested'
+                      ? 'text-success'
+                      : role === 'conceded'
+                        ? 'text-muted-foreground/40'
+                        : 'text-muted-foreground'
+                  }`}
+                >
+                  {cat.display_name}
+                </th>
+              );
+            })}
             <th className="text-right px-2 py-1.5 text-success font-medium w-14">Score</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map(({ player, stats, ptf, isOnIL, score }) => {
+          {sorted.map(({ player, stats, index }) => {
             const isWaivers = player.ownership_type === 'waivers';
             return (
               <tr key={player.player_key} className="border-b border-border/50 hover:bg-surface-muted/50">
@@ -677,24 +604,18 @@ function UpgradeTargetsTable({
                 <PACell pa={stats?.pa ?? null} />
                 {displayCategories.map(cat => {
                   const val = stats ? getStatValue(stats, cat.stat_id) : null;
+                  const role = catRoleFor(cat.stat_id);
                   return (
                     <StatCell
                       key={cat.stat_id}
                       value={val}
                       name={cat.display_name}
-                      chased={focusMap[cat.stat_id] === 'chase'}
-                      punted={focusMap[cat.stat_id] === 'punt'}
+                      contested={role === 'contested'}
+                      conceded={role === 'conceded'}
                     />
                   );
                 })}
-                <ScoreCell
-                  score={score}
-                  ptf={ptf}
-                  isOnIL={isOnIL}
-                  stats={stats}
-                  fullTimeGpRef={fullTimeGpRef}
-                  percentOwned={player.percent_owned}
-                />
+                <ScoreCell index={index} />
               </tr>
             );
           })}
@@ -736,27 +657,27 @@ function reasonBadge(reason: RankedSwap['primaryReason']) {
  * badge alone is the explanation.
  */
 function strategyBadge(strategy: SwapStrategy) {
-  if (strategy.erodesAnchor) {
+  if (strategy.erodesCushion) {
     const t = strategy.primaryTarget;
     return (
-      <Badge color="error" title={t ? `Hurts ${t.displayName} (anchor)` : 'Erodes an anchor cat'}>
-        <Icon icon={FiAlertTriangle} size={10} /> erodes anchor
+      <Badge color="error" title={t ? `Drains ${t.displayName} (cushioned lead)` : 'Erodes a cushioned lead'}>
+        <Icon icon={FiAlertTriangle} size={10} /> erodes {t ? t.displayName : 'cushion'}
       </Badge>
     );
   }
-  if (strategy.pushesSwing) {
+  if (strategy.pushesContested) {
     const t = strategy.primaryTarget;
     return (
-      <Badge color="accent" title={t ? `Improves ${t.displayName} (swing target)` : 'Pushes a swing target'}>
-        <Icon icon={FiTarget} size={10} /> {t ? `pushes ${t.displayName}` : 'pushes swing'}
+      <Badge color="accent" title={t ? `Improves ${t.displayName} (battleground cat)` : 'Pushes a battleground cat'}>
+        <Icon icon={FiTarget} size={10} /> {t ? `pushes ${t.displayName}` : 'pushes battleground'}
       </Badge>
     );
   }
-  // No swing pushed, no anchor eroded — surface a quiet anchor reinforce
-  // when present.
-  if (strategy.primaryTarget && strategy.primaryTarget.role === 'anchor' && strategy.primaryTarget.delta > 0) {
+  // Nothing contested pushed, nothing eroded — surface a quiet cushion
+  // reinforce when present.
+  if (strategy.primaryTarget && strategy.primaryTarget.role === 'cushioned' && strategy.primaryTarget.delta > 0) {
     return (
-      <Badge color="success" title={`Pads ${strategy.primaryTarget.displayName} (anchor)`}>
+      <Badge color="success" title={`Pads ${strategy.primaryTarget.displayName} (cushioned lead)`}>
         <Icon icon={FiShield} size={10} /> reinforces {strategy.primaryTarget.displayName}
       </Badge>
     );
@@ -765,14 +686,13 @@ function strategyBadge(strategy: SwapStrategy) {
 }
 
 /**
- * Per-category delta strip. Color-coded by plan role:
- *  - **swing** — accent (we want these)
- *  - **anchor** — success when up (good), error when down (warning)
- *  - **concede** — muted (uninteresting; the swap shouldn't be evaluated
- *    on these and we display them dim so the user can see the side-effects)
+ * Per-category delta strip. Color-coded by leverage role:
+ *  - **contested** — accent (the battlegrounds we want moved)
+ *  - **cushioned** — success when up (padding), error when down (warning)
+ *  - **conceded** — muted (side-effects on cats we've given up)
  *
- * Sign + magnitude show direction. Truncated to top 4 by |delta| so the
- * row stays compact on the busiest swaps.
+ * Deltas are in move units (drop→add contribution change — the actual
+ * components of the swap's net value). Truncated to top 4 by |delta|.
  */
 function categoryDeltaStrip({ impact }: { impact: CategoryImpact[] }) {
   if (impact.length === 0) return null;
@@ -781,16 +701,16 @@ function categoryDeltaStrip({ impact }: { impact: CategoryImpact[] }) {
       {impact.slice(0, 4).map(c => {
         const sign = c.delta >= 0 ? '+' : '';
         const tone =
-          c.role === 'concede' ? 'text-muted-foreground/70' :
-          c.role === 'swing' && c.delta > 0 ? 'text-accent' :
-          c.role === 'anchor' && c.delta > 0 ? 'text-success' :
-          c.role === 'anchor' && c.delta < 0 ? 'text-error' :
+          c.role === 'conceded' ? 'text-muted-foreground/70' :
+          c.role === 'contested' && c.delta > 0 ? 'text-accent' :
+          c.role === 'cushioned' && c.delta > 0 ? 'text-success' :
+          c.role === 'cushioned' && c.delta < 0 ? 'text-error' :
           c.delta > 0 ? 'text-success' : 'text-error';
         return (
           <span
             key={c.statId}
             className={`text-caption font-semibold ${tone}`}
-            title={`${c.displayName} (${c.role}) — drop→add normalized rate delta`}
+            title={`${c.displayName} (${c.role}) — drop→add value delta`}
           >
             {c.displayName}: {sign}{c.delta.toFixed(2)}
           </span>
@@ -915,14 +835,6 @@ function SwapSuggestions({ suggestions, openSlotCount }: { suggestions: Enriched
 
 const PREFERRED_DEPTH_KEY = 'roster.preferredDepth';
 
-// Per-league localStorage key for the user's roster-focus overrides. Read
-// and written by `useSuggestedFocus(..., persistKey)` — see the call site
-// inside `RosterManager`.
-const ROSTER_FOCUS_KEY_PREFIX = 'roster.categoryFocus';
-function rosterFocusPersistKey(leagueKey: string | undefined | null): string | undefined {
-  return leagueKey ? `${ROSTER_FOCUS_KEY_PREFIX}:${leagueKey}` : undefined;
-}
-
 function loadPreferredDepth(): Partial<Record<BatterPosition, number>> {
   if (typeof window === 'undefined') return {};
   try {
@@ -984,20 +896,29 @@ export default function RosterManager() {
     });
   }, []);
 
-  // Roster-focus suggestions come from the forward-looking league forecast
-  // (per-team projection ranked across the league, outliers excluded). The
-  // user's overrides persist per-league via `useSuggestedFocus(persistKey)`,
-  // surviving page refreshes the same way the old roster page did.
+  // League forecast: per-cat standings projection + per-player value
+  // lines (the projection facts). Leverage — how much each cat is worth
+  // fighting for from THIS team's position — is resolved client-side by
+  // `useRosterCategoryWeights` so concede/contest toggles re-rank
+  // instantly. See src/lib/league/rosterValue.ts.
   const { forecast, isLoading: forecastLoading } = useLeagueForecast(leagueKey, teamKey);
-  const forecastAnalysis = useMemo(() => forecastToAnalysis(forecast), [forecast]);
-  const focusPredicate = useCallback(() => true, []);
-  const {
-    focusMap,
-    suggestedFocusMap,
-    set: setFocus,
-    reset: resetFocus,
-    hasOverrides: hasFocusOverrides,
-  } = useSuggestedFocus(forecastAnalysis, focusPredicate, rosterFocusPersistKey(leagueKey));
+
+  const batterEntries = useMemo<ForecastEntry[]>(
+    () => forecast?.entries.filter(e => e.isBatterStat) ?? [],
+    [forecast],
+  );
+  const pitcherEntries = useMemo<ForecastEntry[]>(
+    () => forecast?.entries.filter(e => e.isPitcherStat) ?? [],
+    [forecast],
+  );
+
+  const batterWeights = useRosterCategoryWeights(batterEntries, {
+    persistKey: rosterConcedePersistKey(leagueKey ? `${leagueKey}:bat` : undefined),
+  });
+  const pitcherWeights = useRosterCategoryWeights(pitcherEntries, {
+    useZDistance: true,
+    persistKey: rosterConcedePersistKey(leagueKey ? `${leagueKey}:pit` : undefined),
+  });
 
   const battingCategories = useMemo(
     () => categories.filter(c => c.is_batter_stat),
@@ -1009,14 +930,12 @@ export default function RosterManager() {
     [battingCategories],
   );
 
-  // Scoring: include every non-punted category. Chase boosts via
-  // CHASE_WEIGHT inside `blendedCategoryScore`; punt drops the cat from
-  // the loop entirely. Filtering to chased-only made CHASE_WEIGHT a
-  // uniform scalar (no relative effect) and made punt a no-op whenever
-  // any chase existed — neither matched the chase/hold/punt UI grammar.
-  const scoringCategories = useMemo(
-    () => displayCategories.filter(c => focusMap[c.stat_id] !== 'punt'),
-    [displayCategories, focusMap],
+  // Column styling role per cat (contested = worth fighting for →
+  // highlighted; conceded = muted). Derived from leverage, not a
+  // user-picked label.
+  const catRoleFor = useCallback(
+    (statId: number): CatRole => batterWeights.leverage.byStatId.get(statId)?.status ?? 'contested',
+    [batterWeights.leverage],
   );
 
   const rosterBatters = useMemo(
@@ -1043,27 +962,58 @@ export default function RosterManager() {
     [leaguePositions],
   );
 
-  // League-wide pace references from every batter we have stats for (roster +
-  // free agents). `paceRef` is the p90 of current-season PA (≈ what a full-
-  // time leadoff hitter has accumulated). `gpRef` is the p90 of current-season
-  // GP (≈ team games elapsed), used by the IL-stint heuristic. Computing once
-  // across the full pool (not per-table) keeps the roster and FA sides on the
-  // same scale so swap evaluations stay apples-to-apples.
-  const { fullTimePaceRef, fullTimeGpRef } = useMemo(() => {
-    const allStats: BatterSeasonStats[] = [];
+  // Per-player value lines from the forecast route (neutral-week weekly
+  // category production, role share applied server-side). Keyed by
+  // name|team — the same identity join the stats hooks use.
+  const nameTeamKey = (name: string, team: string) =>
+    `${name.toLowerCase()}|${team.toLowerCase()}`;
+
+  const { rosterLines, faLines } = useMemo(() => {
+    const rostered = new Map<string, PlayerCatLine>();
+    const fas = new Map<string, PlayerCatLine>();
+    for (const line of forecast?.playerValues?.rostered ?? []) {
+      rostered.set(nameTeamKey(line.name, line.teamAbbr), line);
+    }
+    for (const line of forecast?.playerValues?.freeAgents ?? []) {
+      fas.set(nameTeamKey(line.name, line.teamAbbr), line);
+    }
+    return { rosterLines: rostered, faLines: fas };
+  }, [forecast]);
+
+  // Contributions (move units per cat) and leverage-weighted value per
+  // player. One map for everyone on the page — roster rows, FA rows, and
+  // the swap decorator all read the same numbers.
+  const { contributionsByPlayerKey, valueByPlayerKey } = useMemo(() => {
+    const contributions = new Map<string, Record<number, number>>();
+    const values = new Map<string, number>();
+    const addPlayer = (playerKey: string, line: PlayerCatLine | undefined) => {
+      if (!line) return;
+      const contribs = playerContributions(line, batterEntries);
+      contributions.set(playerKey, contribs);
+      values.set(playerKey, playerRosterValue(contribs, batterWeights.leverage));
+    };
     for (const p of rosterBatters) {
-      const s = getRosterPlayerStats(p.name, p.editorial_team_abbr);
-      if (s) allStats.push(s);
+      addPlayer(p.player_key, rosterLines.get(nameTeamKey(p.name, p.editorial_team_abbr)));
     }
     for (const p of availableBatters) {
-      const s = getFAStats(p.name, p.editorial_team_abbr);
-      if (s) allStats.push(s);
+      addPlayer(p.player_key, faLines.get(nameTeamKey(p.name, p.editorial_team_abbr)));
     }
-    return {
-      fullTimePaceRef: estimateFullTimePaceRef(allStats),
-      fullTimeGpRef: estimateFullTimeGpRef(allStats),
-    };
-  }, [rosterBatters, availableBatters, getRosterPlayerStats, getFAStats]);
+    return { contributionsByPlayerKey: contributions, valueByPlayerKey: values };
+  }, [rosterBatters, availableBatters, rosterLines, faLines, batterEntries, batterWeights.leverage]);
+
+  // 0-100 display index within the combined pool (owner decision: raw
+  // move-units never render — see docs/roster-value-proposal.md).
+  const indexOf = useMemo(
+    () => buildIndexScaler(Array.from(valueByPlayerKey.values())),
+    [valueByPlayerKey],
+  );
+  const scoreIndexFor = useCallback(
+    (playerKey: string): number | null => {
+      const v = valueByPlayerKey.get(playerKey);
+      return v === undefined ? null : indexOf(v);
+    },
+    [valueByPlayerKey, indexOf],
+  );
 
   const scoredRoster = useMemo<ScoredPlayer[]>(() => {
     return rosterBatters
@@ -1076,26 +1026,18 @@ export default function RosterManager() {
           average_draft_pick: signals?.average_draft_pick ?? p.average_draft_pick,
           percent_drafted: signals?.percent_drafted ?? p.percent_drafted,
         };
-        const stats = getRosterPlayerStats(p.name, p.editorial_team_abbr);
-        const isOnIL = isStashableIL(p);
-        const ptf = playingTimeFactor(stats, {
-          fullTimePaceRef,
-          fullTimeGpRef,
-          isOnIL,
-          percentOwned: rawWithSignals.percent_owned,
-        });
         return {
           player_key: p.player_key,
           name: p.name,
           eligibleBatterPositions: getBatterPositions(p.eligible_positions),
-          score: blendedCategoryScore(stats, scoringCategories, ptf, isOnIL, focusMap),
+          score: valueByPlayerKey.get(p.player_key) ?? 0,
           raw: rawWithSignals,
           percentOwned: rawWithSignals.percent_owned,
           averageDraftPick: rawWithSignals.average_draft_pick,
         };
       })
       .filter(p => p.eligibleBatterPositions.length > 0);
-  }, [rosterBatters, getRosterPlayerStats, scoringCategories, rosterMarketSignals, fullTimePaceRef, fullTimeGpRef, focusMap]);
+  }, [rosterBatters, rosterMarketSignals, valueByPlayerKey]);
 
   const scoredFreeAgents = useMemo<ScoredPlayer[]>(() => {
     // Same ownership floor as the upgrade table — the swap optimizer can't
@@ -1105,25 +1047,18 @@ export default function RosterManager() {
     return availableBatters
       .filter(p => !p.on_disabled_list)
       .filter(p => (p.percent_owned ?? 0) >= UPGRADE_TARGET_OWNERSHIP_FLOOR)
-      .map(p => {
-        const stats = getFAStats(p.name, p.editorial_team_abbr);
-        const ptf = playingTimeFactor(stats, {
-          fullTimePaceRef,
-          fullTimeGpRef,
-          percentOwned: p.percent_owned,
-        });
-        return {
-          player_key: p.player_key,
-          name: p.name,
-          eligibleBatterPositions: getBatterPositions(p.eligible_positions),
-          score: blendedCategoryScore(stats, scoringCategories, ptf, false, focusMap),
-          raw: p,
-          percentOwned: p.percent_owned,
-          averageDraftPick: p.average_draft_pick,
-        };
-      })
+      .filter(p => valueByPlayerKey.has(p.player_key))
+      .map(p => ({
+        player_key: p.player_key,
+        name: p.name,
+        eligibleBatterPositions: getBatterPositions(p.eligible_positions),
+        score: valueByPlayerKey.get(p.player_key) ?? 0,
+        raw: p,
+        percentOwned: p.percent_owned,
+        averageDraftPick: p.average_draft_pick,
+      }))
       .filter(p => p.eligibleBatterPositions.length > 0);
-  }, [availableBatters, getFAStats, scoringCategories, fullTimePaceRef, fullTimeGpRef, focusMap]);
+  }, [availableBatters, valueByPlayerKey]);
 
   const replacementLevel = useMemo(
     () => computeReplacementLevel(scoredFreeAgents),
@@ -1183,46 +1118,32 @@ export default function RosterManager() {
       startingSlots,
       replacementLevel,
       undefined,
+      // minNetValue is in leverage-weighted move units now: 0.05 = a
+      // twentieth of a typical move's worth of contested production.
       { minNetValue: 0.05, limit: 15, preferredDepth, openSlotCount },
     );
   }, [scoredRoster, scoredFreeAgents, startingSlots, replacementLevel, preferredDepth, openSlotCount]);
 
-  // Strategic plan for the batting side. Lifted up from RosterFocusPanel
-  // so the swap-suggestions analyzer can reuse the same anchor / swing /
-  // concede assignments without recomputing.
-  const battingPlan = useMemo<BattingFocusPlan | null>(() => {
-    if (!forecast) return null;
-    const batterEntries = forecast.entries.filter(e => e.isBatterStat);
-    if (batterEntries.length === 0) return null;
-    return assignFocusForBattingSide(batterEntries);
-  }, [forecast]);
-
-  // Decorate each swap with a strategic-context summary: per-cat deltas
-  // annotated by anchor/swing/concede role, plus a headline ("Pushes HR",
-  // "Erodes AVG", etc.). Falls back to swaps without strategy when the
-  // plan isn't ready yet.
+  // Decorate each swap with per-cat deltas in move units, annotated by
+  // leverage status ("Pushes K", "Erodes SB", etc.). Reads the same
+  // contribution map the scores come from — the strip's numbers ARE the
+  // components of the swap's net value.
+  const displayNameFor = useCallback(
+    (statId: number) =>
+      batterEntries.find(e => e.statId === statId)?.displayName ?? String(statId),
+    [batterEntries],
+  );
   const enrichedSwaps = useMemo<EnrichedSwap[]>(() => {
-    if (!battingPlan) {
-      return swapSuggestions.map(swap => ({
-        ...swap,
-        strategy: {
-          categoryImpact: [],
-          pushesSwing: false,
-          erodesAnchor: false,
-          headline: null,
-          primaryTarget: null,
-        },
-      }));
-    }
-    // Drop is on the roster, add is a free agent — combine the two
-    // lookups so the analyzer resolves either side from a single getter.
-    const lookup = (name: string, team: string) =>
-      getRosterPlayerStats(name, team) ?? getFAStats(name, team);
     return swapSuggestions.map(swap => ({
       ...swap,
-      strategy: analyzeSwapStrategy(swap, battingPlan, scoringCategories, lookup),
+      strategy: analyzeSwapStrategy(
+        swap,
+        key => contributionsByPlayerKey.get(key) ?? null,
+        catRoleFor,
+        displayNameFor,
+      ),
     }));
-  }, [swapSuggestions, battingPlan, scoringCategories, getRosterPlayerStats, getFAStats]);
+  }, [swapSuggestions, contributionsByPlayerKey, catRoleFor, displayNameFor]);
 
   const isLoading = ctxLoading || rosterLoading || catsLoading || posLoading;
 
@@ -1260,12 +1181,8 @@ export default function RosterManager() {
         <BattersTab
           forecast={forecast}
           forecastLoading={forecastLoading}
-          battingPlan={battingPlan}
-          focusMap={focusMap}
-          suggestedFocusMap={suggestedFocusMap}
-          setFocus={setFocus}
-          resetFocus={resetFocus}
-          hasFocusOverrides={hasFocusOverrides}
+          batterWeights={batterWeights}
+          catRoleFor={catRoleFor}
           isLoading={isLoading}
           rosterValue={rosterValue}
           scoredRoster={scoredRoster}
@@ -1277,11 +1194,9 @@ export default function RosterManager() {
           displayCategories={displayCategories}
           getRosterPlayerStats={getRosterPlayerStats}
           getFAStats={getFAStats}
-          scoringCategories={scoringCategories}
+          scoreIndexFor={scoreIndexFor}
           preferredDepth={preferredDepth}
           onPreferredDepthChange={updatePreferredDepth}
-          fullTimePaceRef={fullTimePaceRef}
-          fullTimeGpRef={fullTimeGpRef}
         />
       ) : (
         <PitchersTab
@@ -1290,11 +1205,7 @@ export default function RosterManager() {
           pitchersLoading={pitchersLoading}
           isLoading={isLoading}
           categories={categories}
-          focusMap={focusMap}
-          suggestedFocusMap={suggestedFocusMap}
-          setFocus={setFocus}
-          resetFocus={resetFocus}
-          hasFocusOverrides={hasFocusOverrides}
+          pitcherWeights={pitcherWeights}
           forecast={forecast}
           forecastLoading={forecastLoading}
         />
@@ -1310,12 +1221,8 @@ export default function RosterManager() {
 function BattersTab({
   forecast,
   forecastLoading,
-  battingPlan,
-  focusMap,
-  suggestedFocusMap,
-  setFocus,
-  resetFocus,
-  hasFocusOverrides,
+  batterWeights,
+  catRoleFor,
   isLoading,
   rosterValue,
   scoredRoster,
@@ -1327,20 +1234,14 @@ function BattersTab({
   displayCategories,
   getRosterPlayerStats,
   getFAStats,
-  scoringCategories,
+  scoreIndexFor,
   preferredDepth,
   onPreferredDepthChange,
-  fullTimePaceRef,
-  fullTimeGpRef,
 }: {
   forecast: LeagueForecast | undefined;
   forecastLoading: boolean;
-  battingPlan: BattingFocusPlan | null;
-  focusMap: Record<number, FocusState>;
-  suggestedFocusMap: Record<number, FocusState>;
-  setFocus: (statId: number, focus: FocusState) => void;
-  resetFocus: () => void;
-  hasFocusOverrides: boolean;
+  batterWeights: RosterCategoryWeights;
+  catRoleFor: (statId: number) => CatRole;
   isLoading: boolean;
   rosterValue: ReturnType<typeof computeRosterValue>;
   scoredRoster: ScoredPlayer[];
@@ -1352,11 +1253,9 @@ function BattersTab({
   displayCategories: EnrichedLeagueStatCategory[];
   getRosterPlayerStats: (name: string, team: string) => BatterSeasonStats | null;
   getFAStats: (name: string, team: string) => BatterSeasonStats | null;
-  scoringCategories: EnrichedLeagueStatCategory[];
+  scoreIndexFor: (playerKey: string) => number | null;
   preferredDepth: Partial<Record<BatterPosition, number>>;
   onPreferredDepthChange: (pos: BatterPosition, next: number | null) => void;
-  fullTimePaceRef: number;
-  fullTimeGpRef: number;
 }) {
   return (
     <>
@@ -1364,12 +1263,12 @@ function BattersTab({
         forecast={forecast}
         isLoading={forecastLoading}
         side="batting"
-        plan={battingPlan ?? undefined}
-        focusMap={focusMap}
-        onSetFocus={setFocus}
-        suggestedFocusMap={suggestedFocusMap}
-        onReset={resetFocus}
-        hasOverrides={hasFocusOverrides}
+        leverage={batterWeights.leverage}
+        isConceded={batterWeights.isConceded}
+        isAutoConceded={batterWeights.isAutoConceded}
+        onToggleConcede={batterWeights.toggleConcede}
+        onReset={batterWeights.reset}
+        hasOverrides={batterWeights.hasOverrides}
       />
 
       {isLoading ? (
@@ -1394,11 +1293,9 @@ function BattersTab({
               <RosterTable
                 players={rosterBatters}
                 displayCategories={displayCategories}
-                focusMap={focusMap}
+                catRoleFor={catRoleFor}
                 getStats={getRosterPlayerStats}
-                scoringCategories={scoringCategories}
-                fullTimePaceRef={fullTimePaceRef}
-                fullTimeGpRef={fullTimeGpRef}
+                scoreIndexFor={scoreIndexFor}
               />
             </Panel>
 
@@ -1413,11 +1310,9 @@ function BattersTab({
               <UpgradeTargetsTable
                 players={availableBatters}
                 displayCategories={displayCategories}
-                focusMap={focusMap}
+                catRoleFor={catRoleFor}
                 getStats={getFAStats}
-                scoringCategories={scoringCategories}
-                fullTimePaceRef={fullTimePaceRef}
-                fullTimeGpRef={fullTimeGpRef}
+                scoreIndexFor={scoreIndexFor}
               />
             </Panel>
           </div>
@@ -1467,13 +1362,13 @@ function PitcherTable({
   players,
   talentMap,
   scoredCategories,
-  focusMap,
+  categoryWeights,
   emptyMessage,
 }: {
   players: Array<RosterEntry | FreeAgentPlayer>;
   talentMap: Record<string, import('@/lib/mlb/players').PitcherTalentWithMetadata>;
   scoredCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, FocusState>;
+  categoryWeights: Record<number, number>;
   emptyMessage: string;
 }) {
   const scored = useMemo(() => {
@@ -1484,7 +1379,7 @@ function PitcherTable({
       const rating = getPitcherSeasonRating({
         talent: entry.talent,
         scoredCategories,
-        focusMap,
+        categoryWeights,
         metadata: entry.metadata,
         status: p.status,
         ownershipPercent: p.percent_owned,
@@ -1492,7 +1387,7 @@ function PitcherTable({
       });
       return { player: p, talent: entry.talent, rating, metadata: entry.metadata };
     }).sort((a, b) => (b.rating?.score ?? -1) - (a.rating?.score ?? -1));
-  }, [players, talentMap, scoredCategories, focusMap]);
+  }, [players, talentMap, scoredCategories, categoryWeights]);
 
   if (players.length === 0) {
     return <p className="text-xs text-muted-foreground p-4">{emptyMessage}</p>;
@@ -1565,13 +1460,13 @@ function StreamingAdvisor({
   availablePitchers,
   talentMap,
   scoredCategories,
-  focusMap,
+  categoryWeights,
 }: {
   rosterPitchers: RosterEntry[];
   availablePitchers: FreeAgentPlayer[];
   talentMap: Record<string, import('@/lib/mlb/players').PitcherTalentWithMetadata>;
   scoredCategories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, FocusState>;
+  categoryWeights: Record<number, number>;
 }) {
   const advice = useMemo(() => {
     if (Object.keys(talentMap).length === 0) return null;
@@ -1583,7 +1478,7 @@ function StreamingAdvisor({
         const rating = getPitcherSeasonRating({ 
           talent: entry.talent, 
           scoredCategories, 
-          focusMap,
+          categoryWeights,
           metadata: entry.metadata,
           status: p.status,
           ownershipPercent: p.percent_owned,
@@ -1602,7 +1497,7 @@ function StreamingAdvisor({
         const rating = getPitcherSeasonRating({ 
           talent: entry.talent, 
           scoredCategories, 
-          focusMap,
+          categoryWeights,
           metadata: entry.metadata,
           status: p.status,
           ownershipPercent: p.percent_owned,
@@ -1620,7 +1515,7 @@ function StreamingAdvisor({
     const churnCandidates = scoredRoster.filter(p => p.rating.score < replacementScore - 2);
 
     return { replacementScore, churnCandidates, topFAs: scoredFAs.slice(0, 3) };
-  }, [rosterPitchers, availablePitchers, talentMap, scoredCategories, focusMap]);
+  }, [rosterPitchers, availablePitchers, talentMap, scoredCategories, categoryWeights]);
 
   if (!advice || advice.churnCandidates.length === 0) return null;
 
@@ -1673,11 +1568,7 @@ function PitchersTab({
   pitchersLoading,
   isLoading,
   categories,
-  focusMap,
-  suggestedFocusMap,
-  setFocus,
-  resetFocus,
-  hasFocusOverrides,
+  pitcherWeights,
   forecast,
   forecastLoading,
 }: {
@@ -1686,11 +1577,7 @@ function PitchersTab({
   pitchersLoading: boolean;
   isLoading: boolean;
   categories: EnrichedLeagueStatCategory[];
-  focusMap: Record<number, FocusState>;
-  suggestedFocusMap: Record<number, FocusState>;
-  setFocus: (statId: number, focus: FocusState) => void;
-  resetFocus: () => void;
-  hasFocusOverrides: boolean;
+  pitcherWeights: RosterCategoryWeights;
   forecast: LeagueForecast | undefined;
   forecastLoading: boolean;
 }) {
@@ -1706,10 +1593,10 @@ function PitchersTab({
     [pitchingCategories],
   );
 
-  const scoredCategories = useMemo(
-    () => displayCategories.filter(c => focusMap[c.stat_id] !== 'punt'),
-    [displayCategories, focusMap],
-  );
+  // All supported cats stay in the score; leverage weights (0 when
+  // conceded) do the emphasis work the old punt-filter used to do.
+  const scoredCategories = displayCategories;
+  const categoryWeights = pitcherWeights.categoryWeights;
 
   const filteredFAs = useMemo(() => {
     return availablePitchers.slice(0, 50).filter(p => {
@@ -1720,7 +1607,7 @@ function PitchersTab({
       const rating = getPitcherSeasonRating({
         talent: entry.talent,
         scoredCategories,
-        focusMap,
+        categoryWeights,
         metadata: entry.metadata,
         status: p.status,
         ownershipPercent: p.percent_owned,
@@ -1730,7 +1617,7 @@ function PitchersTab({
       // Filter out players with 0 score (Inactive/Ghosts who aren't stashed)
       return rating.score > 0;
     });
-  }, [availablePitchers, talentMap, scoredCategories, focusMap]);
+  }, [availablePitchers, talentMap, scoredCategories, categoryWeights]);
 
   const stashTargets = useMemo(() => {
     return availablePitchers.slice(0, 80).filter(p => {
@@ -1761,12 +1648,12 @@ function PitchersTab({
         forecast={forecast}
         isLoading={forecastLoading}
         side="pitching"
-        plan={undefined}
-        focusMap={focusMap}
-        onSetFocus={setFocus}
-        suggestedFocusMap={suggestedFocusMap}
-        onReset={resetFocus}
-        hasOverrides={hasFocusOverrides}
+        leverage={pitcherWeights.leverage}
+        isConceded={pitcherWeights.isConceded}
+        isAutoConceded={pitcherWeights.isAutoConceded}
+        onToggleConcede={pitcherWeights.toggleConcede}
+        onReset={pitcherWeights.reset}
+        hasOverrides={pitcherWeights.hasOverrides}
       />
 
       <StreamingAdvisor 
@@ -1774,7 +1661,7 @@ function PitchersTab({
         availablePitchers={availablePitchers}
         talentMap={talentMap}
         scoredCategories={scoredCategories}
-        focusMap={focusMap}
+        categoryWeights={categoryWeights}
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -1786,7 +1673,7 @@ function PitchersTab({
             players={rosterPitchers} 
             talentMap={talentMap}
             scoredCategories={scoredCategories}
-            focusMap={focusMap}
+            categoryWeights={categoryWeights}
             emptyMessage="No pitchers on roster"
           />
         </Panel>
@@ -1804,7 +1691,7 @@ function PitchersTab({
               players={filteredFAs.slice(0, 25)} 
               talentMap={talentMap}
               scoredCategories={scoredCategories}
-              focusMap={focusMap}
+              categoryWeights={categoryWeights}
               emptyMessage="No active upgrades found"
             />
           </Panel>
@@ -1818,7 +1705,7 @@ function PitchersTab({
                 players={stashTargets.slice(0, 10)} 
                 talentMap={talentMap}
                 scoredCategories={scoredCategories}
-                focusMap={focusMap}
+                categoryWeights={categoryWeights}
                 emptyMessage="No stash targets found"
               />
             </Panel>

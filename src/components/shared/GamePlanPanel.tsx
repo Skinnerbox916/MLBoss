@@ -13,7 +13,6 @@ import type {
 import { rowHasComparablePair } from '@/components/shared/matchupRows';
 import type { DailyBaseline } from '@/lib/projection/slotAware';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
-import { FocusResetButton } from '@/components/shared/focusPanel';
 
 /**
  * Game Plan: per-cat tiles for **this week's matchup**, split into two
@@ -563,6 +562,25 @@ function getReason(row: AnalyzedMatchupRow): string {
   if (swing < -SWING_NOTABLE) return 'falling further behind';
   if (m > -0.3) return 'narrow deficit';
   return 'steady deficit';
+}
+
+// ---------------------------------------------------------------------------
+// FocusResetButton — header reset affordance (moved here from the retired
+// focusPanel.tsx chrome when the last chase/hold/punt surface converted)
+// ---------------------------------------------------------------------------
+
+function FocusResetButton({ onReset, hasOverrides }: { onReset: () => void; hasOverrides: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onReset}
+      disabled={!hasOverrides}
+      className="text-caption px-2 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-accent/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      title={hasOverrides ? 'Reset all concede/contest picks to MLBoss suggestions' : 'No overrides — already showing suggestions'}
+    >
+      Reset
+    </button>
+  );
 }
 
 // ---------------------------------------------------------------------------

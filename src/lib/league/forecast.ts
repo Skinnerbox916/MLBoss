@@ -122,8 +122,10 @@ const OUTLIER_IQR_K = 1.5;          // standard 1.5×IQR fence
  * Max gap to target rank measured in RUPM units (roster moves). A target
  * rank is "reachable" if the user could plausibly close the gap with
  * 1-2 well-chosen swaps. 2.0 = "two moves' worth of upgrade."
+ * Exported: `rosterValue.ts` maps this same bar onto the pivotality
+ * decided-boundary so reachability and leverage stay one concept.
  */
-const REACHABLE_GAP_MOVES = 2.0;
+export const REACHABLE_GAP_MOVES = 2.0;
 
 /**
  * Ranks worth chasing in an H2H category league. Rank 1 wins ~90% of

@@ -30,7 +30,12 @@ import {
   type ScoredPlayer,
   type StartingSlots,
 } from '@/lib/roster/depth';
-import { blendedCategoryScore } from '@/lib/roster/scoring';
+import {
+  playingTimeFactor,
+  estimateFullTimePaceRef,
+  estimateFullTimeGpRef,
+} from '@/lib/roster/playingTime';
+import type { PlayerCatLine } from '@/lib/league/rosterValue';
 import {
   computeLeagueForecast,
   isRatioCat,
@@ -96,8 +101,9 @@ export async function GET(
     const myRoster = await getTeamRoster(user.id, teamKey);
     const rosterFp = hashCode(myRoster.map(p => p.player_key).sort().join(','));
 
+    // v2: bundle shape gained per-player value lines (roster-value engine).
     const aggregateBundle = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:${leagueKey}:${rosterFp}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:v2:${leagueKey}:${rosterFp}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong,
       () => computeAggregateBundle(user.id, leagueKey),
     );
@@ -109,7 +115,13 @@ export async function GET(
       rupmByStatId: new Map(aggregateBundle.rupm),
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      playerValues: {
+        rostered: aggregateBundle.playerLines.byTeam[teamKey] ?? [],
+        freeAgents: aggregateBundle.playerLines.freeAgents,
+      },
+    });
   } catch (error) {
     console.error('league forecast API error:', error);
     return NextResponse.json(
@@ -126,6 +138,17 @@ interface AggregateBundle {
    *  per stat_id. Serialized as `[statId, rupm][]` for JSON cache
    *  roundtripping (Map doesn't survive JSON.stringify). */
   rupm: Array<[number, number]>;
+  /**
+   * Per-player weekly category lines, role-share (playing-time factor)
+   * applied — the projection facts behind the L6 roster value engine
+   * (`src/lib/league/rosterValue.ts`). Rostered lines are keyed by team
+   * so the route can slice out the requesting viewer's team; the client
+   * applies leverage weights (concede overrides live in the browser).
+   */
+  playerLines: {
+    byTeam: Record<string, PlayerCatLine[]>;
+    freeAgents: PlayerCatLine[];
+  };
 }
 
 /**
@@ -182,7 +205,7 @@ async function computeAggregateBundle(
 
   // Per-team fan-out runs in parallel with the FA pool fetch — the two
   // are independent and both feed the RUPM calc below.
-  const [teamResults, faProjections] = await Promise.all([
+  const [teamResults, { projections: faProjections, meta: faMeta }] = await Promise.all([
     Promise.all(
       standings.map(team => projectOneTeam({
         userId,
@@ -215,20 +238,87 @@ async function computeAggregateBundle(
   const engagementByTeamKey = new Map(engagements.map(e => [e.teamKey, e.engagementRatio]));
   applyEngagement(teams, engagementByTeamKey, batterCategories);
 
-  // Pool all rostered batter projections across the league for the
-  // RUPM "bottom-K" reference. Includes both starters and bench —
-  // bench is the realistic drop pool.
-  const allRosteredBatters = teamResults.flatMap(r => r.batterProjections);
+  // ---- Per-player value lines (role-share applied) -------------------
+  //
+  // The neutral-week projection deliberately assumes 6 games/week for
+  // team aggregates (see neutralWeek.ts — strips IL/YTD distortion, and
+  // the starting-lineup cap bounds the total). For ranking *individual*
+  // adds and drops that assumption overvalues part-timers, so per-player
+  // lines are scaled by the playing-time factor (role share). RUPM uses
+  // the same scaled lines so its "one move" unit prices realistic
+  // pickups, not a fantasy where every 4th outfielder plays every day.
+  // Scaling multiplies count AND denom, so ratio-cat rates are unchanged
+  // — only counting volume shrinks.
+  const allStats: BatterSeasonStats[] = [
+    ...teamResults.flatMap(r => r.batterMeta.map(m => m.stats)),
+    ...faMeta.map(m => m.stats),
+  ];
+  const fullTimePaceRef = estimateFullTimePaceRef(allStats);
+  const fullTimeGpRef = estimateFullTimeGpRef(allStats);
 
+  const scaleLine = (
+    proj: PlayerProjection,
+    meta: { stats: BatterSeasonStats; isOnIL: boolean; percentOwned?: number },
+  ): PlayerProjection => {
+    const ptf = playingTimeFactor(meta.stats, {
+      fullTimePaceRef,
+      fullTimeGpRef,
+      isOnIL: meta.isOnIL,
+      percentOwned: meta.percentOwned,
+    });
+    const byCategory: PlayerProjection['byCategory'] = new Map();
+    for (const [statId, agg] of proj.byCategory) {
+      byCategory.set(statId, {
+        ...agg,
+        expectedCount: agg.expectedCount * ptf,
+        expectedDenom: agg.expectedDenom * ptf,
+      });
+    }
+    return { ...proj, byCategory };
+  };
+
+  const serialize = (proj: PlayerProjection): PlayerCatLine => {
+    const byCategory: PlayerCatLine['byCategory'] = {};
+    for (const [statId, agg] of proj.byCategory) {
+      byCategory[statId] = { c: agg.expectedCount, d: agg.expectedDenom };
+    }
+    return { name: proj.name, teamAbbr: proj.teamAbbr, byCategory };
+  };
+
+  const byTeam: Record<string, PlayerCatLine[]> = {};
+  const scaledRostered: PlayerProjection[] = [];
+  for (const r of teamResults) {
+    const metaByMlbId = new Map(r.batterMeta.map(m => [m.mlbId, m]));
+    const scaled = r.batterProjections.map(p => {
+      const meta = metaByMlbId.get(p.mlbId);
+      return meta ? scaleLine(p, meta) : p;
+    });
+    scaledRostered.push(...scaled);
+    byTeam[r.aggregate.teamKey] = scaled.map(serialize);
+  }
+
+  const faMetaByMlbId = new Map(faMeta.map(m => [m.mlbId, m]));
+  const scaledFAs = faProjections.map(p => {
+    const meta = faMetaByMlbId.get(p.mlbId);
+    return meta ? scaleLine(p, meta) : p;
+  });
+
+  // RUPM over the scaled pool: "bottom-K rostered" includes bench (the
+  // realistic drop pool); "top-K FA" is the realistic pickup pool.
   const rupmMap = computeRupm({
-    rosteredProjections: allRosteredBatters,
-    faProjections,
+    rosteredProjections: scaledRostered,
+    faProjections: scaledFAs,
     categories: batterCategories,
     k: RUPM_K,
   });
   const rupm = Array.from(rupmMap.entries());
 
-  return { teams, categories: scoredCategories, rupm };
+  return {
+    teams,
+    categories: scoredCategories,
+    rupm,
+    playerLines: { byTeam, freeAgents: scaledFAs.map(serialize) },
+  };
 }
 
 /**
@@ -237,15 +327,29 @@ async function computeAggregateBundle(
  * populates (5-min TTL), so the marginal cost of running this from
  * the forecast route is small on a warm session.
  */
+interface PlayerLineMeta {
+  mlbId: number;
+  stats: BatterSeasonStats;
+  isOnIL: boolean;
+  percentOwned?: number;
+}
+
+/** True IL statuses (IL10/IL15/IL60, legacy DL) — same rule the roster
+ *  page uses for stash detection. NA/DTD are deliberately excluded. */
+function isILStatus(status: string | undefined): boolean {
+  if (!status) return false;
+  return /^IL\d*$/i.test(status) || status.toUpperCase() === 'DL';
+}
+
 async function projectFreeAgents(args: {
   userId: string;
   leagueKey: string;
   batterCategories: EnrichedLeagueStatCategory[];
-}): Promise<PlayerProjection[]> {
+}): Promise<{ projections: PlayerProjection[]; meta: PlayerLineMeta[] }> {
   const { userId, leagueKey, batterCategories } = args;
 
   const fas = await getAvailableBatters(userId, leagueKey);
-  if (fas.length === 0) return [];
+  if (fas.length === 0) return { projections: [], meta: [] };
 
   const statsRecord = await getRosterSeasonStats(
     fas.map(p => ({ name: p.name, team: p.editorial_team_abbr })),
@@ -256,6 +360,7 @@ async function projectFreeAgents(args: {
   }
 
   const activeFAs: ActiveBatter[] = [];
+  const meta: PlayerLineMeta[] = [];
   for (const p of fas) {
     const key = `${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`;
     const stats = statsRecord[key];
@@ -265,9 +370,15 @@ async function projectFreeAgents(args: {
       name: p.name,
       teamAbbr: p.editorial_team_abbr,
     });
+    meta.push({
+      mlbId: stats.mlbId,
+      stats,
+      isOnIL: Boolean(p.on_disabled_list) || isILStatus(p.status),
+      percentOwned: p.percent_owned,
+    });
   }
 
-  if (activeFAs.length === 0) return [];
+  if (activeFAs.length === 0) return { projections: [], meta: [] };
 
   const lineupSpots = await getObservedLineupSpots(activeFAs.map(b => b.mlbId));
   const deps: NeutralBatterDeps = {
@@ -282,7 +393,7 @@ async function projectFreeAgents(args: {
     const proj = projectBatterNeutral(fa, deps, reusableContext);
     if (proj) projections.push(proj);
   }
-  return projections;
+  return { projections, meta };
 }
 
 interface TeamProjectionResult {
@@ -292,6 +403,9 @@ interface TeamProjectionResult {
    *  to find the "bottom-K rostered" replacement-level reference
    *  (bench is the realistic drop pool). */
   batterProjections: PlayerProjection[];
+  /** Stats + IL status per projected batter — inputs to the role-share
+   *  (playing-time factor) scaling applied at the bundle level. */
+  batterMeta: PlayerLineMeta[];
 }
 
 async function projectOneTeam(input: {
@@ -325,20 +439,21 @@ async function projectOneTeam(input: {
 
   const byCategory: Record<number, ProjectedCategoryAgg> = {};
   let batterProjections: PlayerProjection[] = [];
+  const batterMeta: PlayerLineMeta[] = [];
 
   // ---- Batter side --------------------------------------------------
   //
   // Three-step:
-  //   1. Build paired (ActiveBatter, ScoredPlayer) entries for every
-  //      eligible roster batter. Score is focus-neutral talent (empty
-  //      focusMap, ptf=1) so the optimizer picks the best players for
-  //      the league as a whole, not the user's chosen strategy.
-  //   2. Project EVERY eligible batter (starters + bench) at neutral
+  //   1. Project EVERY eligible batter (starters + bench) at neutral
   //      volume. The full set is needed for the league-wide RUPM
   //      "bottom-K rostered" reference. Only starters contribute to
   //      the team aggregate that feeds the per-cat rankings.
-  //   3. Run `assignStarters` to pick the optimal starting lineup
-  //      under position constraints, and aggregate only those.
+  //   2. Run `assignStarters` to pick the optimal starting lineup under
+  //      position constraints, scoring each batter by the projection's
+  //      own neutral-context rating (`weeklyScore`) — focus-neutral
+  //      talent, so the optimizer picks the best players for the league
+  //      as a whole, not the viewer's chosen strategy.
+  //   3. Aggregate only the assigned starters.
   //
   // The starting-lineup cap is load-bearing — a 14-hitter roster
   // doesn't get 14 hitters' worth of weekly PA in its team total;
@@ -352,7 +467,12 @@ async function projectOneTeam(input: {
       if (s.mlbId > 0) statsByMlbId.set(s.mlbId, s);
     }
 
-    interface BatterEntry { active: ActiveBatter; scored: ScoredPlayer }
+    interface BatterEntry {
+      active: ActiveBatter;
+      playerKey: string;
+      eligibleBatterPositions: ReturnType<typeof getBatterPositions>;
+      raw: (typeof activeBatRoster)[number];
+    }
     const entries: BatterEntry[] = [];
     for (const p of activeBatRoster) {
       const key = `${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`;
@@ -366,13 +486,14 @@ async function projectOneTeam(input: {
           name: p.name,
           teamAbbr: p.editorial_team_abbr,
         },
-        scored: {
-          player_key: p.player_key,
-          name: p.name,
-          eligibleBatterPositions,
-          score: blendedCategoryScore(stats, batterCategories, 1, false, {}),
-          raw: p,
-        },
+        playerKey: p.player_key,
+        eligibleBatterPositions,
+        raw: p,
+      });
+      batterMeta.push({
+        mlbId: stats.mlbId,
+        stats,
+        isOnIL: isILStatus(p.status),
       });
     }
 
@@ -393,11 +514,19 @@ async function projectOneTeam(input: {
       }
       batterProjections = Array.from(projByMlbId.values());
 
-      // Pick optimal starters under position constraints.
-      const assignment = assignStarters(entries.map(e => e.scored), startingSlots);
+      // Pick optimal starters under position constraints, scored by the
+      // neutral-context rating the projection already computed.
+      const scored: ScoredPlayer[] = entries.map(e => ({
+        player_key: e.playerKey,
+        name: e.active.name,
+        eligibleBatterPositions: e.eligibleBatterPositions,
+        score: projByMlbId.get(e.active.mlbId)?.weeklyScore ?? 0,
+        raw: e.raw,
+      }));
+      const assignment = assignStarters(scored, startingSlots);
       const starterMlbIds = new Set(
         entries
-          .filter(e => assignment.assignedKeys.has(e.scored.player_key))
+          .filter(e => assignment.assignedKeys.has(e.playerKey))
           .map(e => e.active.mlbId),
       );
 
@@ -456,5 +585,6 @@ async function projectOneTeam(input: {
   return {
     aggregate: { teamKey, teamName, byCategory },
     batterProjections,
+    batterMeta,
   };
 }

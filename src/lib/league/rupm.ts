@@ -38,7 +38,7 @@ import type { PlayerProjection } from '@/lib/projection/batterTeam';
  * "if this swap drove 100% of team rate" to "realistic team-level
  * change."
  */
-const RATIO_VOLUME_SHARE = 0.1;
+export const RATIO_VOLUME_SHARE = 0.1;
 
 export function computeRupm(args: {
   rosteredProjections: PlayerProjection[];

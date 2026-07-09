@@ -136,7 +136,7 @@ function projectOneBatterNeutral(
   player: ActiveBatter,
   deps: NeutralBatterDeps,
   reusableContext: MatchupContext,
-): Map<number, PerCategoryProjection> | null {
+): { byCat: Map<number, PerCategoryProjection>; ratingScore: number } | null {
   const stats = deps.statsByMlbId.get(player.mlbId);
   if (!stats) return null;
 
@@ -175,7 +175,7 @@ function projectOneBatterNeutral(
     const count = cat.expected * denom;
     accumulate(byCat, cat.statId, count, denom);
   }
-  return byCat;
+  return { byCat, ratingScore: rating.score };
 }
 
 /**
@@ -186,9 +186,12 @@ function projectOneBatterNeutral(
  *
  * Returns null when the batter is functionally inactive (no stats, or
  * `weeklyPA < MIN_WEEKLY_PA`). Otherwise returns a `PlayerProjection`
- * with `byCategory` populated; `perDay`, `weeklyScore`, `weeklyPA`,
- * and `expectedGames` are placeholder/empty since this layer doesn't
- * project per-day or apply schedule.
+ * with `byCategory` populated and `weeklyScore` carrying the neutral-
+ * context rating score (0-100) — the canonical "how good is this bat in
+ * a vacuum" scalar, used by the forecast route's starting-lineup
+ * assignment. `perDay`, `weeklyPA`, and `expectedGames` are
+ * placeholder/empty since this layer doesn't project per-day or apply
+ * schedule.
  */
 export function projectBatterNeutral(
   player: ActiveBatter,
@@ -196,16 +199,16 @@ export function projectBatterNeutral(
   reusableContext?: MatchupContext,
 ): import('./batterTeam').PlayerProjection | null {
   const ctx = reusableContext ?? buildNeutralBatterContext();
-  const byCat = projectOneBatterNeutral(player, deps, ctx);
-  if (!byCat) return null;
+  const result = projectOneBatterNeutral(player, deps, ctx);
+  if (!result) return null;
   return {
     mlbId: player.mlbId,
     name: player.name,
     teamAbbr: player.teamAbbr,
     perDay: [],
-    weeklyScore: 0,
+    weeklyScore: result.ratingScore,
     weeklyPA: 0,
-    byCategory: byCat,
+    byCategory: result.byCat,
     expectedGames: 0,
   };
 }

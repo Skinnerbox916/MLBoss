@@ -92,18 +92,18 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
 
 ### Per-cat batter baselines
 
-The batter side reads per-category talent rates out of [mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts). Each cat has two paths:
+The batter side reads per-category talent rates out of [mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts). Each cat has three paths:
 
-- **Talent path** (preferred): batter has Savant talent with `effectivePA ≥ TALENT_GATE_EFFECTIVE_PA` (100) AND the cat is one of the four high-Statcast-signal cats. The talent vector is already Bayesian-regressed inside the talent layer (`computeBatterTalentXwoba`), so we surface it directly:
+- **Regressed-actual talent** (K / BB): batter has Savant talent with `effectivePA ≥ TALENT_GATE_EFFECTIVE_PA` (100). These talent rates are Bayesian-regressed *actual* outcomes (`talent.kRate` stabilises ~60 PA; `talent.bbRate` ~120 PA), surfaced directly — there is no expected-vs-actual gap to hedge.
+- **Expected-stat blend** (AVG / H / TB): the talent rate comes from a Statcast expected model, blended at `XSTAT_BLEND_WEIGHT` (0.6) with the raw actual-rate path rather than replacing it:
   - **AVG** ← `talent.xba` (deserved AVG from Savant)
   - **H** ← `talent.xba × (1 − talent.bbRate)` (per-PA hit rate; AB/PA ≈ 1 − BB%)
-  - **K** ← `talent.kRate` (regressed K% — stabilises ~60 PA, fastest signal)
-  - **BB** ← `talent.bbRate` (regressed BB% — stabilises ~120 PA)
-- **Raw path** (fallback): legacy Bayesian blend of raw current + prior + league. Used for cats outside the talent set (HR, TB, R, RBI, SB) AND for the four eligible cats when talent isn't ready (thin Savant sample, rookie pre-debut).
+  - **TB** ← `talent.xslg × (1 − talent.bbRate)` (SLG is TB/AB, so TB/PA ≈ xSLG × AB/PA)
 
-HR and TB will move to the talent path once we expose xSLG-derived signals via a follow-up commit; the regression is in place (`talent.xslg`), only the per-cat consumer isn't using it yet. R / RBI / SB stay on the raw path indefinitely — they're lineup-context-dominated, not pure batter skill.
+  Why blend instead of replace: expected stats beat actuals at predicting future rates, but only modestly (next-season wOBA: xwOBA r ≈ .57 vs wOBA r ≈ .54; blends reach r ≈ .59–.61 — Tango's Predictive wOBA line of work), and pure-expected pricing systematically shortchanges speed/contact archetypes whose actual-vs-expected residual is persistent skill (fast hitters beat xwOBA by ~15–22 points of wOBA; sprint speed correlates r ≈ .61 with the differential on grounders). The 40% actual side implicitly carries each player's residual. See history.md "2026-07 — Per-cat batter baselines: expected-stat blend".
+- **Raw path** (everything else, and the fallback for thin-sample / no-Savant players): legacy Bayesian blend of raw current + prior + league. HR stays raw — no Savant expected primary isolates HR (xSLG − xBA can't decompose the extra-base mix). R / RBI / SB stay raw indefinitely — lineup-context-dominated, not pure batter skill.
 
-Both consumers of `blendedBaselineForCategory` — the matchup-aware `getBatterRating` (L3) and the season-long `blendedCategoryScore` (L3 roster) — pick up the talent path automatically.
+Every consumer of `blendedBaselineForCategory` — matchup-aware `getBatterRating` (L3), the L6 roster-value engine's neutral-week projections, and the points-league rate vectors — picks up all three paths automatically.
 
 ## SP/RP blend
 
@@ -465,6 +465,7 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | `bbCompoundingPenalty` slope / cap | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Additive ERA penalty for BB% above league mean (.085). Calibrated to empirical BB%-vs-(ERA−xERA) relationship in MLB starter data |
 | Regime probe (`REGIME_SD_*`, `REGIME_SIGNIFICANT_Z`, slope, floor) | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Per-metric Y-Y noise bands and z-score threshold for the probe; slope/floor map from \|score\| to prior-cap multiplier |
 | `LEAGUE_XBA`, `LEAGUE_XSLG` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) | 2024 MLB averages from Savant expected-statistics leaderboard (.243 / .404). xBA tracks AVG closely; xSLG is meaningfully higher than league SLG because Savant credits hard contact that becomes outs at the .240 league-avg BAA rate |
+| `XSTAT_BLEND_WEIGHT` | [mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) | Weight on expected-stat-modeled rates (xBA/xSLG) vs the raw actual blend for AVG/H/TB. Anchored to the predictive-validity ladder (wOBA r ≈ .54 < xwOBA r ≈ .57 < blends r ≈ .59–.61 for next-season wOBA) and the persistent speed/contact residual literature — see [#per-cat-batter-baselines](#per-cat-batter-baselines) |
 | `PRIOR_XBA_PA`, `PRIOR_XSLG_PA` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts) | Half-stabilisation points for xBA / xSLG, both PA-denominated. Faster than full-xwOBA composition (~150 BIP) but slower than K%/BB% — empirically 100/120 PA respectively |
 | `TALENT_GATE_EFFECTIVE_PA` | [mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) | Effective-PA gate that switches AVG / H / K / BB per-cat baselines from raw-rate blend to talent-derived rate. Below 100 effective PA the talent regression is league-prior-dominated; above 100 it strips BABIP/luck noise meaningfully. ~30 GP for a regular |
 | `SP_SHARE_CLAMP` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Floor/ceiling on SP IP share — opener (0.30) and rare complete-game (0.85). See [§SP/RP blend](#sprp-blend). |

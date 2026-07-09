@@ -8,7 +8,7 @@ Six rules that the system is built around. Every engine in this codebase either 
 
 ### 1. Two layers, one bridge
 
-"How good is this player in this matchup?" (rating) and "which categories should I fight for this week?" (recommendation) are different questions that need different math. They connect through exactly one channel: `focusMap`. Rating engines *read* `focusMap` and use it to weight their per-category sub-scores. Recommendation engines *write* `focusMap` and never re-implement rating math.
+"How good is this player in this matchup?" (rating) and "which categories should I fight for this week?" (recommendation) are different questions that need different math. They connect through exactly one channel: `categoryWeights` (per-cat numeric weight; 0 = conceded — the pivotality-era successor to the retired 3-state `focusMap`). Rating engines *read* `categoryWeights` and use it to weight their per-category sub-scores. Recommendation engines *write* `categoryWeights` and never re-implement rating math.
 
 A "great" batter rating doesn't tell the user whether they need more runs. A "chase HR" recommendation doesn't tell them which outfielder to play. Mixing the layers — Boss Brief picking categories with its own rule when the focus bar above it disagreed — is the bug we keep finding and the bug we keep eliminating.
 

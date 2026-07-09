@@ -24,7 +24,7 @@ For the principles and anti-patterns that govern this system, see [architecture.
         │                      └── L4  Projection   sum over window        │
         └─────────────────────────────────────────────────────────────────┘
                                        │
-                                       ├── feeds focusMap weights ──┐
+                                       ├── feeds categoryWeights ──┐
                                        ▼                            │
         ┌─────────────────────────────────────────────────────────┐ │
         │  L5  Matchup state    standings → chase / hold / punt   │─┘
@@ -33,7 +33,7 @@ For the principles and anti-patterns that govern this system, see [architecture.
         └─────────────────────────────────────────────────────────┘
 ```
 
-L1–L4 answer "how good?" L5–L7 answer "what should I do?" `focusMap` is the only line that crosses.
+L1–L4 answer "how good?" L5–L7 answer "what should I do?" `categoryWeights` (per-cat numeric weight, 0 = conceded) is the only line that crosses.
 
 See [architecture.md](./architecture.md#1-two-layers-one-bridge) for why these are two layers with one bridge.
 
@@ -68,7 +68,6 @@ Forecast → per-game score. Both engines return an isomorphic `Rating` shape.
 - Batter rating (`getBatterRating`) — [src/lib/mlb/batterRating.ts](../src/lib/mlb/batterRating.ts)
 - Pitcher rating (`getPitcherRating`) — [src/lib/pitching/rating.ts](../src/lib/pitching/rating.ts)
 - Streaming-board pitcher score (`scorePitcher`) — [src/lib/pitching/scoring.ts](../src/lib/pitching/scoring.ts)
-- Roster blended score (`blendedCategoryScore`) — [src/lib/roster/scoring.ts](../src/lib/roster/scoring.ts) (season-long focus, not matchup-driven)
 
 ## L4 — Projection  →  see [projection.md](./projection.md)
 
@@ -83,13 +82,12 @@ Sum L3 outputs over a window. No new math.
 
 ## L5 — Matchup state  →  see [recommendation-system.md](./recommendation-system.md)
 
-Standings → category strategy. The bridge layer (reads from L4, writes `focusMap` that L3 reads).
+Standings → category strategy. The bridge layer (reads from L4, writes `categoryWeights` that L3 reads).
 
 - `analyzeMatchup` — [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts)
 - `withSwing` — [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts)
 - Endgame sit plan (`computeSitPlan`, per-bat `computeBatterSitValue`) — [src/lib/lineup/sitValue.ts](../src/lib/lineup/sitValue.ts) — today-only bench decisions to flip a losing K/AVG race; arms only when every counting cat is decided and the locks survive the benches. See [history.md](./history.md) "2026-06 — Endgame rewrite of auto-sit".
 - Corrected matchup analysis (`useCorrectedMatchupAnalysis`) — [src/lib/hooks/useCorrectedMatchupAnalysis.ts](../src/lib/hooks/useCorrectedMatchupAnalysis.ts)
-- Suggested focus hook (`useSuggestedFocus`) — [src/lib/hooks/useSuggestedFocus.ts](../src/lib/hooks/useSuggestedFocus.ts)
 - Corrected rows (`composeCorrectedRows`) — [src/lib/matchup/correctedRows.ts](../src/lib/matchup/correctedRows.ts)
 
 ## L6 — Roster strategy  →  see [roster-strategy.md](./roster-strategy.md)
@@ -100,11 +98,11 @@ ROS (rest-of-season) roster construction in a matchup vacuum — talent-only, ne
 - League forecast (`computeLeagueForecast`) — [src/lib/league/forecast.ts](../src/lib/league/forecast.ts)
 - Replacement Upgrade Per Move (`computeRupm`) — [src/lib/league/rupm.ts](../src/lib/league/rupm.ts)
 - Manager-engagement multiplier (`computeTeamEngagements`) — [src/lib/league/engagement.ts](../src/lib/league/engagement.ts)
-- Forward focus v2 — batter (`assignFocusForBattingSide`) — [src/lib/league/forwardFocus.ts](../src/lib/league/forwardFocus.ts)
-- Forward focus v1 — pitcher (`forwardFocusV1`) — [src/lib/league/forwardFocus.ts](../src/lib/league/forwardFocus.ts)
-- Forecast-to-analysis adapter (`forecastToAnalysis`) — [src/lib/league/forwardFocus.ts](../src/lib/league/forwardFocus.ts)
+- Roster value (`computeCategoryLeverage`, `playerContributions`, `playerRosterValue`) — [src/lib/league/rosterValue.ts](../src/lib/league/rosterValue.ts) — leverage = pivotality on RUPM moves-from-a-winning-rank (z for pitchers pending pitcher RUPM); value = leverage-weighted per-cat contributions in move units. Replaced forward focus v1/v2 + `blendedCategoryScore` (2026-07, see history.md)
+- Leverage hook (`useRosterCategoryWeights`) — [src/lib/hooks/useRosterCategoryWeights.ts](../src/lib/hooks/useRosterCategoryWeights.ts) — L6 mirror of `useCategoryWeights`: concede/contest overrides over computed leverage
+- Playing-time factor (`playingTimeFactor`) — [src/lib/roster/playingTime.ts](../src/lib/roster/playingTime.ts) — role share applied to per-player value lines + RUPM inputs in the forecast route
 - Position-aware lineup optimizer + move suggestions (`assignStarters`, `generateSwapSuggestions`) — [src/lib/roster/depth.ts](../src/lib/roster/depth.ts)
-- Move strategy decorator (`analyzeSwapStrategy`) — [src/lib/league/swapStrategy.ts](../src/lib/league/swapStrategy.ts)
+- Move strategy decorator (`analyzeSwapStrategy`) — [src/lib/league/swapStrategy.ts](../src/lib/league/swapStrategy.ts) — per-cat move-unit deltas annotated by leverage status
 
 ## L7 — Narrative  →  see [recommendation-system.md](./recommendation-system.md)
 

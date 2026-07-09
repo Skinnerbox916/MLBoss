@@ -26,11 +26,12 @@ This is the right input for a question about **roster shape**. Schedule-aware pr
 
 | Engine | File | What it produces |
 |---|---|---|
-| `computeLeagueForecast` | [league/forecast.ts](../src/lib/league/forecast.ts) | Per-cat per-team neutral-week projected output across the league, outlier detection, z-score vs competitive field, reachable-target rank |
-| `assignFocusForBattingSide` (v2, goal-driven) | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Batter-side anchor / swing / concede partition that fills a winning-majority target |
-| `forwardFocusV1` (per-cat z-bands) | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Pitcher-side per-cat chase/hold/punt assignment (while v2 batter model validates) |
-| `forecastToAnalysis` | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Adapter that wraps a `LeagueForecast` as a `MatchupAnalysis` so `useSuggestedFocus` consumes it the same way it consumes weekly matchup output |
-| `analyzeSwapStrategy` | [league/swapStrategy.ts](../src/lib/league/swapStrategy.ts) | Decorates a `RankedSwap` with per-cat impact + plan role + headline (pushes swing / erodes anchor / reinforces anchor) |
+| `computeLeagueForecast` | [league/forecast.ts](../src/lib/league/forecast.ts) | Per-cat per-team neutral-week projected output across the league, outlier detection, RUPM-based moves-to-target, reachable-target rank |
+| `computeCategoryLeverage` | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Per-cat leverage weight: `conceded ? 0 : pivotality(distance)`, distance = moves-from-a-winning-rank (batters) / z (pitchers, pending pitcher RUPM) |
+| `playerContributions` / `playerRosterValue` | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Per-player per-cat contributions in RUPM move units → leverage-weighted value to this team |
+| `useRosterCategoryWeights` | [hooks/useRosterCategoryWeights.ts](../src/lib/hooks/useRosterCategoryWeights.ts) | Client hook: leverage + concede/contest override store (localStorage), the L6 mirror of `useCategoryWeights` |
+| `playingTimeFactor` | [roster/playingTime.ts](../src/lib/roster/playingTime.ts) | Role share (0–1) scaling per-player weekly volume; applied server-side to value lines and RUPM inputs |
+| `analyzeSwapStrategy` | [league/swapStrategy.ts](../src/lib/league/swapStrategy.ts) | Decorates a `RankedSwap` with per-cat move-unit deltas + leverage role + headline (pushes contested / erodes cushion / reinforces) |
 
 The underlying swap optimizer (`generateSwapSuggestions` returning `RankedSwap[]`) lives in [roster/depth.ts](../src/lib/roster/depth.ts). It is roster-construction infrastructure (multi-position eligibility, replacement value, gap weighting) and isn't covered here; `analyzeSwapStrategy` is the layer that puts a strategic interpretation on top.
 
@@ -38,7 +39,7 @@ The underlying swap optimizer (`generateSwapSuggestions` returning `RankedSwap[]
 
 A 14-hitter roster doesn't produce 14 hitters' worth of stats per week — only the 10-ish that fit the league's daily starting lineup do. Bench players give optionality (matchup gains, off-day coverage), not extra volume.
 
-Each team's projection is therefore capped by **optimal starting-lineup selection**: before projecting, run [`assignStarters`](../src/lib/roster/depth.ts) (the same position-aware optimizer that powers the depth chart) on the team's full active roster. The optimizer uses focus-neutral [`blendedCategoryScore`](../src/lib/roster/scoring.ts) to value players, then fills C / 1B / 2B / 3B / SS / OF×N / UTIL×M slots with the best position-eligible players via backtracking + alpha-beta pruning. Only the assigned starters feed into the projection.
+Each team's projection is therefore capped by **optimal starting-lineup selection**: before aggregating, run [`assignStarters`](../src/lib/roster/depth.ts) (the same position-aware optimizer that powers the depth chart) on the team's full active roster. The optimizer values players by the neutral-context rating score their own projection already computed (`PlayerProjection.weeklyScore` from [`projectBatterNeutral`](../src/lib/projection/neutralWeek.ts) — focus-neutral, canonical L3 math, no separate scoring engine), then fills C / 1B / 2B / 3B / SS / OF×N / UTIL×M slots with the best position-eligible players via backtracking + alpha-beta pruning. Only the assigned starters feed into the projection.
 
 This means:
 - A deep roster with 14 hitters projects 10 — its 4 bench players don't accumulate stats.
@@ -120,6 +121,7 @@ Z-score normalizes to *distribution spread*, which over-punishes tight distribut
 - Top-K FAs: the realistic upgrade pool — the best available pickups at that cat.
 - Bottom-K rostered: the realistic drop pool — the marginal players who'd actually be dropped to make room.
 - K = 10. League-wide constant per cat (same RUPM for every team in the league).
+- Both pools use per-player lines **scaled by role share** (`playingTimeFactor`) — a bench bat projected at everyday volume would inflate the upgrade pool and undersize the "one move" unit.
 
 For ratio cats (AVG, OBP), the per-swap team-level change is scaled by `RATIO_VOLUME_SHARE` (~1 / lineup-size) — adding a high-AVG bat only shifts team AVG by their volume share, not the full FA-vs-replacement rate gap.
 
@@ -132,68 +134,49 @@ Then every cat gets two derived metrics:
 
 `zCompetitive` is still emitted for display/debugging but is **not used** for focus assignment.
 
-## Forward focus: v2 (batter side)
+## Leverage: pivotality on the roster's own distance
 
-H2H category leagues are won by accumulating category points across the season. **Anchor in everything you can; chase everything reachable; concede only what's genuinely out of reach.** There's no quota — if your roster could realistically win every cat, the plan chases every cat.
+Chase/hold/punt is retired here the same way it was retired on the matchup pages (see [pivotality-migration.md](pivotality-migration.md) and history.md "2026-07 — Roster value rebuilt"). Every category is in play by default, weighted by how contested it still is; **concede vs contest is the only user lever.**
 
-`assignFocusForBattingSide` classifies each cat:
+```
+weight(cat)   = conceded(cat) ? 0 : pivotality(distance)
+distance(cat) = signed moves-from-a-winning-rank, scaled so the
+                reachability bar lands on the decided-boundary (0.7)
+```
 
-- **Anchor**: `me.rank ≤ 2`. You're already winning the cat in expectation (rank 1 ≈ 90% of weekly H2H matchups; rank 2 ≈ 80%). Hold position, don't dilute.
-- **Swing**: `me.rank > 2` AND `targetRank` is defined (rank 1 or 2 reachable in ≤ `REACHABLE_GAP_MOVES`). Chase — the cat is closeable into a winning position.
-- **Concede**: rank > 2 AND neither rank 1 nor 2 is reachable. Roster shape doesn't support winning.
+- **Batter distance** is RUPM-based: rank ≤ 2 → +cushion over the best competitive team below the rank-2/3 boundary, in move units; rank > 2 → −`movesToTarget`. The scale maps `REACHABLE_GAP_MOVES` (2.0) onto pivotality distance 0.7 — the exact geometry the L5 matchup pages use for margin, so "decided" means the same thing on both horizons.
+- **Pitcher distance** is z-based (`zCompetitive / 1.5`, a continuous port of the old v1 bands) until pitcher RUPM exists.
+- **Auto-concede** = the existing unreachability rule: rank > 2 and no rank-1/2 target within `REACHABLE_GAP_MOVES`. Deliberately a higher bar than the weekly page — conceding a cat in roster construction forfeits its output all season. A cushioned lead is never auto-conceded; it stays in play at its naturally small weight.
+- **Contest** un-concedes: the cat gets its honest (usually small) pivotality weight. The math stays truthful that a 2-move gap buys little; the user stays in charge.
+- **Flat fallback** (owner decision): if every cat's weight lands ≈ 0 — everything cushioned/conceded, or the user conceded the board — weights all snap to 1 (unweighted talent value) with a visible note, so the page always ranks something. Deferred follow-up: adaptively relax `REACHABLE_GAP_MOVES` for buried teams so at least one cat stays chaseable instead of conceding the whole board.
 
-**No forced punts.** The first cut of this engine forced every cat outside the top-N swings to PUNT to "make room" for a `⌈cats × 0.7⌉` winning-majority target. That was wrong — it artificially demoted cats that were clearly chaseable just to keep the count down. The right model: punt only what's actually unreachable.
+Why rank-1/2 as the winning boundary, why RUPM not z — unchanged from the forecast design: rank 1 wins ~90% of weekly H2H cat matchups, rank 2 ~80%, rank 3 ~67%; z over-punishes tight distributions (H, AVG) while RUPM prices gaps in the unit managers actually trade in (moves). See "Closeability" above.
 
-**No median benchmark.** "Above median" is rank 5 in a 10-team league, which is barely above coin-flip in H2H weekly play. The benchmark is rank 1-2, the ranks that reliably win the cat.
-
-**No rank-3 targets.** Rank 3 only wins ~67% of weekly H2H cat matchups — not reliable enough to spend roster moves on. The walk-up logic in [forecast.ts](../src/lib/league/forecast.ts) tries rank 1 first, falls back to rank 2 if rank 1 isn't reachable, then gives up.
-
-**Majority floor.** Anchors + swings should clear strict majority (`⌊cats / 2⌋ + 1` — 5 for 9 cats). Below that, `belowMajority = true` flags a roster shape problem: even pursuing every reachable cat can't get you to "winning more cats than not." The floor is informational — the algorithm never demotes a swing to punt to satisfy a target.
-
-Output: a `BattingFocusPlan` with `anchors`, `swings`, `concedes`, `majority` (the floor), `committed` (anchors+swings count), and `belowMajority` flag.
-
-**Why RUPM-based reachability.** Z-score normalizes to distribution spread, which over-punishes tight distributions (H, AVG) where small absolute deficits look like 1.5σ chasms. RUPM normalizes to what one move actually buys you — the unit fantasy decisions are actually made in. SB has wide spread but small RUPM (specialists are scarce) → "1 SB deficit = 2 moves." H has tight spread but large RUPM (contact bats are abundant) → "2 H deficit = 0.5 moves." RUPM correctly inverts the intuition that std-dev gets wrong.
+Resolution + overrides live in [`useRosterCategoryWeights`](../src/lib/hooks/useRosterCategoryWeights.ts) (localStorage `mlboss-roster-concede:{league}:{side}`; batting and pitching stay independent).
 
 Tunables:
 
 | Constant | File | Anchor |
 |---|---|---|
-| `ANCHOR_RANK_THRESHOLD` (2) | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Highest rank that still counts as anchor. Rank ≤ 2 reliably wins H2H weekly cat matchups; rank 3 doesn't. |
-| `TARGET_RANKS` ([1, 2]) | [league/forecast.ts](../src/lib/league/forecast.ts) | Ranks worth chasing. Rank 1 tried first, rank 2 as fallback. Rank 3+ never a target. |
-| `REACHABLE_GAP_MOVES` (2.0) | [league/forecast.ts](../src/lib/league/forecast.ts) | Max gap to a target rank (in RUPM units) for it to count as reachable. |
-| `RUPM_K` (10) | [api/league/[leagueKey]/forecast/route.ts](../src/app/api/league/%5BleagueKey%5D/forecast/route.ts) | Top-K FA / bottom-K rostered sample size for RUPM. Smooths single-player noise without diluting the realistic-upgrade signal. |
-| `RATIO_VOLUME_SHARE` (0.1) | [league/rupm.ts](../src/lib/league/rupm.ts) | For ratio cats, scales the FA-vs-replacement rate gap to a team-level rate change (one swapped player ≈ 1/10 of team volume). |
-| `majorityFloor(cats)` (`⌊cats/2⌋+1`) | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Below-floor threshold for `belowMajority`. Strict majority for the cat count. |
+| `DECIDED_DISTANCE` (0.7) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Distance the reachability bar maps to — mirrors the L5 decided-loss threshold so both layers share pivotality geometry |
+| `PITCHER_Z_AT_EDGE` (1.5) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | z that lands at distance ±1 on the pitcher side — the old v1 LOCKED/HARD_PUNT bands, made continuous |
+| `FLAT_FALLBACK_EPS` (0.05) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Weight floor below which the whole board counts as out-of-play and the unweighted fallback engages |
+| `REACHABLE_GAP_MOVES` (2.0) | [league/forecast.ts](../src/lib/league/forecast.ts) | Max gap (in RUPM units) for a target rank to count as reachable; doubles as the auto-concede bar |
 
-## Forward focus: v1 (pitcher side, per-cat bands)
+## Player value: leverage-weighted move units
 
-`forwardFocusV1` maps a single forecast entry to chase / hold / punt without considering the rest of the portfolio. Used for pitching while v2 is being validated on batting — pitcher rosters typically run "ace anchors + streamers" so the per-cat bands are a reasonable first cut.
+Every batter on the page — rostered and FA — gets one number:
 
-Bands:
+```
+value(player) = Σ over scored cats:
+    weight(cat) × signed contribution(cat) / RUPM(cat)
+```
 
-| z-score range | Suggestion | Rationale |
-|---|---|---|
-| z ≥ +1.5σ | punt | Locked-good — redirect investment |
-| +0.5σ ≤ z < +1.5σ | neutral (hold) | Comfortably above the field, defend against erosion |
-| −0.5σ ≤ z < +0.5σ AND reachable target | chase | Contested with a closeable gap |
-| −0.5σ ≤ z < +0.5σ AND no reachable target | neutral (hold) | Mid-pack stable, no obvious target above |
-| −1.5σ < z < −0.5σ AND reachable target | chase | Closeable deficit |
-| z ≤ −1.5σ OR (z < −0.5σ AND no target) | punt | Catastrophic deficit, no recovery |
+- **Contributions** come from the same canonical neutral-week projection the league forecast runs on (`projectBatterNeutral` per player, computed in the forecast route and returned as `playerValues`), scaled by the player's role share (`playingTimeFactor` — a 4th outfielder doesn't get everyday-volume credit; RUPM's top-K/bottom-K inputs use the same scaled lines so the "one move" unit prices realistic pickups). Counting cats: weekly count / RUPM. Ratio cats: (player rate − competitive median) × volume share / RUPM. Sign flips for lower-is-better cats — a batter's strikeouts are negative value when K is scored.
+- **Weights** are the leverage above. A player's surplus in a cushioned cat buys little *for this team*; the same surplus on a battleground cat is the whole point. This is what makes the score "value to your team" instead of abstract goodness.
+- **Display**: raw move-units never render (owner decision — "does 0.34 moves mean pull the trigger?" has no answer). Tables show a **0-100 index** scaled within the combined rostered + FA pool (p10 ≈ 0 ≈ replacement, p99 ≈ 100). Trigger semantics live exclusively on the Suggested Moves list: a swap that clears the net-value bar appears, ranked, with standings language for why; nothing shown = nothing worth doing.
 
-The asymmetry vs v2 batter: v1 doesn't enforce a winning-majority target. If five pitcher cats are mid-pack-stable, all five land as `neutral` — no forced punts. The pitcher-side rebuild to v2 is on the roadmap.
-
-Tunables:
-
-| Constant | File | Anchor |
-|---|---|---|
-| `LOCKED_Z` (+1.5σ) | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Beyond this, redirect investment elsewhere. |
-| `HARD_PUNT_Z` (−1.5σ) | [league/forwardFocus.ts](../src/lib/league/forwardFocus.ts) | Catastrophic deficit, no recovery this season. |
-
-## Adapter: `forecastToAnalysis`
-
-The roster page uses [`useSuggestedFocus`](../src/lib/hooks/useSuggestedFocus.ts) the same way the today/streaming pages do — it reads `rows[].statId` and `rows[].suggestedFocus` from a `MatchupAnalysis`. To keep the consumer code identical, `forecastToAnalysis` wraps a `LeagueForecast` in a `MatchupAnalysis` shape: batter cats get the v2 assignment, pitcher cats get v1, the other matchup-analysis fields (margin, priority, leverage) are placeholder zeros — forecast math doesn't map onto the matchup analyzer's `[−1, +1]` margin scale.
-
-This is the deliberate single connection between the L5 weekly recommendation surface and the L6 roster recommendation surface: same `focusMap` consumer, different source. See [architecture.md](./architecture.md#1-two-layers-one-bridge).
+Server/client split: the forecast route computes projection **facts** (per-player lines, RUPM, rankings — cached per league); the client computes **strategy** (leverage from concede state → weights → values) so a concede toggle re-ranks every table instantly without a refetch.
 
 ## Move suggestions
 
@@ -204,21 +187,21 @@ The roster page renders **Suggested Moves** (the "Suggested Swaps" of older docs
 
 `generateSwapSuggestions` in [roster/depth.ts](../src/lib/roster/depth.ts) handles both. For a swap, `netValue = computeRosterValue(roster − drop + add) − computeRosterValue(roster)`. For a pure add, `netValue = computeRosterValue(roster + add) − computeRosterValue(roster)` — same machinery without the drop. Pure adds naturally win the ranking when slots are open because they don't pay a drop cost.
 
-The move optimizer already scores candidates with focus-aware weighting (chase cats double, punt cats excluded), so the chase/punt baseline shapes the ranking. What it doesn't surface: **why** a given move helps in plan terms — does it push a swing target, reinforce an anchor, or erode one?
+The move optimizer scores candidates with the leverage-weighted value above, so the ranking already encodes the strategy. What it doesn't surface: **why** a given move helps — which category it pushes, and whether it quietly drains a cushioned lead.
 
 `analyzeSwapStrategy` decorates each `RankedSwap` with:
 
-- **`categoryImpact[]`** — per-cat raw normalized-rate delta (add minus drop), annotated with role from the v2 plan (`anchor` / `swing` / `concede`). ~0.10 is meaningful; ~0.20+ is big. Magnitude is approximate (not playing-time-weighted); sign and ranking are reliable.
-- **`pushesSwing`** — swap meaningfully improves a swing-target category.
-- **`erodesAnchor`** — swap meaningfully erodes an anchor category.
-- **`headline`** — dominant strategic effect: `Erodes <cat>` > `Pushes <cat>` > `Reinforces <cat>` > null. Anchor erosion dominates because the warning matters more than gains.
+- **`categoryImpact[]`** — per-cat delta in **move units** (add contribution minus drop contribution — the actual components of the swap's `netValue`, not an approximation), annotated with the cat's leverage role (`contested` / `cushioned` / `conceded`).
+- **`pushesContested`** — swap meaningfully improves a battleground category.
+- **`erodesCushion`** — swap meaningfully drains a cushioned lead.
+- **`headline`** — dominant strategic effect: `Erodes <cat>` > `Pushes <cat>` > `Reinforces <cat>` > null. Cushion erosion dominates because the warning matters more than gains.
 - **`primaryTarget`** — the single category this swap most affects, used by the UI to show strategic context alongside the position-aware reason.
 
 Tunable:
 
 | Constant | File | Anchor |
 |---|---|---|
-| `NOTABLE_DELTA` (0.05) | [league/swapStrategy.ts](../src/lib/league/swapStrategy.ts) | Threshold above which we say a swap "meaningfully" pushes/erodes a cat. Calibrated for normalized-rate units (each cat normalizes to ~[0, 1]). |
+| `NOTABLE_DELTA` (0.25) | [league/swapStrategy.ts](../src/lib/league/swapStrategy.ts) | Threshold above which a swap "meaningfully" pushes/erodes a cat, in move units — a quarter of a typical move's worth of weekly production in that cat. |
 
 ## Why this layer doesn't read `analyzeMatchup`
 
@@ -228,17 +211,15 @@ The roster page intentionally diverges from `/lineup` and `/streaming` on focus 
 - **`/streaming` (this week)** answers **"who should I pick up for this week?"** — `analyzeMatchup` with the rest-of-week window.
 - **`/roster` (rest of season)** answers **"how should I shape my roster for the rest of the year?"** — `computeLeagueForecast` on talent-only neutral-week aggregates.
 
-Same vocabulary (chase / neutral / punt). Same `focusMap` shape. Same rating engines downstream. **Different time horizon, different input, different question.**
+Same grammar (in-play weighted by pivotality; concede/contest as the only lever). Same shared `pivotality()` primitive. **Different time horizon, different distance, different question** — L5's distance is the corrected matchup margin, L6's is moves-from-a-winning-rank. Never feed one layer's distance into the other.
 
 If you find yourself wanting to merge them, push back. They're decisions on different time horizons and conflating them weakens both. See [recommendation-system.md](./recommendation-system.md#intentional-divergence-roster-page-focus) for the L5-side note.
 
 ## What this layer does not (yet) model
 
-**Stat-shape correlation across the free-agent pool.** Categories don't move independently when you add or drop a player: high-HR bats tend to be high-K, contact bats tend to be low-HR, K-heavy pitchers tend to be high-BB. So committing to swing on two strongly anti-correlated cats simultaneously (e.g. HR and K-avoidance) can be infeasible — no available player improves both.
+**Stat-shape correlation across the free-agent pool.** Categories don't move independently when you add or drop a player: high-HR bats tend to be high-K, contact bats tend to be low-HR, K-heavy pitchers tend to be high-BB. Leverage weighting softens this compared to the old hard swing-set (a player is valued across every in-play cat simultaneously, so an anti-correlated profile pays its own costs in the sum), but the *leverage side* still treats cats independently — it can rate two anti-correlated cats as simultaneously high-leverage even if no available player improves both.
 
-The current v2 plan does not see this. It picks swings purely by closeness to flip. If the plan recommends a swing combination that the FA pool can't realistically support, the user has to spot it themselves.
-
-A future iteration could prune infeasible swings by inspecting the FA pool's conditional distributions (top-K producers of cat X, median z on a conflicting cat). Out of scope for v1 — the talent-vacuum foundation has to be solid and trusted before layering this on. If swing recommendations look unrealistic in practice, that's the lever to add.
+A future iteration could surface infeasibility by inspecting the FA pool's conditional distributions (top-K producers of cat X, median contribution on a conflicting cat). If battleground combinations look unrealistic in practice, that's the lever to add.
 
 **Concession as resource reallocation (punt strategy).** The engine today concedes a category only when it's *unreachable* (`targetRank` undefined) and scores every cat independently. It therefore can't model the strongest lever in category-league roster construction: conceding a *winnable* category on purpose because doing so frees roster resources that lift the categories you're contesting. The canonical case is punting saves — you may well be able to compete in SV, but rostering closers costs slots and add/drop budget that buy little outside a narrow archetype (SV + some ERA/WHIP/K). Conceding SV unlocks those slots for bats/SPs that help everywhere else. The payoff is the freed resource, not the SV margin. This is the sharpest instance of the stat-shape-correlation gap above.
 
@@ -260,11 +241,11 @@ L4 schedule-aware    L4' neutral-week
         ▼                   ▼
 L5 weekly matchup    L6 roster strategy
    analyzeMatchup       computeLeagueForecast
-   useSuggestedFocus    forwardFocus / forecastToAnalysis
+   useCategoryWeights   rosterValue / useRosterCategoryWeights
                         analyzeSwapStrategy
                   │
                   ▼
-       focusMap consumed by L3 ratings
+       categoryWeights consumed by L3 ratings
        on the appropriate page
 ```
 

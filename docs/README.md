@@ -38,8 +38,7 @@ This index is the single authoritative table of contents for all Markdown docs i
 
 ### In-flight migrations and proposals
 
-- **[pivotality-migration.md](./pivotality-migration.md)** — Retiring chase/hold/punt as the weight driver; replacing with continuous `pivotality(margin)` + concede/contest. Phases 1-5 shipped for the matchup pages; L6 roster + Phase 6 cleanup outstanding.
-- **[roster-value-proposal.md](./roster-value-proposal.md)** — **Proposal (not implemented):** replace `blendedCategoryScore` with leverage-weighted value from the canonical neutral-week projection (RUPM units, pivotality weights, concede-only override); completes the L6 half of the pivotality migration. Includes the expected-stats research review behind the rate-substrate changes.
+- **[pivotality-migration.md](./pivotality-migration.md)** — Retiring chase/hold/punt as the weight driver; replacing with continuous `pivotality(distance)` + concede/contest. Phases 1-5 shipped for the matchup pages; the L6 roster half of Phase 6 shipped 2026-07 with the roster-value rebuild (leverage-weighted player values — see [roster-strategy.md](./roster-strategy.md) and history.md). Remaining: the L5-side `Focus`-union cleanup sweep (rating-engine bridge, `analyzeMatchup` suggestFocus, streaming-board props, bossBrief reads).
 
 ---
 

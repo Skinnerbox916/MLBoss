@@ -329,6 +329,17 @@ GET /team/{team_key}/roster;date=2025-06-15     # specific day
 GET /team/{team_key}/roster;week=9              # weekly leagues
 ```
 
+### Roster capacity / open spots
+
+**There is no direct "open roster spots" or "max roster size" field anywhere in the API.** Verified July 2026 by enumerating every key in the raw `/league/{key}/settings`, `/team/{key}`, and `/team/{key}/roster` payloads (124 + 35 + 100 distinct keys): the only roster-count fields are `roster_adds` on the team object (weekly adds **used**, e.g. `{coverage_type: "week", coverage_value: 16, value: "2"}` — pairs with `max_weekly_adds` from settings) and `number_of_moves` (season total). `size` keys are logo/headshot metadata.
+
+Open spots must be computed the way Yahoo's own add flow does:
+
+- **Cap space** = sum of non-reserve slot counts from `roster_positions` (IL/IL+/NA slots are extra, conditional capacity) minus players whose `selected_position` is not a reserve slot. Players stashed on IL/NA don't count against the cap — this is the "IL stash frees an add" mechanic.
+- **Placement**: an add also requires an empty slot the incoming player can legally occupy (position slot he's eligible for, or BN). A cap-open spot whose only empty slot is position-locked (e.g. an RP hole on a team with no RP-eligible pitchers) can't take a batter.
+
+MLBoss implements both checks in `RosterManager` (`openSlotCount`).
+
 ### Matchups (Schedule)
 
 ```http

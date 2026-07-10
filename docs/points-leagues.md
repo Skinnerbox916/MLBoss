@@ -16,8 +16,12 @@ pointsValue.ts    rates · ScoringProfile.weights × weekly volume × role share
         │
         ├── replacement.ts   3rd-best-FA floor per position → VOR
         ├── analyzeTeam.ts   /api/points/team — the FACTS orchestrator
-        └── rosterStrategy.ts  CLIENT-side strategy: shared position-aware
-                             depth/swaps (roster/depth.ts) over the facts
+        ├── rosterStrategy.ts  CLIENT-side strategy: shared position-aware
+        │                    depth/swaps (roster/depth.ts) over the facts
+        ├── streaming.ts     /api/points/streaming — coverage, streams,
+        │                    plugs + per-player day-value FACTS
+        └── weekMoves.ts     CLIENT-side unified moves board + session-plan
+                             re-pricing over the streaming + team facts
 ```
 
 ## Rate modeling — what's real, what's approximated
@@ -48,8 +52,22 @@ Matchup context (park / platoon / opp staff / weather) applies ONLY to day/week 
 
 **Pitchers are deliberately table-only** (no depth chart, greedy moves): pitcher depth/moves for BOTH scoring modes are one future joint effort so the two pages can't diverge (owner decision).
 
+## Week moves
+
+The points `/streaming` page's engine (2026-07 rebuild — see history.md). The page's job (owner): *"I have N moves left this week — what's the best way to spend them?"* One board, one currency: batters and pitchers ranked together by **net expected points for the rest of the window**, each row an add + a suggested drop.
+
+**Facts/preferences boundary, streaming edition.** `analyzePointsStreaming` ships per-player projection facts in its cached payload — `batterFacts` (matchup-adjusted expected points per window day, rostered bats + the FA eval pool) and `myPitcherFacts` (rostered arms' remaining probable starts, priced like FA streams). The board itself is built CLIENT-side by `buildPointsWeekMoves` ([weekMoves.ts](../src/lib/points/weekMoves.ts)) via `usePointsWeekMoves`, re-solving lineups over the facts — which is what makes the **session plan** free: staging a move re-prices every remaining candidate in a memo, no refetch, no new cache variants.
+
+**Pricing.** Batter adds/drops are exact joint lineup re-solves (`optimizePointsLineup` with the add appended and the drop removed — displacement and eligibility handled by the optimizer); only the days either player actually plays are re-solved. Arm adds are additive (priced starts don't displace bats); arm drop cost is the arm's remaining priced starts, falling back to the points-team relief projection for RPs. Cross-side moves (drop a bat, add an arm) price naturally because everything is points. Pure adds appear when cap space exists — batters gate on `computeOpenSlotCount` (cap + placement), arms on `computeCapOpenCount` (cap only).
+
+**Churn pool — the two-signal split.** Drops are suggested ONLY from rostered players whose talent-neutral VOR (points-team facts) sits near replacement; the week-window value then prices what dropping each churn player costs *this week*. This is the matchup-adjustment boundary applied to moves: VOR (who to OWN) decides who is droppable at all, week value (who to START) decides the cost. A streamer with starts left is churn by VOR but expensive by week value — so he correctly survives; a slumping star is never volunteered. Players missing a VOR or facts row (e.g. just-added, cache skew) are never drop candidates. The user can override the suggested drop per row from the priced alternatives. Thresholds (`CHURN_VOR_MAX`, candidate/board caps, `MIN_MOVE_NET`) live in `weekMoves.ts`.
+
+**Session-only plan (deliberate).** The plan is React state in `PointsStreamingManager` — it dies on reload, nothing persists. Reality (the actual roster) is the durable state: execute a move in Yahoo and the next visit re-prices from the new roster, which also means staleness, sniped-player repair, and plan invalidation problems don't exist. Board rows are priced independently against the current roster ("if this were your next move"); the plan is how interactions between moves get priced.
+
+**Surfaces.** `/streaming`: `PointsWeekPlan` (moves-budget pips, opportunity total, day strip with go-live markers) over `PointsMovesBoard` (staging + drop override in the expanded row), with the original stream/plug boards below as the browse pool. Dashboard: `TopWeekMoveTile` renders the top move from the same hook.
+
 ## What this layer does not (yet) model
 
 - **Pitcher position-aware moves/depth** — see above.
 - **Team run support in W**, **save opportunities in SV** — both need team-context data the app doesn't fetch yet.
-- **Streaming-volume strategy** (how many extra starts a heavy streamer squeezes from open slots) — that's the `/streaming` page's concern and its planned overhaul, not roster construction.
+- **P-slot capacity in week moves** — an arm add's value assumes a start slot is free that day; leagues with tight P slots or weekly GS caps get slightly over-credited arm adds (`useLeagueLimits` exists if this ever needs wiring).

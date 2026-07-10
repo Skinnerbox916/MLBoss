@@ -8,6 +8,18 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Points /streaming rebuilt around the unified week-moves board
+
+The points streaming page was two separate ranked boards (FA pitcher streams, FA batter plugs) under a display-only week-plan header. Rebuilt around the owner's framing — "I have N moves left this week, what's the best way to spend them?" — as one value-sorted board of net add/drop moves (`weekMoves.ts`, client-side over new streaming facts) with a moves-budget header and a session plan. The old boards survive below as browse sections. Detail: [points-leagues.md#week-moves](./points-leagues.md#week-moves).
+
+Decisions an LLM would otherwise re-litigate:
+
+- **The plan is session-only, on purpose.** React state, dies on reload, nothing in localStorage/Redis. We designed a persisted plan first and killed it: a stored plan needs staleness detection, sniped-player repair, and invalidation — all of which vanish when reality (the actual roster) is the durable state and each visit re-prices from it. Don't add persistence back without solving what it re-creates.
+- **The board is strictly value-sorted.** Grouping rows by go-live day was proposed and rejected (owner: the ranked list IS the product); timing lives in day chips on rows and marker dots on the week-plan strip.
+- **Drops come only from the VOR churn pool** (talent-neutral, points-team facts); the week window then prices the cost. Pure week-window drop pricing alone would volunteer slumping stars.
+- **Explanatory copy was removed** from the points streaming page (header subtitles, week-plan explainer text) — owner mandate: communicate structurally, don't re-add copy that explains mechanics.
+- **P-slot capacity is unmodeled** for arm adds — documented simplification, not an oversight.
+
 ## 2026-07 — Points roster page rebuilt (position-aware moves; greedy batter swaps retired)
 
 The points `/roster` page was a moves list + rostered-only value table, and its batter moves came from `recommendSwaps` — a position-naive greedy upgrade loop (batter-vs-batter by weekly points, no slot fit). The page's actual job (owner): "who out there could provide more points than who they have, but can fit within the roster position slot picture." Greedy matching can't answer the second half.

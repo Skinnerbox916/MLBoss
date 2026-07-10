@@ -1,30 +1,45 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Heading } from '@/components/typography';
 import Tabs from '@/components/ui/Tabs';
-import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
-import { usePointsStreaming } from '@/lib/hooks/usePointsStreaming';
-import { useMovesBudget } from '@/lib/hooks/useMovesBudget';
-import PointsWeekPlan from './PointsWeekPlan';
+import { usePointsWeekMoves } from '@/lib/hooks/usePointsWeekMoves';
+import {
+  plannedMoveFromWeekMove,
+  type PlannedMove,
+  type WeekMove,
+} from '@/lib/points/weekMoves';
+import PointsWeekPlan, { DEFAULT_WEEKLY_MOVES_CAP } from './PointsWeekPlan';
+import PointsMovesBoard from './PointsMovesBoard';
 import PointsPitcherStreamBoard from './PointsPitcherStreamBoard';
 import PointsBatterPlugBoard from './PointsBatterPlugBoard';
 
 type StreamTab = 'pitchers' | 'batters';
 
 /**
- * Points-league /streaming view. In points there are no categories to manage —
- * the streaming game is volume: pitcher starts are the marquee pickup (a start
- * usually outscores a bench bat's week), and bats matter on the specific days
- * the lineup has open slots. Week-plan header (moves budget + day coverage)
- * replaces the categories GamePlanPanel; the boards reuse the shared
- * PlayerRowShell so rows match the points lineup page.
+ * Points-league /streaming view, built around the week-moves board: one
+ * ranked list of net-positive add/drop moves for the rest of the window,
+ * with a session-only plan. Staging a move re-prices the whole board in a
+ * memo (usePointsWeekMoves) — the plan is React state and dies on reload by
+ * design; reality (the actual roster) is the durable state. The original
+ * stream/plug boards stay below as the browse pool.
  */
 export default function PointsStreamingManager() {
-  const { leagueKey, teamKey, scoringType, lineupCadence, moveTiming, isError } = useActiveLeague();
-  const { data, isLoading } = usePointsStreaming(leagueKey, teamKey, scoringType);
-  const { data: moves } = useMovesBudget(leagueKey, teamKey);
+  const [plan, setPlan] = useState<PlannedMove[]>([]);
+  const { board, cadence, days, movesBudget, streaming, isLoading, isError } =
+    usePointsWeekMoves(plan);
   const [tab, setTab] = useState<StreamTab>('pitchers');
+
+  const stage = useCallback((m: WeekMove) => {
+    setPlan(prev =>
+      prev.some(pm => pm.addKey === m.add.playerKey)
+        ? prev
+        : [...prev, plannedMoveFromWeekMove(m)],
+    );
+  }, []);
+  const unstage = useCallback((id: string) => {
+    setPlan(prev => prev.filter(pm => pm.id !== id));
+  }, []);
 
   if (isError) {
     return (
@@ -36,38 +51,36 @@ export default function PointsStreamingManager() {
     );
   }
 
-  const loading = isLoading && !data;
-  // Server-derived cadence is authoritative once loaded; the client-side
-  // league setting covers the loading state so labels don't flash.
-  const cadence = data?.cadence ?? lineupCadence;
+  const loading = isLoading && !streaming;
+  const cap = movesBudget?.cap ?? DEFAULT_WEEKLY_MOVES_CAP;
+  const used = movesBudget?.used ?? 0;
+  const affordableCount = Math.max(0, cap - used - plan.length);
+  const windowLabel = cadence === 'weekly' ? 'next week' : `next ${streaming?.week.days ?? 0} days`;
 
   return (
     <div className="p-6 space-y-4">
-      <div>
-        <Heading as="h1">Streaming</Heading>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {cadence === 'weekly'
-            ? 'Lineups lock for the week — build next week’s roster: two-start arms and dense schedules win.'
-            : 'Stream pitcher starts and plug open lineup days — in points, the game is volume.'}
-        </p>
-        {cadence !== 'weekly' && (
-          <p className="text-xs text-accent mt-0.5">
-            {moveTiming === 'immediate'
-              ? 'Moves are immediate — today’s not-yet-started games count.'
-              : 'Moves hit tomorrow — today’s lineup is already locked.'}
-          </p>
-        )}
-      </div>
+      <Heading as="h1">Streaming</Heading>
 
       <PointsWeekPlan
-        days={data?.days ?? []}
-        openSlotDays={data?.openSlotDays ?? 0}
-        myStartsRemaining={data?.myStartsRemaining ?? 0}
-        moves={moves}
+        days={days}
+        myStartsRemaining={streaming?.myStartsRemaining ?? 0}
+        moves={movesBudget}
         isLoading={loading}
-        weekStart={data?.week.start}
-        weekEnd={data?.week.end}
+        weekStart={streaming?.week.start}
+        weekEnd={streaming?.week.end}
         cadence={cadence}
+        topMoves={board.moves}
+        plan={plan}
+      />
+
+      <PointsMovesBoard
+        moves={board.moves}
+        plan={plan}
+        affordableCount={affordableCount}
+        isLoading={loading}
+        windowLabel={windowLabel}
+        onStage={stage}
+        onUnstage={unstage}
       />
 
       <Tabs<StreamTab>
@@ -83,15 +96,15 @@ export default function PointsStreamingManager() {
 
       {tab === 'pitchers' ? (
         <PointsPitcherStreamBoard
-          rows={data?.pitcherStreams ?? []}
+          rows={streaming?.pitcherStreams ?? []}
           isLoading={loading}
-          windowLabel={cadence === 'weekly' ? 'next week' : `next ${data?.week.days ?? 0} days`}
+          windowLabel={windowLabel}
         />
       ) : (
         <PointsBatterPlugBoard
-          rows={data?.batterPlugs ?? []}
+          rows={streaming?.batterPlugs ?? []}
           isLoading={loading}
-          openSlotDays={data?.openSlotDays ?? 0}
+          openSlotDays={streaming?.openSlotDays ?? 0}
           cadence={cadence}
         />
       )}

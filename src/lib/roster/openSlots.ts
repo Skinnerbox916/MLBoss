@@ -22,10 +22,12 @@ import type { RosterPositionSlot } from '@/lib/hooks/useRosterPositions';
 const isReserveSlot = (pos: string) => /^(IL\+?|NA)$/i.test(pos);
 
 /**
- * Number of open slots an added batter could actually use. > 0 enables
- * pure-add suggestions in `generateSwapSuggestions`.
+ * Roster cap space alone — open spots regardless of what position shape an
+ * added player needs. This is the whole gate for a PITCHER pure add (P-slot
+ * capacity is deliberately unmodeled in the points week-moves engine); a
+ * batter add must also pass the placement gate in `computeOpenSlotCount`.
  */
-export function computeOpenSlotCount(
+export function computeCapOpenCount(
   roster: Array<{ selected_position?: string }>,
   leaguePositions: RosterPositionSlot[],
 ): number {
@@ -35,7 +37,20 @@ export function computeOpenSlotCount(
     .filter(p => !isReserveSlot(p.position))
     .reduce((sum, p) => sum + p.count, 0);
   const countedPlayers = roster.filter(p => !isReserveSlot(p.selected_position ?? '')).length;
-  const capOpen = capSpots - countedPlayers;
+  return Math.max(0, capSpots - countedPlayers);
+}
+
+/**
+ * Number of open slots an added batter could actually use. > 0 enables
+ * pure-add suggestions in `generateSwapSuggestions`.
+ */
+export function computeOpenSlotCount(
+  roster: Array<{ selected_position?: string }>,
+  leaguePositions: RosterPositionSlot[],
+): number {
+  if (roster.length === 0 || leaguePositions.length === 0) return 0;
+
+  const capOpen = computeCapOpenCount(roster, leaguePositions);
 
   const batterSlotNames = new Set(
     leaguePositions

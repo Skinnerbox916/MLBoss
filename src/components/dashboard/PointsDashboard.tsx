@@ -11,6 +11,7 @@ import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
 import { usePointsTeam } from '@/lib/hooks/usePointsTeam';
 import { usePointsRosterStrategy } from '@/lib/hooks/usePointsRosterStrategy';
 import SuggestedMovesPanel from '@/components/points/SuggestedMovesPanel';
+import TopWeekMoveTile from '@/components/points/TopWeekMoveTile';
 import type { PointsVORRow } from '@/lib/points/analyzeTeam';
 
 /**
@@ -54,6 +55,8 @@ export default function PointsDashboard() {
             lineupDelta={data.lineup?.deltaPoints ?? 0}
             lineupMoves={data.lineup?.moveCount ?? 0}
           />
+
+          <TopWeekMoveTile />
 
           <div className="grid gap-6 md:grid-cols-2">
             <SuggestedMovesPanel batterMoves={strategy.moves} pitcherMoves={data.pitcherMoves} limit={5} />

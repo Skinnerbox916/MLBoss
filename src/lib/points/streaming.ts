@@ -18,8 +18,14 @@
  *      position eligibility and displacement chains are handled by the
  *      optimizer, not heuristics.
  *
- * Talent-neutral like the rest of the points engine: no park / opp SP /
- * weather. Over a multi-day window, volume dominates value.
+ * Day/start values are matchup-adjusted via matchupAdjust (park / platoon /
+ * opposing staff or offense) — these are lineup-decision scorers, distinct
+ * from the talent-neutral roster-construction values in analyzeTeam.
+ *
+ * The analysis also ships per-player projection FACTS (batterFacts,
+ * myPitcherFacts) so the client-side week-moves engine (weekMoves.ts) can
+ * re-solve lineups and price add/drop moves without server round-trips —
+ * the same facts/preferences boundary as the points roster page.
  *
  * WEEKLY cadence (leagues whose lineups lock for the week): the window
  * becomes the full NEXT Mon–Sun (a pickup can't play sooner), and the three
@@ -112,6 +118,8 @@ export interface PointsStreamStart {
 }
 
 export interface PointsPitcherStreamRow {
+  /** Yahoo player_key — identity for joins and plan state. */
+  playerKey: string;
   name: string;
   team: string;
   positions: string[];
@@ -133,6 +141,8 @@ export interface PointsPlugDay {
 }
 
 export interface PointsBatterPlugRow {
+  /** Yahoo player_key — identity for joins and plan state. */
+  playerKey: string;
   name: string;
   team: string;
   positions: string[];
@@ -152,6 +162,39 @@ export interface PointsBatterPlugRow {
   totalGain: number;
 }
 
+/** Per-player projection facts for the client-side week-moves engine
+ *  (weekMoves.ts). dayPoints[i] aligns positionally to analysis.days[i];
+ *  0 = idle / no value that day. */
+export interface PointsBatterDayFacts {
+  /** Yahoo player_key — identity for joins and plan state. */
+  playerKey: string;
+  name: string;
+  team: string;
+  /** eligible_positions — drives client-side lineup re-solves. */
+  positions: string[];
+  owned: boolean;
+  injured: boolean;
+  percentOwned?: number;
+  /** FA rows only. */
+  ownershipType?: 'freeagent' | 'waivers';
+  imageUrl?: string;
+  /** Matchup-adjusted expected points per window day. */
+  dayPoints: number[];
+}
+
+/** My rostered arms with remaining probable starts priced like FA streams.
+ *  RPs: starts [] and totalPoints 0 — the client prices their drop cost from
+ *  the points-team relief projection instead. */
+export interface PointsMyPitcherFacts {
+  playerKey: string;
+  name: string;
+  team: string;
+  positions: string[];
+  imageUrl?: string;
+  starts: PointsStreamStart[];
+  totalPoints: number;
+}
+
 export interface PointsStreamingAnalysis {
   /** Lineup cadence the analysis was computed for (drives UI semantics). */
   cadence: LineupCadence;
@@ -163,6 +206,10 @@ export interface PointsStreamingAnalysis {
   myStartsRemaining: number;
   pitcherStreams: PointsPitcherStreamRow[];
   batterPlugs: PointsBatterPlugRow[];
+  /** Rostered bats + the FA eval pool — day-value facts for weekMoves.ts. */
+  batterFacts: PointsBatterDayFacts[];
+  /** Rostered (healthy) arms with priced remaining starts. */
+  myPitcherFacts: PointsMyPitcherFacts[];
 }
 
 const round1 = (n: number) => Number(n.toFixed(1));
@@ -172,7 +219,9 @@ function isPitcherPos(eligible: string[], display: string): boolean {
   return [...(eligible ?? []), display].some(x => x === 'P' || x === 'SP' || x === 'RP');
 }
 
-/** Find a team's game + probable-pitcher match for one FA on one day. */
+type MatchedStart = { day: WeekDay; opp: string; game: EnrichedGame; isHome: boolean; oppMlbId: number };
+
+/** Find a team's game + probable-pitcher match for one arm on one day. */
 function findProbableStart(
   name: string,
   teamAbbr: string,
@@ -304,14 +353,21 @@ export async function analyzePointsStreaming(
     return out;
   };
 
-  const countMyStarts = (day: WeekDay): number => {
-    const dayGames = gamesByDate.get(day.date) ?? [];
-    let n = 0;
-    for (const p of rosterPitchers) {
-      if (findProbableStart(p.name, p.editorial_team_abbr, dayGames)) n += 1;
+  // My healthy arms matched to probable starts across the window — feeds the
+  // per-day start counts here and the priced myPitcherFacts below.
+  const myArmMatches = rosterPitchers.map(arm => ({
+    arm,
+    starts: days.flatMap((day): MatchedStart[] => {
+      const hit = findProbableStart(arm.name, arm.editorial_team_abbr, gamesByDate.get(day.date) ?? []);
+      return hit ? [{ day, ...hit }] : [];
+    }),
+  }));
+  const myStartsByDate = new Map<string, number>();
+  for (const m of myArmMatches) {
+    for (const s of m.starts) {
+      myStartsByDate.set(s.day.date, (myStartsByDate.get(s.day.date) ?? 0) + 1);
     }
-    return n;
-  };
+  }
 
   // Week-sum scorer (weekly cadence): a bat's value for the locked week is
   // the sum of his matchup-adjusted day values — schedule density AND the
@@ -350,7 +406,7 @@ export async function analyzePointsStreaming(
         covered: playing.length,
         open: battingSlots - playing.length,
         openPositions: openPositionsAfter(playing),
-        myStarts: countMyStarts(day),
+        myStarts: myStartsByDate.get(day.date) ?? 0,
         optimalPoints: round1(optimalPoints),
       } satisfies PointsStreamingDay;
     });
@@ -369,7 +425,7 @@ export async function analyzePointsStreaming(
         covered: coveredRows.length,
         open: battingSlots - coveredRows.length,
         openPositions: openPositionsAfter(coveredRows),
-        myStarts: countMyStarts(day),
+        myStarts: myStartsByDate.get(day.date) ?? 0,
         optimalPoints: base.optimalPoints,
       } satisfies PointsStreamingDay;
     });
@@ -382,7 +438,6 @@ export async function analyzePointsStreaming(
   const faPitchers = faPitchPool.filter(p =>
     isPitcherPos(p.eligible_positions, p.display_position),
   );
-  type MatchedStart = { day: WeekDay; opp: string; game: EnrichedGame; isHome: boolean; oppMlbId: number };
   type Matched = { fa: FreeAgentPlayer; starts: MatchedStart[] };
   const matched: Matched[] = [];
   for (const fa of faPitchers) {
@@ -400,87 +455,135 @@ export async function analyzePointsStreaming(
   );
   const toScore = matched.slice(0, FA_PITCHER_SCORE_CAP);
 
-  const pitcherInputs = await getPointsPitcherInputs(
-    toScore.map(m => ({ name: m.fa.name, team: m.fa.editorial_team_abbr })),
-  );
+  // Talent inputs for FA arms with starts AND my own starting arms — the
+  // latter feed myPitcherFacts so the client can price them as drop costs.
+  const startingArms = myArmMatches.filter(m => m.starts.length > 0);
+  const pitcherInputs = await getPointsPitcherInputs([
+    ...toScore.map(m => ({ name: m.fa.name, team: m.fa.editorial_team_abbr })),
+    ...startingArms.map(m => ({ name: m.arm.name, team: m.arm.editorial_team_abbr })),
+  ]);
 
   // Opposing-offense context for matchup-adjusted per-start points. One
   // fetch per distinct opposing team (1h-cached upstream); null entries fall
   // back to a neutral-offense forecast inside the adjuster.
-  const oppIds = [...new Set(toScore.flatMap(m => m.starts.map(s => s.oppMlbId)))];
+  const oppIds = [...new Set([
+    ...toScore.flatMap(m => m.starts.map(s => s.oppMlbId)),
+    ...startingArms.flatMap(m => m.starts.map(s => s.oppMlbId)),
+  ])];
   const offenseByTeam = new Map(
     await Promise.all(oppIds.map(async id => [id, await getTeamOffense(id)] as const)),
   );
   // Empirical league-average opponent — the anchor the per-start matchup
-  // ratio is measured against (see matchupAdjust.meanTeamOffense).
+  // ratio is measured against (see matchupAdjust.meanTeamOffense). My own
+  // arms' opponents joining this set nudges the anchor, so FA stream totals
+  // can drift a rounding digit vs the pre-facts payload.
   const slateMeanOffense = meanTeamOffense([...offenseByTeam.values()]);
+
+  // Price one arm's matched probable starts: neutral per-start baseline
+  // (rate × ipPerStart) for pts/IP context and fallback, then a per-start
+  // matchup adjustment. A probable start is authoritative — score
+  // relievers-by-history and ghosts (call-ups) as starters too; the talent
+  // model regresses them.
+  const priceArmStarts = (
+    name: string,
+    team: string,
+    matchedStarts: MatchedStart[],
+  ): { pointsPerIP: number; starts: PointsStreamStart[]; totalPoints: number } | null => {
+    const input = pitcherInputs[key(name, team)];
+    if (!input) return null;
+    const startInput = input.role === 'starter' ? input : { ...input, role: 'starter' as const };
+    const perStart = forecastPitcherPoints(
+      startInput,
+      profile,
+      { starts: 1, expectedIP: input.talent.ipPerStart },
+      { appearances: 0, expectedIP: 0 },
+    );
+    const starts = matchedStarts.map(({ day, opp, game, isHome, oppMlbId }) => {
+      let pts = perStart.expectedPoints;
+      let hint: string | undefined;
+      try {
+        const adj = adjustedPitcherStartPoints(startInput, profile, game, isHome, offenseByTeam.get(oppMlbId) ?? null, slateMeanOffense);
+        pts = adj.points;
+        hint = adj.hint || undefined;
+      } catch {
+        // Degenerate talent inputs — keep the neutral per-start estimate.
+      }
+      return { date: day.date, dayLabel: day.dayName, opp, expectedPoints: round1(pts), hint };
+    });
+    return {
+      pointsPerIP: Number(perStart.pointsPerIP.toFixed(2)),
+      starts,
+      totalPoints: round1(starts.reduce((s, x) => s + x.expectedPoints, 0)),
+    };
+  };
 
   const pitcherStreams: PointsPitcherStreamRow[] = toScore
     .map((m): PointsPitcherStreamRow | null => {
-      const input = pitcherInputs[key(m.fa.name, m.fa.editorial_team_abbr)];
-      // A probable start is authoritative — score relievers-by-history and
-      // ghosts (call-ups) as starters too; the talent model regresses them.
-      if (!input) return null;
-      const startInput = input.role === 'starter' ? input : { ...input, role: 'starter' as const };
-      // Neutral per-start (rate × ipPerStart) — pts/IP context + fallback when
-      // the game forecast can't run.
-      const perStart = forecastPitcherPoints(
-        startInput,
-        profile,
-        { starts: 1, expectedIP: input.talent.ipPerStart },
-        { appearances: 0, expectedIP: 0 },
-      );
-      const starts = m.starts.map(({ day, opp, game, isHome, oppMlbId }) => {
-        let pts = perStart.expectedPoints;
-        let hint: string | undefined;
-        try {
-          const adj = adjustedPitcherStartPoints(startInput, profile, game, isHome, offenseByTeam.get(oppMlbId) ?? null, slateMeanOffense);
-          pts = adj.points;
-          hint = adj.hint || undefined;
-        } catch {
-          // Degenerate talent inputs — keep the neutral per-start estimate.
-        }
-        return { date: day.date, dayLabel: day.dayName, opp, expectedPoints: round1(pts), hint };
-      });
-      const totalPoints = round1(starts.reduce((s, x) => s + x.expectedPoints, 0));
+      const priced = priceArmStarts(m.fa.name, m.fa.editorial_team_abbr, m.starts);
+      if (!priced) return null;
       return {
+        playerKey: m.fa.player_key,
         name: m.fa.name,
         team: m.fa.editorial_team_abbr,
         positions: m.fa.eligible_positions,
         percentOwned: m.fa.percent_owned,
         ownershipType: m.fa.ownership_type,
         imageUrl: m.fa.image_url,
-        pointsPerIP: Number(perStart.pointsPerIP.toFixed(2)),
-        starts,
-        totalPoints,
+        pointsPerIP: priced.pointsPerIP,
+        starts: priced.starts,
+        totalPoints: priced.totalPoints,
       };
     })
     .filter((x): x is PointsPitcherStreamRow => x !== null)
     .sort((a, b) => b.totalPoints - a.totalPoints)
     .slice(0, BOARD_ROW_CAP);
 
+  // Rostered arms priced the same way — drop costs for the client-side
+  // week-moves engine and start markers for the week plan card. RPs (no
+  // probables) carry zero; the client falls back to the points-team relief
+  // projection for their drop cost.
+  const myPitcherFacts: PointsMyPitcherFacts[] = myArmMatches.map(({ arm, starts }) => {
+    const priced = starts.length > 0
+      ? priceArmStarts(arm.name, arm.editorial_team_abbr, starts)
+      : null;
+    return {
+      playerKey: arm.player_key,
+      name: arm.name,
+      team: arm.editorial_team_abbr,
+      positions: arm.eligible_positions,
+      imageUrl: arm.image_url,
+      starts: priced?.starts ?? [],
+      totalPoints: priced?.totalPoints ?? 0,
+    };
+  });
+
   // ---------------------------------------------------------------------
   // Batter plugs: exact marginal lineup gain per FA per day.
   // ---------------------------------------------------------------------
+
+  // A minimal RosterEntry stand-in so an FA can enter lineup solves and the
+  // day scorer (same pattern the client-side weekMoves engine replicates).
+  const syntheticFA = (fa: FreeAgentPlayer): RosterEntry => ({
+    player_key: `fa:${fa.player_key}`,
+    player_id: fa.player_id,
+    name: fa.name,
+    editorial_team_abbr: fa.editorial_team_abbr,
+    display_position: fa.display_position,
+    eligible_positions: fa.eligible_positions,
+    selected_position: 'BN',
+    on_disabled_list: false,
+    is_editable: true,
+    batting_order: null,
+  });
 
   const batterPlugs: PointsBatterPlugRow[] = faBatters
     .map((fa): PointsBatterPlugRow | null => {
       const stats = batterStats[key(fa.name, fa.editorial_team_abbr)];
       if (!stats) return null;
-      const synthetic: RosterEntry = {
-        player_key: `fa:${fa.player_key}`,
-        player_id: fa.player_id,
-        name: fa.name,
-        editorial_team_abbr: fa.editorial_team_abbr,
-        display_position: fa.display_position,
-        eligible_positions: fa.eligible_positions,
-        selected_position: 'BN',
-        on_disabled_list: false,
-        is_editable: true,
-        batting_order: null,
-      };
+      const synthetic = syntheticFA(fa);
 
       const common = {
+        playerKey: fa.player_key,
         name: fa.name,
         team: fa.editorial_team_abbr,
         positions: fa.eligible_positions,
@@ -537,6 +640,45 @@ export async function analyzePointsStreaming(
     .sort((a, b) => b.totalGain - a.totalGain)
     .slice(0, BOARD_ROW_CAP);
 
+  // ---------------------------------------------------------------------
+  // Per-player day-value facts for the client-side week-moves engine:
+  // every rostered bat plus the FA eval pool, read off the same memoized
+  // scorer the solves above already warmed.
+  // ---------------------------------------------------------------------
+
+  const batterFacts: PointsBatterDayFacts[] = [
+    ...rosterBatters
+      .filter(p => batterStats[key(p.name, p.editorial_team_abbr)])
+      .map(p => ({
+        playerKey: p.player_key,
+        name: p.name,
+        team: p.editorial_team_abbr,
+        positions: p.eligible_positions,
+        owned: true,
+        injured: getRowStatus(p) === 'injured',
+        percentOwned: p.percent_owned,
+        imageUrl: p.image_url,
+        dayPoints: days.map(day => round1(dayPointsFor(day)(p))),
+      })),
+    ...faBatters
+      .filter(fa => batterStats[key(fa.name, fa.editorial_team_abbr)])
+      .map(fa => {
+        const synthetic = syntheticFA(fa);
+        return {
+          playerKey: fa.player_key,
+          name: fa.name,
+          team: fa.editorial_team_abbr,
+          positions: fa.eligible_positions,
+          owned: false,
+          injured: false,
+          percentOwned: fa.percent_owned,
+          ownershipType: fa.ownership_type,
+          imageUrl: fa.image_url,
+          dayPoints: days.map(day => round1(dayPointsFor(day)(synthetic))),
+        };
+      }),
+  ];
+
   return {
     cadence,
     week: { start: days[0]?.date, end: days[days.length - 1]?.date, days: days.length },
@@ -545,5 +687,7 @@ export async function analyzePointsStreaming(
     myStartsRemaining: summaries.reduce((s, d) => s + d.myStarts, 0),
     pitcherStreams,
     batterPlugs,
+    batterFacts,
+    myPitcherFacts,
   };
 }

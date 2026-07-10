@@ -6,31 +6,61 @@ import { Text } from '@/components/typography';
 import type { PointsStreamingDay } from '@/lib/points/streaming';
 import type { MovesBudget } from '@/lib/fantasy/limits';
 import type { LineupCadence } from '@/lib/fantasy/scoringMode';
+import type { WeekMove, PlannedMove } from '@/lib/points/weekMoves';
 
 /**
- * Points-league replacement for the GamePlanPanel header on /streaming: there
- * are no categories to chase or punt, so the action surface is the week's
- * volume picture — moves left, slot-days your lineup forfeits, and the
- * day-by-day coverage strip that says WHERE the holes are.
- *
- * Weekly cadence inverts the framing: "open" slots you can still plug become
- * "idle" slot-days the locked lineup is about to bake in.
+ * Points-league /streaming header: the moves budget priced in points.
+ * Pips = the week's move slots (used / staged in the session plan / open);
+ * the opportunity tile prices what the remaining slots are worth off the
+ * top of the moves board; the day strip shows where the week needs
+ * attention — open/idle slots, my SP starts, and marker dots for the days
+ * the top (accent) and staged (success) moves go live.
  */
 
 /** Yahoo-default weekly add cap, assumed when settings don't report one. */
-const DEFAULT_WEEKLY_MOVES_CAP = 6;
+export const DEFAULT_WEEKLY_MOVES_CAP = 6;
 
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function StatTile({ label, value, sub, children }: { label: string; value?: string; sub?: string; children?: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span className="font-mono tabular-nums text-xl font-bold text-foreground">{value}</span>
+      {children ?? <span className="font-mono tabular-nums text-xl font-bold text-foreground">{value}</span>}
       {sub ? <span className="text-[11px] text-muted-foreground">{sub}</span> : null}
     </div>
   );
 }
 
-function DayTile({ d, cadence }: { d: PointsStreamingDay; cadence: LineupCadence }) {
+function MovePips({ cap, used, planned }: { cap: number; used: number; planned: number }) {
+  const usedClamped = Math.min(used, cap);
+  const plannedClamped = Math.min(planned, cap - usedClamped);
+  const open = cap - usedClamped - plannedClamped;
+  return (
+    <div className="flex items-center gap-1 h-7">
+      {Array.from({ length: usedClamped }).map((_, i) => (
+        <span key={`u${i}`} className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40" />
+      ))}
+      {Array.from({ length: plannedClamped }).map((_, i) => (
+        <span key={`p${i}`} className="w-2.5 h-2.5 rounded-full bg-success" />
+      ))}
+      {Array.from({ length: open }).map((_, i) => (
+        <span key={`o${i}`} className="w-2.5 h-2.5 rounded-full border border-border" />
+      ))}
+      <span className="font-mono tabular-nums text-xl font-bold text-foreground ml-1.5">{open}</span>
+    </div>
+  );
+}
+
+function DayTile({
+  d,
+  cadence,
+  topCount,
+  plannedCount,
+}: {
+  d: PointsStreamingDay;
+  cadence: LineupCadence;
+  topCount: number;
+  plannedCount: number;
+}) {
   const dayOfMonth = Number(d.date.slice(8, 10));
   return (
     <div className="flex min-w-[64px] flex-col items-center gap-0.5 rounded-lg border border-border-muted px-2 py-1.5">
@@ -45,7 +75,15 @@ function DayTile({ d, cadence }: { d: PointsStreamingDay; cadence: LineupCadence
         <span className="font-mono text-sm font-bold text-success">full</span>
       )}
       <span className="font-mono text-[10px] text-muted-foreground">
-        {d.myStarts > 0 ? `${d.myStarts} SP` : ' '}
+        {d.myStarts > 0 ? `${d.myStarts} SP` : ' '}
+      </span>
+      <span className="flex items-center gap-0.5 h-1.5">
+        {Array.from({ length: Math.min(3, plannedCount) }).map((_, i) => (
+          <span key={`p${i}`} className="w-1.5 h-1.5 rounded-full bg-success" />
+        ))}
+        {Array.from({ length: Math.min(3, topCount) }).map((_, i) => (
+          <span key={`t${i}`} className="w-1.5 h-1.5 rounded-full bg-accent" />
+        ))}
       </span>
     </div>
   );
@@ -53,26 +91,41 @@ function DayTile({ d, cadence }: { d: PointsStreamingDay; cadence: LineupCadence
 
 export default function PointsWeekPlan({
   days,
-  openSlotDays,
   myStartsRemaining,
   moves,
   isLoading,
   weekStart,
   weekEnd,
   cadence,
+  topMoves,
+  plan,
 }: {
   days: PointsStreamingDay[];
-  openSlotDays: number;
   myStartsRemaining: number;
   moves: MovesBudget | undefined;
   isLoading: boolean;
   weekStart?: string;
   weekEnd?: string;
   cadence: LineupCadence;
+  topMoves: WeekMove[];
+  plan: PlannedMove[];
 }) {
   const cap = moves?.cap ?? DEFAULT_WEEKLY_MOVES_CAP;
-  const used = moves?.used;
-  const left = used != null ? Math.max(0, cap - used) : null;
+  const used = moves?.used ?? 0;
+  const left = Math.max(0, cap - used - plan.length);
+
+  // The opportunity tile: what the plan is worth once staged, else what the
+  // remaining slots could buy off the top of the board.
+  const plannedTotal = plan.reduce((s, m) => s + m.netAtAdd, 0);
+  const affordable = topMoves.slice(0, left);
+  const onTheTable = affordable.reduce((s, m) => s + m.net, 0);
+
+  const topDates = new Map<string, number>();
+  for (const m of affordable) topDates.set(m.goLiveDate, (topDates.get(m.goLiveDate) ?? 0) + 1);
+  const plannedDates = new Map<string, number>();
+  for (const m of plan) {
+    for (const c of m.dayChips) plannedDates.set(c.date, (plannedDates.get(c.date) ?? 0) + 1);
+  }
 
   return (
     <Panel
@@ -95,28 +148,39 @@ export default function PointsWeekPlan({
           <div className="grid grid-cols-3 gap-4">
             <StatTile
               label="moves left"
-              value={left != null ? String(left) : String(cap)}
-              sub={used != null ? `${used} of ${cap} used` : `cap ${cap}/wk`}
-            />
-            <StatTile
-              label={cadence === 'weekly' ? 'idle slot-days' : 'open slot-days'}
-              value={String(openSlotDays)}
-              sub={cadence === 'weekly' ? 'starters locked in with no game' : "batter slots you can't fill"}
-            />
-            <StatTile
-              label="my SP starts"
-              value={String(myStartsRemaining)}
-              sub={cadence === 'weekly' ? 'next week' : 'rest of window'}
-            />
+              sub={moves?.used != null ? `${moves.used} of ${cap} used` : `cap ${cap}/wk`}
+            >
+              <MovePips cap={cap} used={used} planned={plan.length} />
+            </StatTile>
+            {plan.length > 0 ? (
+              <StatTile label="planned" sub={`${plan.length} move${plan.length === 1 ? '' : 's'}`}>
+                <span className="font-mono tabular-nums text-xl font-bold text-success h-7 flex items-center">
+                  +{plannedTotal.toFixed(1)}
+                </span>
+              </StatTile>
+            ) : (
+              <StatTile
+                label={`best ${affordable.length} move${affordable.length === 1 ? '' : 's'}`}
+                sub={affordable.length > 0 ? 'pts on the table' : undefined}
+              >
+                <span className="font-mono tabular-nums text-xl font-bold text-foreground h-7 flex items-center">
+                  {affordable.length > 0 ? `+${onTheTable.toFixed(1)}` : '—'}
+                </span>
+              </StatTile>
+            )}
+            <StatTile label="my SP starts" value={String(myStartsRemaining)} />
           </div>
           <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {days.map(d => <DayTile key={d.date} d={d} cadence={cadence} />)}
+            {days.map(d => (
+              <DayTile
+                key={d.date}
+                d={d}
+                cadence={cadence}
+                topCount={topDates.get(d.date) ?? 0}
+                plannedCount={plannedDates.get(d.date) ?? 0}
+              />
+            ))}
           </div>
-          <Text variant="small" className="text-muted-foreground">
-            {cadence === 'weekly'
-              ? 'Lineups lock for the week, so idle days get baked in when you commit — favor bats with dense schedules and arms with two-start weeks. Adds take effect next Monday.'
-              : 'Every open slot-day is foregone points, and a streamed start usually outscores a bench bat’s whole week — spend moves on starts first, then plug the open days.'}
-          </Text>
         </div>
       )}
     </Panel>

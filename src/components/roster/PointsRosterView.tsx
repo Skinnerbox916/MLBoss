@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FiTrendingUp, FiLayers } from 'react-icons/fi';
 import Panel from '@/components/ui/Panel';
 import Badge from '@/components/ui/Badge';
@@ -11,7 +11,14 @@ import { Heading, Text } from '@/components/typography';
 import { usePointsTeam } from '@/lib/hooks/usePointsTeam';
 import SuggestedMovesPanel from '@/components/points/SuggestedMovesPanel';
 import RosterMoveCard from '@/components/shared/RosterMoveCard';
-import PositionalDepthTable from '@/components/shared/PositionalDepthTable';
+import PositionalDepthTable, { DepthStepper } from '@/components/shared/PositionalDepthTable';
+import { getDefaultDepth, type BatterPosition } from '@/lib/roster/depth';
+import {
+  loadPreferredDepth,
+  savePreferredDepth,
+  POINTS_PREFERRED_DEPTH_KEY,
+  type PreferredDepthMap,
+} from '@/lib/roster/preferredDepth';
 import type { PointsPlayerRow, PointsBatterMove } from '@/lib/points/analyzeTeam';
 
 interface PointsRosterViewProps {
@@ -37,8 +44,26 @@ interface PointsRosterViewProps {
  * strategy header by design: there are no categories to weight or concede.
  */
 export default function PointsRosterView({ leagueKey, teamKey, scoringType }: PointsRosterViewProps) {
-  const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType);
   const [tab, setTab] = useState<'batters' | 'pitchers'>('batters');
+
+  // Target-depth overrides — persisted per league mode, sent to the server
+  // so the depth chart AND the swap engine honor them (the points analysis
+  // runs server-side, unlike the categories page's client-side solve).
+  const [preferredDepth, setPreferredDepth] = useState<PreferredDepthMap>({});
+  useEffect(() => {
+    setPreferredDepth(loadPreferredDepth(POINTS_PREFERRED_DEPTH_KEY));
+  }, []);
+  const updatePreferredDepth = useCallback((pos: BatterPosition, next: number | null) => {
+    setPreferredDepth(prev => {
+      const updated = { ...prev };
+      if (next === null) delete updated[pos];
+      else updated[pos] = next;
+      savePreferredDepth(POINTS_PREFERRED_DEPTH_KEY, updated);
+      return updated;
+    });
+  }, []);
+
+  const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType, 'current', preferredDepth);
 
   return (
     <div className="space-y-4">
@@ -80,7 +105,23 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
                   </div>
                 }
               >
-                <PositionalDepthTable rows={data.batterDepth} />
+                <PositionalDepthTable
+                  rows={data.batterDepth}
+                  renderTarget={row => {
+                    const pos = row.position as BatterPosition;
+                    const defaultDepth = getDefaultDepth(row.startingSlots);
+                    const currentDepth = preferredDepth[pos] ?? defaultDepth;
+                    return (
+                      <DepthStepper
+                        value={currentDepth}
+                        defaultValue={defaultDepth}
+                        min={0}
+                        max={Math.max(defaultDepth + 3, 6)}
+                        onChange={next => updatePreferredDepth(pos, next)}
+                      />
+                    );
+                  }}
+                />
                 <p className="text-caption text-muted-foreground mt-2">
                   Multi-position players count toward every eligible slot. Values are expected points per week;
                   moves below only suggest players who fit this picture.
@@ -223,44 +264,45 @@ function PlayerBoard({
     <Panel
       title={title}
       action={<Text as="span" variant="caption" className="text-muted-foreground">{rows.length} {showOwnership ? 'available' : 'rostered'}</Text>}
-      noPadding
     >
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-muted-foreground font-medium border-b border-border/50">
-              <th className="text-left font-medium px-4 py-2">Player</th>
-              <th className="text-left font-medium px-2 py-2">Pos</th>
-              {showOwnership && <th className="text-right font-medium px-2 py-2">Own%</th>}
-              <th className="text-right font-medium px-2 py-2">{unitLabel}</th>
-              <th className="text-right font-medium px-2 py-2">Pts / wk</th>
-              {!showOwnership && <th className="text-right font-medium px-2 py-2">This wk</th>}
-              <th className="text-right font-medium px-4 py-2">VOR</th>
+            <tr className="border-b border-border">
+              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Player</th>
+              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium w-16">Pos</th>
+              {showOwnership && <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-12">Own%</th>}
+              <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-12">{unitLabel}</th>
+              <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-14">Pts / wk</th>
+              {!showOwnership && <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-14">This wk</th>}
+              <th className="text-right px-2 py-1.5 text-success font-medium w-14">VOR</th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((p) => (
               <tr key={p.playerKey} className="border-b border-border/50 hover:bg-surface-muted/50">
-                <td className="px-4 py-2">
-                  <span className="font-medium text-foreground">{p.name}</span>
-                  {p.injured && <Badge color="error">IL</Badge>}
-                  {p.role === 'reliever' && <span className="ml-1 font-mono text-[10px] text-muted-foreground">RP</span>}
-                  <span className="block text-caption text-muted-foreground">{p.team}</span>
+                <td className="px-2 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-foreground font-medium truncate max-w-[140px]">{p.name}</span>
+                    {p.injured && <Badge color="error">IL</Badge>}
+                    {p.role === 'reliever' && <span className="font-mono text-[10px] text-muted-foreground">RP</span>}
+                  </div>
+                  <span className="text-caption text-muted-foreground">{p.team}</span>
                 </td>
-                <td className="px-2 py-2 font-mono text-[10px] text-muted-foreground">
+                <td className="px-2 py-1.5 text-muted-foreground">
                   {p.positions.filter(x => x !== 'Util' && x !== 'BN' && x !== 'IL').join(',') || (kind === 'P' ? 'P' : 'UT')}
                 </td>
                 {showOwnership && (
-                  <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
                     {typeof p.percentOwned === 'number' ? Math.round(p.percentOwned) : '–'}
                   </td>
                 )}
-                <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">{p.perUnit}</td>
-                <td className="px-2 py-2 text-right font-mono tabular-nums font-medium text-foreground">{p.weeklyPoints}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{p.perUnit}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums font-medium text-foreground">{p.weeklyPoints}</td>
                 {!showOwnership && (
-                  <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">{p.thisWeekPoints ?? '–'}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{p.thisWeekPoints ?? '–'}</td>
                 )}
-                <td className={`px-4 py-2 text-right font-mono tabular-nums font-medium ${p.vor == null ? 'text-muted-foreground' : vorTone(p.vor)}`}>
+                <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${p.vor == null ? 'text-muted-foreground' : vorTone(p.vor)}`}>
                   {p.vor == null ? '–' : (p.vor > 0 ? `+${p.vor}` : p.vor)}
                 </td>
               </tr>
@@ -268,13 +310,11 @@ function PlayerBoard({
           </tbody>
         </table>
       </div>
-      <div className="flex items-center gap-2 px-4 py-2 border-t border-border/50">
-        <Icon icon={FiTrendingUp} size={13} className="text-muted-foreground" />
-        <Text as="span" variant="caption" className="text-muted-foreground">
-          VOR = weekly points above the readily-available replacement at the position, with playing time
-          scaled to each player&apos;s actual role. Negative = freely replaceable.
-        </Text>
-      </div>
+      <p className="flex items-center gap-2 text-caption text-muted-foreground mt-2">
+        <Icon icon={FiTrendingUp} size={13} />
+        VOR = weekly points above the readily-available replacement at the position, with playing time
+        scaled to each player&apos;s actual role. Negative = freely replaceable.
+      </p>
     </Panel>
   );
 }

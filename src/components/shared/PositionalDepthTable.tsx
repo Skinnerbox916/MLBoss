@@ -1,6 +1,8 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { FiMinus, FiPlus, FiRotateCcw } from 'react-icons/fi';
+import Icon from '@/components/Icon';
 
 /**
  * Positional-depth table — the shared presentation both roster pages use
@@ -28,6 +30,69 @@ export function depthStatus(row: DepthTableRow): { label: string; color: string 
   if (row.depthShortfall > 0) return { label: 'GAP', color: 'text-error' };
   if (row.eligibleCount >= row.minDepth + 2) return { label: 'deep', color: 'text-success' };
   return { label: 'ok', color: 'text-accent' };
+}
+
+/**
+ * Preferred-depth stepper for the Target column — shared by both roster
+ * pages (moved here from the categories page when points gained target
+ * pickers, 2026-07).
+ */
+export function DepthStepper({
+  value,
+  defaultValue,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  defaultValue: number;
+  min: number;
+  max: number;
+  onChange: (next: number | null) => void;
+}) {
+  const isCustom = value !== defaultValue;
+  const canDec = value > min;
+  const canInc = value < max;
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        aria-label="Decrease preferred depth"
+        disabled={!canDec}
+        onClick={() => canDec && onChange(value - 1)}
+        className="flex h-5 w-5 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted-foreground"
+      >
+        <Icon icon={FiMinus} size={10} />
+      </button>
+      <span
+        className={`tabular-nums text-xs font-semibold min-w-[1.25rem] text-center ${
+          isCustom ? 'text-accent' : 'text-foreground'
+        }`}
+      >
+        {value}
+      </span>
+      <button
+        type="button"
+        aria-label="Increase preferred depth"
+        disabled={!canInc}
+        onClick={() => canInc && onChange(value + 1)}
+        className="flex h-5 w-5 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-border disabled:hover:text-muted-foreground"
+      >
+        <Icon icon={FiPlus} size={10} />
+      </button>
+      {isCustom && (
+        <button
+          type="button"
+          aria-label="Reset to default"
+          title={`Reset to default (${defaultValue})`}
+          onClick={() => onChange(null)}
+          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-accent"
+        >
+          <Icon icon={FiRotateCcw} size={10} />
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function PositionalDepthTable({

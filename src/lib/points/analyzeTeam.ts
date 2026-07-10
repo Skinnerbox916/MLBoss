@@ -50,6 +50,7 @@ import {
   type RankedSwap,
 } from '@/lib/roster/depth';
 import { computeOpenSlotCount } from '@/lib/roster/openSlots';
+import type { PreferredDepthMap } from '@/lib/roster/preferredDepth';
 import { batterPointsRateVector } from './rateVector';
 import { COMMON_MLB_STATS } from '@/constants/statCategories';
 
@@ -184,7 +185,7 @@ export async function analyzePointsTeam(
   leagueKey: string,
   teamKey: string,
   profile: ScoringProfile,
-  opts: { week?: WeekTarget; includeFA?: boolean } = {},
+  opts: { week?: WeekTarget; includeFA?: boolean; preferredDepth?: PreferredDepthMap } = {},
 ): Promise<PointsTeamAnalysis> {
   const week: WeekTarget = opts.week ?? 'current';
   const includeFA = opts.includeFA ?? true;
@@ -388,6 +389,7 @@ export async function analyzePointsTeam(
           // point a week the move is churn, not an upgrade.
           minNetValue: 1.0,
           limit: 10,
+          preferredDepth: opts.preferredDepth,
           openSlotCount: openSlots,
         })
       : [];
@@ -457,8 +459,15 @@ export async function analyzePointsTeam(
     };
   });
 
-  // Positional depth (default depth config — no steppers on points v1).
-  const rosterValueResult = computeRosterValue(scoredRosterBatters, startingSlots, batterReplacement);
+  // Positional depth — target steppers feed `opts.preferredDepth` via the
+  // route's `depth` param (rides in the cache key).
+  const rosterValueResult = computeRosterValue(
+    scoredRosterBatters,
+    startingSlots,
+    batterReplacement,
+    undefined,
+    opts.preferredDepth,
+  );
   const batterDepth: PointsDepthRow[] = Array.from(rosterValueResult.byPosition.values())
     .filter(pv => pv.startingSlots > 0)
     .map(pv => ({

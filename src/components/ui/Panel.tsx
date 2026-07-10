@@ -9,7 +9,13 @@ interface PanelProps {
   action?: ReactNode;
   /** Optional helper text rendered directly under the header. */
   helper?: ReactNode;
-  /** Disables the default padding — useful when the child needs full-bleed control (tables, grids). */
+  /**
+   * Disables the default padding on the panel BODY — useful when the child
+   * needs full-bleed control (tables, grids). The header and helper keep
+   * their own padding regardless: a section title must never render flush
+   * against the panel corner (the July 2026 points-roster "crammed titles"
+   * bug was exactly this flag stripping header spacing).
+   */
   noPadding?: boolean;
   className?: string;
   children: ReactNode;
@@ -41,7 +47,13 @@ export default function Panel({
       )}
     >
       {hasHeader && (
-        <div className={cn('flex items-center justify-between', helper ? 'mb-1' : 'mb-3')}>
+        <div
+          className={cn(
+            'flex items-center justify-between',
+            helper ? 'mb-1' : 'mb-3',
+            noPadding && 'px-4 pt-4',
+          )}
+        >
           {title !== undefined ? (
             typeof title === 'string'
               ? <Heading as="h2">{title}</Heading>
@@ -51,7 +63,7 @@ export default function Panel({
         </div>
       )}
       {helper && (
-        <p className="text-xs text-muted-foreground mb-3">{helper}</p>
+        <p className={cn('text-xs text-muted-foreground mb-3', noPadding && 'px-4')}>{helper}</p>
       )}
       {children}
     </section>

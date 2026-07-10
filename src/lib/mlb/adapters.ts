@@ -86,6 +86,9 @@ export function toBatterSeasonStats(line: PlayerStatLine): BatterSeasonStats {
           walks: line.prior.walks,
           strikeouts: line.prior.strikeouts,
           totalBases: line.prior.totalBases,
+          doubles: line.prior.doubles,
+          triples: line.prior.triples,
+          hbp: line.prior.hbp,
           avg: line.prior.avg,
         }
       : null;
@@ -104,6 +107,9 @@ export function toBatterSeasonStats(line: PlayerStatLine): BatterSeasonStats {
     walks: primary.walks,
     strikeouts: primary.strikeouts,
     totalBases: primary.totalBases,
+    doubles: primary.doubles,
+    triples: primary.triples,
+    hbp: primary.hbp,
     season: primary.season,
     xwoba: line.talent?.xwoba ?? null,
     woba: line.talent?.woba ?? null,
@@ -149,6 +155,9 @@ export function fromBatterSeasonStats(stats: BatterSeasonStats): PlayerStatLine 
     walks: stats.walks,
     strikeouts: stats.strikeouts,
     totalBases: stats.totalBases,
+    doubles: stats.doubles,
+    triples: stats.triples,
+    hbp: stats.hbp,
     avg: stats.avg,
     ops: stats.ops,
   };
@@ -166,6 +175,9 @@ export function fromBatterSeasonStats(stats: BatterSeasonStats): PlayerStatLine 
         walks: stats.priorSeason.walks,
         strikeouts: stats.priorSeason.strikeouts,
         totalBases: stats.priorSeason.totalBases,
+        doubles: stats.priorSeason.doubles,
+        triples: stats.priorSeason.triples,
+        hbp: stats.priorSeason.hbp,
         avg: stats.priorSeason.avg,
         ops: null,
       }

@@ -183,6 +183,12 @@ export interface SplitLine {
    *  line so it's available everywhere SplitLine is, including in
    *  league configs that score TB. */
   totalBases: number;
+  /** Extra-base hit split + HBP — carried for points leagues, which weight
+   *  1B/2B/3B (and HBP) separately. The MLB API sends these on every stat
+   *  line; they were previously read only to derive `totalBases`. */
+  doubles: number;
+  triples: number;
+  hitByPitch: number;
 }
 
 export type SplitRating = 'strong' | 'average' | 'weak' | 'unknown';
@@ -251,6 +257,13 @@ export interface BatterSeasonStats {
   strikeouts: number;
   /** Total bases — needed for leagues that score TB. */
   totalBases: number;
+  /** Extra-base split + HBP — points leagues weight 1B/2B/3B/HBP
+   *  separately. Optional: absent on stale cached lines and synthetic
+   *  test fixtures; consumers fall back to league-anchored estimates
+   *  (see points/rateVector.ts). */
+  doubles?: number;
+  triples?: number;
+  hbp?: number;
   season: number;
   /** Regressed "true talent" xwOBA from the component model
    *  (K% + BB% + xwOBACON, each independently regressed). Drives the
@@ -337,6 +350,9 @@ export interface PriorSeasonLine {
   strikeouts: number;
   /** Prior-season total bases — anchors the TB/PA Bayesian blend. */
   totalBases: number;
+  doubles?: number;
+  triples?: number;
+  hbp?: number;
   avg: number | null;
 }
 
@@ -379,6 +395,9 @@ export interface PlayerSeasonCounting {
   walks: number;
   strikeouts: number;
   totalBases: number;
+  doubles?: number;
+  triples?: number;
+  hbp?: number;
   avg: number | null;
   ops: number | null;
 }

@@ -96,14 +96,45 @@ export function decomposeHits(hPerPA: number, tbPerPA: number, hrPerPA: number) 
 
 /**
  * Talent-neutral per-PA rate vector for a batter. Reuses the same
- * Bayesian-regressed per-PA baselines as the categories engine, then
- * decomposes hits into 1B/2B/3B.
+ * Bayesian-regressed per-PA baselines as the categories engine.
+ *
+ * Hit types: when the player's line carries real doubles/triples counts
+ * (plumbed 2026-07), 2B and 3B come from their own Bayesian-regressed
+ * per-PA baselines (stat_ids 10/11 in `categoryBaselines`) and singles
+ * are what's left of the regressed H rate. The TB-based `decomposeHits`
+ * solve remains the fallback for stale cached lines / synthetic inputs
+ * where the counts are absent (baseline getters return null → the blend
+ * would be pure league prior, which is *worse* than the TB solve that
+ * uses the player's real regressed TB).
+ *
+ * HBP: player-specific regressed rate when counts exist (persistent
+ * plate-crowding trait, 2.6 pts each in Yahoo default); league-mean
+ * fallback otherwise.
  */
 export function batterPointsRateVector(stats: BatterSeasonStats): BatterRateVector {
   const hPerPA = rate(stats, STAT_H);
   const tbPerPA = rate(stats, STAT_TB);
   const hrPerPA = rate(stats, STAT_HR);
-  const { singles, doubles, triples } = decomposeHits(hPerPA, tbPerPA, hrPerPA);
+
+  const hasHitTypes =
+    typeof stats.doubles === 'number' || typeof stats.priorSeason?.doubles === 'number';
+  let singles: number, doubles: number, triples: number;
+  if (hasHitTypes) {
+    doubles = rate(stats, STAT_2B);
+    triples = rate(stats, STAT_3B);
+    // Keep the split consistent with the regressed H/HR aggregates: XBH
+    // can't exceed non-HR hits; singles absorb the remainder.
+    const nonHrH = Math.max(0, hPerPA - hrPerPA);
+    triples = Math.min(triples, nonHrH);
+    doubles = Math.min(doubles, Math.max(0, nonHrH - triples));
+    singles = Math.max(0, nonHrH - doubles - triples);
+  } else {
+    ({ singles, doubles, triples } = decomposeHits(hPerPA, tbPerPA, hrPerPA));
+  }
+
+  const hasHbp =
+    typeof stats.hbp === 'number' || typeof stats.priorSeason?.hbp === 'number';
+  const hbpPerPA = hasHbp ? rate(stats, STAT_HBP) : LEAGUE_HBP_PER_PA;
 
   return {
     perPA: {
@@ -115,7 +146,7 @@ export function batterPointsRateVector(stats: BatterSeasonStats): BatterRateVect
       [STAT_RBI]: rate(stats, STAT_RBI),
       [STAT_SB]: rate(stats, STAT_SB),
       [STAT_BB]: rate(stats, STAT_BB),
-      [STAT_HBP]: LEAGUE_HBP_PER_PA,
+      [STAT_HBP]: hbpPerPA,
       // Aggregates — only consumed if a custom league weights them directly.
       [STAT_H]: hPerPA,
       [STAT_TB]: tbPerPA,

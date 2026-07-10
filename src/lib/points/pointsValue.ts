@@ -71,11 +71,21 @@ export function batterPointsPerPA(
 export function batterPointsValue(
   stats: BatterSeasonStats,
   profile: ScoringProfile,
+  opts: {
+    /**
+     * Role share (0..1) from `playingTimeFactor` — scales weekly volume so
+     * a 4th outfielder doesn't get everyday-PA credit. Default 1 preserves
+     * the legacy everyday assumption for callers without pool context.
+     * Same carry-over the categories forecast route applies to its
+     * per-player value lines (see docs/roster-strategy.md).
+     */
+    roleShare?: number;
+  } = {},
 ): BatterPointsValue {
   const pointsPerPA = batterPointsPerPA(stats, profile);
   const paPerGame =
     stats.gp >= MIN_GP_FOR_PA_RATE ? stats.pa / stats.gp : DEFAULT_PA_PER_GAME;
-  const weeklyPA = paPerGame * TYPICAL_GAMES_PER_WEEK;
+  const weeklyPA = paPerGame * TYPICAL_GAMES_PER_WEEK * (opts.roleShare ?? 1);
   return {
     pointsPerPA,
     paPerGame,

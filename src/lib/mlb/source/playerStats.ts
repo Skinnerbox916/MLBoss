@@ -25,6 +25,7 @@ export interface RawStat {
   homeRuns?: number;
   doubles?: number;
   triples?: number;
+  hitByPitch?: number;
   runs?: number;
   rbi?: number;
   stolenBases?: number;

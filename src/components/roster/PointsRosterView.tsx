@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { FiTrendingUp } from 'react-icons/fi';
+import { FiTrendingUp, FiLayers } from 'react-icons/fi';
 import Panel from '@/components/ui/Panel';
 import Badge from '@/components/ui/Badge';
 import Tabs from '@/components/ui/Tabs';
@@ -10,7 +10,9 @@ import Icon from '@/components/Icon';
 import { Heading, Text } from '@/components/typography';
 import { usePointsTeam } from '@/lib/hooks/usePointsTeam';
 import SuggestedMovesPanel from '@/components/points/SuggestedMovesPanel';
-import type { PointsPlayerRow, PointsVORRow } from '@/lib/points/analyzeTeam';
+import RosterMoveCard from '@/components/shared/RosterMoveCard';
+import PositionalDepthTable from '@/components/shared/PositionalDepthTable';
+import type { PointsPlayerRow, PointsBatterMove } from '@/lib/points/analyzeTeam';
 
 interface PointsRosterViewProps {
   leagueKey: string | undefined;
@@ -19,18 +21,27 @@ interface PointsRosterViewProps {
 }
 
 /**
- * Points-league /roster experience: rest-of-season player value, value over
- * replacement, and suggested roster moves. Replaces the categories
- * chase/hold/punt RosterFocusPanel + depth-chart flow when the active league
- * scores by points. Talent-neutral ROS lens (matchup-vacuum) — same horizon
- * intent as the categories roster page, just a single points objective.
+ * Points-league /roster experience — positionally-honest upgrade shopping
+ * over a ROS horizon (see docs/roster-strategy.md and the points detail
+ * doc). Three sections, in the grammar the categories page established:
+ *
+ *   1. Positional Depth — the slot picture upgrades must fit within.
+ *   2. Suggested Moves — batter moves from the shared position-aware swap
+ *      engine, valued in pts/wk (native units); pure adds when slots are
+ *      open. Pitcher moves stay on the greedy list until the joint
+ *      categories+points pitcher effort.
+ *   3. Your Batters ↔ Upgrade Targets — the comparison tables, plus the
+ *      pitcher board on its own tab.
+ *
+ * Talent-neutral ROS lens (matchup-vacuum), single points objective — no
+ * strategy header by design: there are no categories to weight or concede.
  */
 export default function PointsRosterView({ leagueKey, teamKey, scoringType }: PointsRosterViewProps) {
   const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType);
   const [tab, setTab] = useState<'batters' | 'pitchers'>('batters');
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <header>
         <Heading as="h1" className="text-primary">Roster</Heading>
         <Text variant="muted">Rest-of-season value &amp; moves · points league</Text>
@@ -51,23 +62,65 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
 
       {data && (
         <>
-          <SuggestedMovesPanel moves={data.suggestedMoves} />
+          <Tabs
+            variant="segment"
+            ariaLabel="Roster tab"
+            items={[{ id: 'batters', label: 'Batters' }, { id: 'pitchers', label: 'Pitchers' }]}
+            value={tab}
+            onChange={(v) => setTab(v as 'batters' | 'pitchers')}
+          />
 
-          <div>
-            <Tabs
-              variant="segment"
-              items={[{ id: 'batters', label: 'Batters' }, { id: 'pitchers', label: 'Pitchers' }]}
-              value={tab}
-              onChange={(v) => setTab(v as 'batters' | 'pitchers')}
-            />
-            <div className="mt-4">
-              <ValueBoard
-                rows={(tab === 'batters' ? data.batters : data.pitchers).filter(p => p.owned)}
-                vor={data.rosterVOR}
-                kind={tab === 'batters' ? 'B' : 'P'}
-              />
-            </div>
-          </div>
+          {tab === 'batters' ? (
+            <>
+              <Panel
+                title={
+                  <div className="flex items-center gap-2">
+                    <Icon icon={FiLayers} size={14} className="text-accent" />
+                    <Heading as="h2">Positional Depth</Heading>
+                  </div>
+                }
+              >
+                <PositionalDepthTable rows={data.batterDepth} />
+                <p className="text-caption text-muted-foreground mt-2">
+                  Multi-position players count toward every eligible slot. Values are expected points per week;
+                  moves below only suggest players who fit this picture.
+                </p>
+              </Panel>
+
+              <BatterMovesPanel moves={data.batterMoves} openSlots={data.openSlots} />
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <PlayerBoard
+                  title="Your Batters"
+                  rows={data.batters.filter(p => p.owned)}
+                  kind="B"
+                />
+                <PlayerBoard
+                  title="Upgrade Targets"
+                  rows={data.batters.filter(p => !p.owned).slice(0, 30)}
+                  kind="B"
+                  showOwnership
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <SuggestedMovesPanel pitcherMoves={data.pitcherMoves} />
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <PlayerBoard
+                  title="Your Pitchers"
+                  rows={data.pitchers.filter(p => p.owned)}
+                  kind="P"
+                />
+                <PlayerBoard
+                  title="Upgrade Targets"
+                  rows={data.pitchers.filter(p => !p.owned).slice(0, 30)}
+                  kind="P"
+                  showOwnership
+                />
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -75,7 +128,75 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
 }
 
 // ---------------------------------------------------------------------------
-// Value board
+// Batter moves — the shared position-aware card treatment
+// ---------------------------------------------------------------------------
+
+function reasonBadge(reason: PointsBatterMove['primaryReason']) {
+  if (reason === 'gap_fill') return <Badge color="error">fills gap</Badge>;
+  if (reason === 'matchup_depth') return <Badge color="accent">matchup depth</Badge>;
+  return <Badge color="success"><Icon icon={FiTrendingUp} size={10} /> upgrade</Badge>;
+}
+
+function BatterMovesPanel({ moves, openSlots }: { moves: PointsBatterMove[]; openSlots: number }) {
+  if (moves.length === 0) {
+    return (
+      <Panel title="Suggested Moves">
+        <Text variant="caption">
+          No net-positive moves found — your roster beats the free-agent pool at every slot.
+        </Text>
+      </Panel>
+    );
+  }
+  return (
+    <Panel
+      title="Suggested Moves"
+      action={
+        <span className="text-caption text-muted-foreground">
+          {openSlots > 0
+            ? `${openSlots} open slot${openSlots === 1 ? '' : 's'} — pure adds at top`
+            : 'Position-aware net points per week'}
+        </span>
+      }
+    >
+      <div className="space-y-2">
+        {moves.slice(0, 8).map((m, i) => (
+          <RosterMoveCard
+            key={i}
+            add={{
+              name: m.add.name,
+              displayPosition: m.add.displayPosition,
+            }}
+            drop={
+              m.drop
+                ? {
+                    name: m.drop.name,
+                    displayPosition: m.drop.displayPosition,
+                    percentOwned: m.drop.percentOwned,
+                    averageDraftPick: m.drop.averageDraftPick,
+                  }
+                : null
+            }
+            badges={reasonBadge(m.primaryReason)}
+            deltas={m.impacts.map(imp => ({
+              key: imp.statId,
+              label: imp.label,
+              text: `${imp.delta >= 0 ? '+' : ''}${imp.delta.toFixed(1)}`,
+              tone: imp.delta >= 0 ? 'text-success' : 'text-error',
+              title: `${imp.label} — pts/wk change from this move`,
+            }))}
+            positionChanges={m.positionChanges}
+            netValueText={`${m.netValue > 0 ? '+' : ''}${m.netValue.toFixed(1)}`}
+            netValuePositive={m.netValue > 0}
+            netValueLabel="pts/wk"
+          />
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Player boards — roster and upgrade-target tables, one component
 // ---------------------------------------------------------------------------
 
 function vorTone(vor: number): string {
@@ -84,20 +205,24 @@ function vorTone(vor: number): string {
   return 'text-muted-foreground';
 }
 
-function ValueBoard({
-  rows, vor, kind,
+function PlayerBoard({
+  title,
+  rows,
+  kind,
+  showOwnership = false,
 }: {
+  title: string;
   rows: PointsPlayerRow[];
-  vor: PointsVORRow[];
   kind: 'B' | 'P';
+  showOwnership?: boolean;
 }) {
-  const vorByName = new Map(vor.filter(v => v.kind === kind).map(v => [v.name, v.vor]));
   const unitLabel = kind === 'B' ? 'pts/G' : 'pts/IP';
+  const sorted = [...rows].sort((a, b) => (b.vor ?? -Infinity) - (a.vor ?? -Infinity));
 
   return (
     <Panel
-      title={kind === 'B' ? 'Your Batters' : 'Your Pitchers'}
-      action={<Text as="span" variant="caption" className="text-muted-foreground">{rows.length} rostered</Text>}
+      title={title}
+      action={<Text as="span" variant="caption" className="text-muted-foreground">{rows.length} {showOwnership ? 'available' : 'rostered'}</Text>}
       noPadding
     >
       <div className="overflow-x-auto">
@@ -106,42 +231,48 @@ function ValueBoard({
             <tr className="text-muted-foreground font-medium border-b border-border/50">
               <th className="text-left font-medium px-4 py-2">Player</th>
               <th className="text-left font-medium px-2 py-2">Pos</th>
+              {showOwnership && <th className="text-right font-medium px-2 py-2">Own%</th>}
               <th className="text-right font-medium px-2 py-2">{unitLabel}</th>
               <th className="text-right font-medium px-2 py-2">Pts / wk</th>
-              <th className="text-right font-medium px-2 py-2">This wk</th>
+              {!showOwnership && <th className="text-right font-medium px-2 py-2">This wk</th>}
               <th className="text-right font-medium px-4 py-2">VOR</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => {
-              const v = vorByName.get(p.name);
-              return (
-                <tr key={`${p.name}-${p.team}`} className="border-b border-border/50 hover:bg-surface-muted/50">
-                  <td className="px-4 py-2">
-                    <span className="font-medium text-foreground">{p.name}</span>
-                    {p.injured && <Badge color="error">IL</Badge>}
-                    {p.role === 'reliever' && <span className="ml-1 font-mono text-[10px] text-muted-foreground">RP</span>}
+            {sorted.map((p) => (
+              <tr key={p.playerKey} className="border-b border-border/50 hover:bg-surface-muted/50">
+                <td className="px-4 py-2">
+                  <span className="font-medium text-foreground">{p.name}</span>
+                  {p.injured && <Badge color="error">IL</Badge>}
+                  {p.role === 'reliever' && <span className="ml-1 font-mono text-[10px] text-muted-foreground">RP</span>}
+                  <span className="block text-caption text-muted-foreground">{p.team}</span>
+                </td>
+                <td className="px-2 py-2 font-mono text-[10px] text-muted-foreground">
+                  {p.positions.filter(x => x !== 'Util' && x !== 'BN' && x !== 'IL').join(',') || (kind === 'P' ? 'P' : 'UT')}
+                </td>
+                {showOwnership && (
+                  <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">
+                    {typeof p.percentOwned === 'number' ? Math.round(p.percentOwned) : '–'}
                   </td>
-                  <td className="px-2 py-2 font-mono text-[10px] text-muted-foreground">
-                    {p.positions.filter(x => x !== 'Util' && x !== 'BN').join(',') || (kind === 'P' ? 'P' : 'UT')}
-                  </td>
-                  <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">{p.perUnit}</td>
-                  <td className="px-2 py-2 text-right font-mono tabular-nums font-medium text-foreground">{p.weeklyPoints}</td>
+                )}
+                <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">{p.perUnit}</td>
+                <td className="px-2 py-2 text-right font-mono tabular-nums font-medium text-foreground">{p.weeklyPoints}</td>
+                {!showOwnership && (
                   <td className="px-2 py-2 text-right font-mono tabular-nums text-muted-foreground">{p.thisWeekPoints ?? '–'}</td>
-                  <td className={`px-4 py-2 text-right font-mono tabular-nums font-medium ${v == null ? 'text-muted-foreground' : vorTone(v)}`}>
-                    {v == null ? '–' : (v > 0 ? `+${v}` : v)}
-                  </td>
-                </tr>
-              );
-            })}
+                )}
+                <td className={`px-4 py-2 text-right font-mono tabular-nums font-medium ${p.vor == null ? 'text-muted-foreground' : vorTone(p.vor)}`}>
+                  {p.vor == null ? '–' : (p.vor > 0 ? `+${p.vor}` : p.vor)}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
       <div className="flex items-center gap-2 px-4 py-2 border-t border-border/50">
         <Icon icon={FiTrendingUp} size={13} className="text-muted-foreground" />
         <Text as="span" variant="caption" className="text-muted-foreground">
-          VOR = weekly points above the readily-available replacement at the position.
-          Negative = freely replaceable.
+          VOR = weekly points above the readily-available replacement at the position, with playing time
+          scaled to each player&apos;s actual role. Negative = freely replaceable.
         </Text>
       </div>
     </Panel>

@@ -51,7 +51,7 @@ export default function PointsDashboard() {
           />
 
           <div className="grid gap-6 md:grid-cols-2">
-            <SuggestedMovesPanel moves={data.suggestedMoves} limit={5} />
+            <SuggestedMovesPanel batterMoves={data.batterMoves} pitcherMoves={data.pitcherMoves} limit={5} />
             <RosterValueSummary vor={data.rosterVOR} />
           </div>
         </>

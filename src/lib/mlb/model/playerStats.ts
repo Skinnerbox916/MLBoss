@@ -51,6 +51,9 @@ export function parseSplitLine(raw: RawStat): SplitLine {
     hits,
     plateAppearances: raw.plateAppearances ?? 0,
     totalBases,
+    doubles,
+    triples,
+    hitByPitch: raw.hitByPitch ?? 0,
   };
 }
 
@@ -76,10 +79,13 @@ export function aggregateLastN(gameLog: RawSplit[], n: number): SplitLine | null
 
   let atBats = 0, hits = 0, homeRuns = 0, runs = 0, rbi = 0, stolenBases = 0;
   let strikeouts = 0, walks = 0, plateAppearances = 0;
-  let totalBases = 0;
+  let totalBases = 0, doubles = 0, triples = 0, hitByPitch = 0;
 
   for (const entry of recent) {
     const s = entry.stat;
+    doubles += s.doubles ?? 0;
+    triples += s.triples ?? 0;
+    hitByPitch += s.hitByPitch ?? 0;
     atBats += s.atBats ?? 0;
     hits += s.hits ?? 0;
     homeRuns += s.homeRuns ?? 0;
@@ -122,6 +128,9 @@ export function aggregateLastN(gameLog: RawSplit[], n: number): SplitLine | null
     hits,
     plateAppearances,
     totalBases,
+    doubles,
+    triples,
+    hitByPitch,
   };
 }
 

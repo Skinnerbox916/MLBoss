@@ -26,7 +26,7 @@
 import { blendRate } from './talentModel';
 import type { BatterSeasonStats } from './types';
 
-export type CategoryStatId = 3 | 7 | 8 | 12 | 13 | 16 | 18 | 21 | 23;
+export type CategoryStatId = 3 | 7 | 8 | 10 | 11 | 12 | 13 | 16 | 18 | 20 | 21 | 23;
 
 export interface CategoryBaselineConfig {
   /** Short display label (e.g. "AVG", "HR"). */
@@ -96,6 +96,31 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     normRange: [0.195, 0.265],
     betterIs: 'higher',
   },
+  10: { // 2B — doubles per PA. League ~0.044 (MLB ~8.2k doubles / ~185k PA).
+        //      Optional-field getters: `doubles` is absent on stale cached
+        //      lines; null routes the blend to prior + league mean.
+    label: '2B',
+    leagueMean: 0.044,
+    leaguePriorN: 100,
+    priorCap: 250,
+    getCurrent: s => (s.pa > 0 && typeof s.doubles === 'number' ? s.doubles / s.pa : null),
+    getPrior: p => (p.pa > 0 && typeof p.doubles === 'number' ? p.doubles / p.pa : null),
+    normRange: [0.025, 0.070],
+    betterIs: 'higher',
+  },
+  11: { // 3B — triples per PA. Rare, speed/park-driven; league ~0.0045.
+        //      Tight prior (stabilises slowly, but the absolute rates are
+        //      tiny — the blend mostly separates the 8-triple burners from
+        //      the zeros).
+    label: '3B',
+    leagueMean: 0.0045,
+    leaguePriorN: 100,
+    priorCap: 250,
+    getCurrent: s => (s.pa > 0 && typeof s.triples === 'number' ? s.triples / s.pa : null),
+    getPrior: p => (p.pa > 0 && typeof p.triples === 'number' ? p.triples / p.pa : null),
+    normRange: [0, 0.015],
+    betterIs: 'higher',
+  },
   12: { // HR — leagueMean refreshed 2026 (was 0.028). HR rates have
         //      compressed; the 2026 league HR/PA is ~0.0275.
     label: 'HR',
@@ -125,6 +150,19 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     getCurrent: s => (s.pa > 0 ? s.sb / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.sb / p.pa : null),
     normRange: [0.005, 0.050],
+    betterIs: 'higher',
+  },
+  20: { // HBP — hit-by-pitch per PA. League ~0.009; plate-crowders run
+        //      3x that and the trait is among the most persistent batter
+        //      skills year-to-year. Included for points leagues (2.6 pts
+        //      each in Yahoo default); ~1.3 pts/wk at the archetype extreme.
+    label: 'HBP',
+    leagueMean: 0.009,
+    leaguePriorN: 100,
+    priorCap: 250,
+    getCurrent: s => (s.pa > 0 && typeof s.hbp === 'number' ? s.hbp / s.pa : null),
+    getPrior: p => (p.pa > 0 && typeof p.hbp === 'number' ? p.hbp / p.pa : null),
+    normRange: [0, 0.025],
     betterIs: 'higher',
   },
   18: { // BB — stabilises ~120 PA. leagueMean refreshed 2026 (was 0.084).

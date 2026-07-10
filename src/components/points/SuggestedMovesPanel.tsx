@@ -6,20 +6,45 @@ import Badge from '@/components/ui/Badge';
 import Icon from '@/components/Icon';
 import { Text } from '@/components/typography';
 import type { SuggestedSwap } from '@/lib/points/moves';
+import type { PointsBatterMove } from '@/lib/points/analyzeTeam';
 
 /**
- * Shared points-league "drop → add" upgrade list. Used on /roster and the
- * points dashboard. `limit` caps the rows (dashboard shows a few; roster shows
- * all).
+ * Compact points-league "drop → add" upgrade list — the dashboard's
+ * at-a-glance view. Batter rows come from the position-aware swap engine
+ * (`batterMoves`); pitcher rows from the greedy value swaps. The roster
+ * page renders batter moves with the full shared `RosterMoveCard`
+ * treatment instead; this stays the summary form.
  */
+interface CompactMove {
+  gain: number;
+  dropName: string | null;
+  addName: string;
+  kind: 'B' | 'P';
+}
+
 export default function SuggestedMovesPanel({
-  moves,
+  batterMoves = [],
+  pitcherMoves = [],
   limit,
 }: {
-  moves: { batters: SuggestedSwap[]; pitchers: SuggestedSwap[] };
+  batterMoves?: PointsBatterMove[];
+  pitcherMoves?: SuggestedSwap[];
   limit?: number;
 }) {
-  const all = [...moves.batters, ...moves.pitchers].sort((a, b) => b.gain - a.gain);
+  const all: CompactMove[] = [
+    ...batterMoves.map(m => ({
+      gain: m.netValue,
+      dropName: m.drop?.name ?? null,
+      addName: m.add.name,
+      kind: 'B' as const,
+    })),
+    ...pitcherMoves.map(s => ({
+      gain: s.gain,
+      dropName: s.drop.name,
+      addName: s.add.name,
+      kind: 'P' as const,
+    })),
+  ].sort((a, b) => b.gain - a.gain);
   const shown = limit ? all.slice(0, limit) : all;
 
   return (
@@ -34,12 +59,16 @@ export default function SuggestedMovesPanel({
       ) : (
         <ul className="space-y-2">
           {shown.map((s, i) => (
-            <li key={`${s.drop.name}-${s.add.name}-${i}`} className="flex items-center gap-3 rounded bg-primary/5 px-3 py-2">
+            <li key={`${s.dropName ?? 'open'}-${s.addName}-${i}`} className="flex items-center gap-3 rounded bg-primary/5 px-3 py-2">
               <Badge color="success">+{s.gain}</Badge>
               <div className="flex flex-1 items-center gap-2 text-sm min-w-0">
-                <span className="text-muted-foreground line-through truncate">{s.drop.name}</span>
+                {s.dropName ? (
+                  <span className="text-muted-foreground line-through truncate">{s.dropName}</span>
+                ) : (
+                  <span className="text-caption text-accent uppercase tracking-wide">open slot</span>
+                )}
                 <Icon icon={FiArrowRight} size={14} className="text-muted-foreground shrink-0" />
-                <span className="font-medium text-foreground truncate">{s.add.name}</span>
+                <span className="font-medium text-foreground truncate">{s.addName}</span>
               </div>
               <Badge color={s.kind === 'P' ? 'accent' : 'primary'}>{s.kind === 'P' ? 'P' : 'B'}</Badge>
             </li>

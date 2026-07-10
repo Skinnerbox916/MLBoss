@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { FiArrowRight, FiAlertTriangle, FiTrendingUp, FiLayers, FiPlus, FiMinus, FiRotateCcw, FiChevronUp, FiChevronDown, FiTarget, FiShield } from 'react-icons/fi';
+import { FiAlertTriangle, FiTrendingUp, FiLayers, FiPlus, FiMinus, FiRotateCcw, FiChevronUp, FiChevronDown, FiTarget, FiShield } from 'react-icons/fi';
 import { usePitcherTalent } from '@/lib/hooks/usePitcherTalent';
 import { getPitcherSeasonRating } from '@/lib/pitching/roster';
 import type { PitcherRating } from '@/lib/pitching/rating';
@@ -32,7 +32,6 @@ import {
   type BatterPosition,
   type ScoredPlayer,
   type RankedSwap,
-  type PositionValue,
   getBatterPositions,
   parseStartingSlots,
   computeReplacementLevel,
@@ -40,6 +39,9 @@ import {
   generateSwapSuggestions,
   getDefaultDepth,
 } from '@/lib/roster/depth';
+import { computeOpenSlotCount } from '@/lib/roster/openSlots';
+import RosterMoveCard, { type MoveCardDelta } from '@/components/shared/RosterMoveCard';
+import PositionalDepthTable, { type DepthTableRow } from '@/components/shared/PositionalDepthTable';
 import RosterFocusPanel from './RosterFocusPanel';
 import { useLeagueForecast } from '@/lib/hooks/useLeagueForecast';
 import {
@@ -129,13 +131,6 @@ function isStashableIL(p: { on_disabled_list?: boolean; status?: string }): bool
 // Depth Chart
 // ---------------------------------------------------------------------------
 
-function depthStatus(pv: PositionValue): { label: string; color: string } {
-  if (pv.startingSlots === 0) return { label: '—', color: 'text-muted-foreground/50' };
-  if (pv.depthShortfall > 0) return { label: 'GAP', color: 'text-error' };
-  if (pv.eligibleCount >= pv.minDepth + 2) return { label: 'deep', color: 'text-success' };
-  return { label: 'ok', color: 'text-accent' };
-}
-
 function DepthStepper({
   value,
   defaultValue,
@@ -205,7 +200,20 @@ function DepthChart({
   preferredDepth: Partial<Record<BatterPosition, number>>;
   onDepthChange: (pos: BatterPosition, next: number | null) => void;
 }) {
-  const positions = BATTER_POSITIONS.filter(p => (rosterValue.byPosition.get(p)?.startingSlots ?? 0) > 0);
+  const rows: DepthTableRow[] = BATTER_POSITIONS
+    .filter(p => (rosterValue.byPosition.get(p)?.startingSlots ?? 0) > 0)
+    .map(p => {
+      const pv = rosterValue.byPosition.get(p)!;
+      return {
+        position: pv.position,
+        startingSlots: pv.startingSlots,
+        eligibleCount: pv.eligibleCount,
+        minDepth: pv.minDepth,
+        depthShortfall: pv.depthShortfall,
+        starters: pv.starters.map(x => x.name),
+        firstBackup: pv.firstBackup?.name ?? null,
+      };
+    });
   return (
     <Panel
       title={
@@ -215,52 +223,25 @@ function DepthChart({
         </div>
       }
     >
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Pos</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-12">Slots</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-16">Eligible</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-28">Target</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-14">Status</th>
-              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Starters</th>
-              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Best Backup</th>
-            </tr>
-          </thead>
-          <tbody>
-            {positions.map(pos => {
-              const pv = rosterValue.byPosition.get(pos)!;
-              const status = depthStatus(pv);
-              const defaultDepth = getDefaultDepth(pv.startingSlots);
-              const currentDepth = preferredDepth[pos] ?? defaultDepth;
-              return (
-                <tr key={pos} className="border-b border-border/50">
-                  <td className="px-2 py-1.5 font-semibold text-foreground">{pos}</td>
-                  <td className="px-2 py-1.5 text-center text-muted-foreground">{pv.startingSlots}</td>
-                  <td className="px-2 py-1.5 text-center text-foreground">{pv.eligibleCount}</td>
-                  <td className="px-2 py-1.5 text-center">
-                    <DepthStepper
-                      value={currentDepth}
-                      defaultValue={defaultDepth}
-                      min={0}
-                      max={Math.max(defaultDepth + 3, 6)}
-                      onChange={next => onDepthChange(pos, next)}
-                    />
-                  </td>
-                  <td className={`px-2 py-1.5 text-center font-semibold ${status.color}`}>{status.label}</td>
-                  <td className="px-2 py-1.5 text-foreground truncate max-w-[200px]">
-                    {pv.starters.map(p => p.name).join(', ') || <span className="text-error">— empty</span>}
-                  </td>
-                  <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[200px]">
-                    {pv.firstBackup ? pv.firstBackup.name : <span className="text-error">none</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <PositionalDepthTable
+        rows={rows}
+        renderTarget={row => {
+          const pos = row.position as BatterPosition;
+          const pv = rosterValue.byPosition.get(pos);
+          if (!pv) return null;
+          const defaultDepth = getDefaultDepth(pv.startingSlots);
+          const currentDepth = preferredDepth[pos] ?? defaultDepth;
+          return (
+            <DepthStepper
+              value={currentDepth}
+              defaultValue={defaultDepth}
+              min={0}
+              max={Math.max(defaultDepth + 3, 6)}
+              onChange={next => onDepthChange(pos, next)}
+            />
+          );
+        }}
+      />
       <p className="text-caption text-muted-foreground mt-2">
         Multi-position players count toward every eligible slot, including starters who could slide over in a pinch.
         Target = total players you want carried at that position (starters + depth). Set to 0 to skip a position entirely
@@ -686,38 +667,29 @@ function strategyBadge(strategy: SwapStrategy) {
 }
 
 /**
- * Per-category delta strip. Color-coded by leverage role:
- *  - **contested** — accent (the battlegrounds we want moved)
- *  - **cushioned** — success when up (padding), error when down (warning)
- *  - **conceded** — muted (side-effects on cats we've given up)
- *
- * Deltas are in move units (drop→add contribution change — the actual
- * components of the swap's net value). Truncated to top 4 by |delta|.
+ * Convert leverage-annotated category impacts to the shared move-card
+ * delta strip. Tone by role: contested up = accent (the battlegrounds we
+ * want moved), cushioned up/down = success/error (padding vs warning),
+ * conceded = muted (side-effects on cats we've given up). Values are in
+ * move units.
  */
-function categoryDeltaStrip({ impact }: { impact: CategoryImpact[] }) {
-  if (impact.length === 0) return null;
-  return (
-    <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1">
-      {impact.slice(0, 4).map(c => {
-        const sign = c.delta >= 0 ? '+' : '';
-        const tone =
-          c.role === 'conceded' ? 'text-muted-foreground/70' :
-          c.role === 'contested' && c.delta > 0 ? 'text-accent' :
-          c.role === 'cushioned' && c.delta > 0 ? 'text-success' :
-          c.role === 'cushioned' && c.delta < 0 ? 'text-error' :
-          c.delta > 0 ? 'text-success' : 'text-error';
-        return (
-          <span
-            key={c.statId}
-            className={`text-caption font-semibold ${tone}`}
-            title={`${c.displayName} (${c.role}) — drop→add value delta`}
-          >
-            {c.displayName}: {sign}{c.delta.toFixed(2)}
-          </span>
-        );
-      })}
-    </div>
-  );
+function impactDeltas(impact: CategoryImpact[]): MoveCardDelta[] {
+  return impact.map(c => {
+    const sign = c.delta >= 0 ? '+' : '';
+    const tone =
+      c.role === 'conceded' ? 'text-muted-foreground/70' :
+      c.role === 'contested' && c.delta > 0 ? 'text-accent' :
+      c.role === 'cushioned' && c.delta > 0 ? 'text-success' :
+      c.role === 'cushioned' && c.delta < 0 ? 'text-error' :
+      c.delta > 0 ? 'text-success' : 'text-error';
+    return {
+      key: c.statId,
+      label: c.displayName,
+      text: `${sign}${c.delta.toFixed(2)}`,
+      tone,
+      title: `${c.displayName} (${c.role}) — drop→add value delta`,
+    };
+  });
 }
 
 function SwapSuggestions({ suggestions, openSlotCount }: { suggestions: EnrichedSwap[]; openSlotCount: number }) {
@@ -738,90 +710,41 @@ function SwapSuggestions({ suggestions, openSlotCount }: { suggestions: Enriched
         <span className="text-caption text-muted-foreground">
           {openSlotCount > 0
             ? `${openSlotCount} open slot${openSlotCount === 1 ? '' : 's'} — pure adds at top`
-            : 'Position-aware net value × strategic plan alignment'}
+            : 'Position-aware, leverage-weighted net value'}
         </span>
       }
     >
       <div className="space-y-2">
         {suggestions.slice(0, 8).map((swap, i) => {
-          const isPureAdd = swap.drop === null;
           const dropRaw = swap.drop?.raw as RosterEntry | undefined;
           const addRaw = swap.add.raw as FreeAgentPlayer;
-          const dropPos = dropRaw?.display_position;
-          const addPos = addRaw.display_position;
-          const dropPct = dropRaw?.percent_owned;
-          const dropPick = dropRaw?.average_draft_pick;
           return (
-            <div key={i} className="flex items-start gap-3 p-2.5 rounded bg-surface-muted/50">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {isPureAdd ? (
-                    <>
-                      <span className="text-caption text-accent font-medium uppercase tracking-wide">
-                        Add to open slot
-                      </span>
-                      <Icon icon={FiArrowRight} size={12} className="text-muted-foreground shrink-0" />
-                      <span className="text-xs text-success font-medium truncate">{swap.add.name}</span>
-                      <span className="text-caption text-muted-foreground">{addPos}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-xs text-error font-medium truncate">{swap.drop!.name}</span>
-                      <span className="text-caption text-muted-foreground">{dropPos}</span>
-                      {typeof dropPct === 'number' && (
-                        <span className="text-caption text-muted-foreground" title="Yahoo percent owned">
-                          {Math.round(dropPct)}%
-                        </span>
-                      )}
-                      {typeof dropPick === 'number' && dropPick > 0 && (
-                        <span className="text-caption text-muted-foreground" title="Preseason average draft pick">
-                          ADP {dropPick.toFixed(0)}
-                        </span>
-                      )}
-                      <Icon icon={FiArrowRight} size={12} className="text-muted-foreground shrink-0" />
-                      <span className="text-xs text-success font-medium truncate">{swap.add.name}</span>
-                      <span className="text-caption text-muted-foreground">{addPos}</span>
-                    </>
-                  )}
+            <RosterMoveCard
+              key={i}
+              add={{ name: swap.add.name, displayPosition: addRaw.display_position }}
+              drop={
+                swap.drop
+                  ? {
+                      name: swap.drop.name,
+                      displayPosition: dropRaw?.display_position,
+                      percentOwned: dropRaw?.percent_owned,
+                      averageDraftPick: dropRaw?.average_draft_pick,
+                    }
+                  : null
+              }
+              badges={
+                <>
                   {reasonBadge(swap.primaryReason)}
                   {strategyBadge(swap.strategy)}
-                </div>
-                {/* Per-category strategic impact (drives the plan view) */}
-                {categoryDeltaStrip({ impact: swap.strategy.categoryImpact })}
-                {/* Positional impact (drives the depth/gap view) */}
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                  {swap.positionChanges
-                    .sort((a, b) => Math.abs(b.valueDelta) - Math.abs(a.valueDelta))
-                    .map(c => {
-                      const sign = c.valueDelta >= 0 ? '+' : '';
-                      const tone = c.valueDelta >= 0 ? 'text-success/80' : 'text-error/80';
-                      const gap = c.depthShortfallDelta < 0
-                        ? ' (gap→filled)'
-                        : c.depthShortfallDelta > 0
-                          ? ' (gap!)' : '';
-                      return (
-                        <span key={c.position} className={`text-caption ${tone}`}>
-                          {c.position}: {sign}{c.valueDelta.toFixed(2)}{gap}
-                        </span>
-                      );
-                    })}
-                </div>
-              </div>
-              <div className="text-right shrink-0">
-                <span className={`text-xs font-bold ${swap.netValue > 0 ? 'text-success' : 'text-error'}`}>
-                  {swap.netValue > 0 ? '+' : ''}{swap.netValue.toFixed(2)}
-                </span>
-                <span className="block text-caption text-muted-foreground">net value</span>
-                {swap.dropResistance > 0.01 && (
-                  <span
-                    className="block text-caption text-accent/80"
-                    title={`Drop resistance applied for a highly-drafted / highly-owned player. Adjusted rank: ${swap.adjustedNetValue.toFixed(2)}`}
-                  >
-                    −{swap.dropResistance.toFixed(2)} resist
-                  </span>
-                )}
-              </div>
-            </div>
+                </>
+              }
+              deltas={impactDeltas(swap.strategy.categoryImpact)}
+              positionChanges={swap.positionChanges}
+              netValueText={`${swap.netValue > 0 ? '+' : ''}${swap.netValue.toFixed(2)}`}
+              netValuePositive={swap.netValue > 0}
+              resistText={swap.dropResistance > 0.01 ? `−${swap.dropResistance.toFixed(2)} resist` : undefined}
+              resistTitle={`Drop resistance applied for a highly-drafted / highly-owned player. Adjusted rank: ${swap.adjustedNetValue.toFixed(2)}`}
+            />
           );
         })}
       </div>
@@ -1070,45 +993,13 @@ export default function RosterManager() {
     [scoredRoster, startingSlots, replacementLevel, preferredDepth],
   );
 
-  // Open-slot detection for the batter optimizer. Yahoo has NO direct
-  // "open roster spots" field (verified against raw /league/settings,
-  // /team, and /team/roster payloads — see docs/yahoo-api-reference.md
-  // #roster-capacity), so we compute it the way Yahoo's own add flow does:
-  //
-  //  1. **Cap space** — the roster limit is the sum of non-reserve slot
-  //     counts (IL/IL+/NA are extra, conditional slots that don't count).
-  //     Players stashed in a reserve slot don't count against the cap,
-  //     which is the standard "IL stash frees an add" mechanic. This is
-  //     the primary signal: a full roster can never show open slots, no
-  //     matter how the daily lineup is arranged.
-  //  2. **Placement gate** — an added *batter* also needs an empty slot he
-  //     can legally occupy (batting slot or bench). A cap-open spot whose
-  //     only empty slot is pitcher-shaped (e.g. an unfillable RP hole)
-  //     can't take a batter, so it doesn't count for this engine.
-  //
+  // Open-slot detection — shared cap-space + placement-gate logic in
+  // lib/roster/openSlots.ts (see docs/yahoo-api-reference.md#roster-capacity).
   // > 0 enables pure-add suggestions in `generateSwapSuggestions`.
-  const openSlotCount = useMemo(() => {
-    if (!roster || leaguePositions.length === 0) return 0;
-    const isReserveSlot = (pos: string) => /^(IL\+?|NA)$/i.test(pos);
-    const capSpots = leaguePositions
-      .filter(p => !isReserveSlot(p.position))
-      .reduce((sum, p) => sum + p.count, 0);
-    const countedPlayers = roster.filter(p => !isReserveSlot(p.selected_position ?? '')).length;
-    const capOpen = capSpots - countedPlayers;
-
-    const batterSlotNames = new Set(
-      leaguePositions
-        .filter(p => p.position === 'BN' || p.position_type === 'B')
-        .map(p => p.position),
-    );
-    const batterCapacity = leaguePositions
-      .filter(p => batterSlotNames.has(p.position))
-      .reduce((sum, p) => sum + p.count, 0);
-    const batterOccupied = roster.filter(p => batterSlotNames.has(p.selected_position ?? '')).length;
-    const batterPlaceable = batterCapacity - batterOccupied;
-
-    return Math.max(0, Math.min(capOpen, batterPlaceable));
-  }, [roster, leaguePositions]);
+  const openSlotCount = useMemo(
+    () => computeOpenSlotCount(roster, leaguePositions),
+    [roster, leaguePositions],
+  );
 
   const swapSuggestions = useMemo(() => {
     if (scoredRoster.length === 0 || scoredFreeAgents.length === 0) return [];

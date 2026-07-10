@@ -104,6 +104,14 @@ import { GiBaseballBat } from 'react-icons/gi';
 
 Every category-strategy surface renders the same grammar: **In play** tiles ranked by pivotality weight and a **Conceded** shelf, with a single 2-state concede/contest toggle per tile. [`GamePlanPanel`](../src/components/shared/GamePlanPanel.tsx) (lineup/streaming, L5 margins) and [`RosterFocusPanel`](../src/components/roster/RosterFocusPanel.tsx) (roster, L6 RUPM distance) are the two implementations; `FocusResetButton` lives inside `GamePlanPanel`. The 3-state chase/hold/punt `focusPanel.tsx` chrome was deleted in the 2026-07 roster-value rebuild (see history.md) — don't reintroduce a 3-state focus control.
 
+### RosterMoveCard (`src/components/shared/RosterMoveCard.tsx`)
+
+One suggested roster move (drop → add, or "Add to open slot"): names + position/ownership context, caller-provided badges, an optional per-stat delta strip, per-position value deltas with gap annotations, and the net value block. Both roster pages render their Suggested Moves through it — categories passes leverage badges + move-unit deltas, points passes pts/wk deltas. Layout lives here; strategy content stays with the caller.
+
+### PositionalDepthTable (`src/components/shared/PositionalDepthTable.tsx`)
+
+The positional-depth table (Pos / Slots / Eligible / Status / Starters / Best Backup) both roster pages use, with `depthStatus` (GAP / ok / deep) derived from eligible count vs min depth. The Target column renders only when the caller passes `renderTarget` (categories' preferred-depth steppers); points omits it.
+
 ## Shared Utilities (`src/lib/`)
 
 ### Stat Formatting (`src/lib/formatStat.ts`)

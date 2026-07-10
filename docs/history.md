@@ -8,6 +8,18 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Points roster page rebuilt (position-aware moves; greedy batter swaps retired)
+
+The points `/roster` page was a moves list + rostered-only value table, and its batter moves came from `recommendSwaps` — a position-naive greedy upgrade loop (batter-vs-batter by weekly points, no slot fit). The page's actual job (owner): "who out there could provide more points than who they have, but can fit within the roster position slot picture." Greedy matching can't answer the second half.
+
+Replaced with the shared position-aware machinery: batter moves route through `generateSwapSuggestions` (roster/depth.ts) fed role-share-adjusted pts/wk — the engine is score-agnostic, so points got multi-position shuffles, gap weighting, drop resistance, and open-slot pure adds with zero new optimizer code. `recommendSwaps` survives pitchers-only until the joint categories+points pitcher effort. Three shared extractions keep the two pages from drifting: `lib/roster/openSlots.ts` (cap + placement gate), `components/shared/RosterMoveCard`, `components/shared/PositionalDepthTable` (categories page refactored onto all three, behavior-identical — smoke byte-identical).
+
+Rate substrate riders in the same effort: per-player regressed 2B/3B/HBP rates (MLB stat lines carried doubles/triples all along — `parseSplitLine` read them just to derive TB and threw them away; HBP added to `RawStat`); `batterPointsValue` gained roleShare so points VOR/moves stopped crediting part-timers with everyday volume (the same fix the categories forecast route got in the roster-value rebuild).
+
+Deliberately NOT added, owner decisions: no strategy/standing header on the points roster page (weekly points are streaming-dominated for good teams — that concept belongs to the /streaming overhaul; standing to /league); no leverage/concede analog (single objective, nothing to weight); pitchers stay table-only pending the joint effort.
+
+Don't reintroduce: (a) greedy value-only BATTER swaps — slot fit is the page's job; (b) a points strategy header ranking weekly points against the league; (c) a second moves-card or depth-table implementation — extend the shared components.
+
 ## 2026-07 — Roster value rebuilt: `blendedCategoryScore` + Quality/Rising bonuses + chase-weighting retired
 
 The roster page's player scores, upgrade targets, depth-chart starter picks, and swap optimizer all ran on `blendedCategoryScore` (`src/lib/roster/scoring.ts`, deleted): a per-cat normalized-rate sum with chase cats doubled and punted cats excluded (the user's chase/hold/punt focus map), plus two Statcast bonuses stacked on top — Quality (xwOBA blend, up to ~25% of a score) and Rising (current-vs-prior xwOBA delta).

@@ -100,11 +100,9 @@ import { GiBaseballBat } from 'react-icons/gi';
 <Icon icon={GiBaseballBat} size={24} className="text-accent" />
 ```
 
-### Focus Controls (chase / punt / neutral) — roster page only
+### Concede/Contest Controls (In play / Conceded shelves)
 
-The chase/punt/neutral focus UI in [`src/components/shared/focusPanel.tsx`](../src/components/shared/focusPanel.tsx) is now **roster-page-only**: `FocusSegmentedControl` is used per-tile inside [`RosterFocusPanel`](../src/components/roster/RosterFocusPanel.tsx). It cycles `neutral → chase → punt → neutral` and renders an override dot when the user's effective focus differs from MLBoss's *suggested* focus. The shared section chrome (`FocusSectionTrio`, `FocusResetButton`, `deriveFocusSection`) lives in the same file.
-
-The Lineup and Streaming pages migrated to pivotality weights (see [pivotality-migration.md](pivotality-migration.md)): [`GamePlanPanel`](../src/components/shared/GamePlanPanel.tsx) there renders **In play / Conceded** shelves with a 2-state concede/contest toggle, not the 3-state segmented control. `focusPanel.tsx` is slated for deletion once `RosterFocusPanel` converts (Phase 6) — don't add new consumers.
+Every category-strategy surface renders the same grammar: **In play** tiles ranked by pivotality weight and a **Conceded** shelf, with a single 2-state concede/contest toggle per tile. [`GamePlanPanel`](../src/components/shared/GamePlanPanel.tsx) (lineup/streaming, L5 margins) and [`RosterFocusPanel`](../src/components/roster/RosterFocusPanel.tsx) (roster, L6 RUPM distance) are the two implementations; `FocusResetButton` lives inside `GamePlanPanel`. The 3-state chase/hold/punt `focusPanel.tsx` chrome was deleted in the 2026-07 roster-value rebuild (see history.md) — don't reintroduce a 3-state focus control.
 
 ## Shared Utilities (`src/lib/`)
 

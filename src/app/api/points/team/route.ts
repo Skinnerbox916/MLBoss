@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getScoringProfile, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
-import { decodePreferredDepth, encodePreferredDepth } from '@/lib/roster/preferredDepth';
 import { analyzePointsTeam } from '@/lib/points/analyzeTeam';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
 
@@ -26,11 +25,6 @@ export async function GET(request: Request) {
     const leagueKey = searchParams.get('leagueKey');
     const scoringType = searchParams.get('scoringType') ?? '';
     const week: WeekTarget = searchParams.get('week') === 'next' ? 'next' : 'current';
-    // Preferred-depth overrides (compact `C:1|OF:5` encoding). Part of the
-    // cache key — a target change is a different depth/moves computation.
-    const depthParam = searchParams.get('depth');
-    const preferredDepth = decodePreferredDepth(depthParam);
-    const depthKey = encodePreferredDepth(preferredDepth) || 'default';
 
     if (!teamKey) return NextResponse.json({ error: 'teamKey is required' }, { status: 400 });
     if (!leagueKey) return NextResponse.json({ error: 'leagueKey is required' }, { status: 400 });
@@ -45,9 +39,9 @@ export async function GET(request: Request) {
     // FA pool shift with transactions; the optimize-week route busts this key
     // after it writes a lineup. Per-user-scoped via the team key.
     const analysis = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}:${depthKey}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
-      () => analyzePointsTeam(user.id, leagueKey, teamKey, profile, { week, preferredDepth }),
+      () => analyzePointsTeam(user.id, leagueKey, teamKey, profile, { week }),
     );
     return NextResponse.json({ leagueKey, teamKey, scoringType, ...analysis });
   } catch (error) {

@@ -15,8 +15,9 @@ rateVector.ts     per-PA / per-IP rate of every scorable event
 pointsValue.ts    rates · ScoringProfile.weights × weekly volume × role share
         │
         ├── replacement.ts   3rd-best-FA floor per position → VOR
-        ├── depth/swaps      shared position-aware machinery (roster/depth.ts)
-        └── analyzeTeam.ts   /api/points/team — the single orchestrator
+        ├── analyzeTeam.ts   /api/points/team — the FACTS orchestrator
+        └── rosterStrategy.ts  CLIENT-side strategy: shared position-aware
+                             depth/swaps (roster/depth.ts) over the facts
 ```
 
 ## Rate modeling — what's real, what's approximated
@@ -37,8 +38,10 @@ Matchup context (park / platoon / opp staff / weather) applies ONLY to day/week 
 
 `PointsRosterView` — positionally-honest upgrade shopping over a ROS horizon. The page's job (owner, verbatim): *"see who out there could provide more points than who they have, but can fit within the roster position slot picture that they have."* Three sections in the categories page's grammar, native points units throughout (pts/wk and VOR are directly meaningful — no display index needed):
 
-1. **Positional Depth** — shared [`PositionalDepthTable`](../src/components/shared/PositionalDepthTable.tsx) over the shared depth solver, points-valued, with Target steppers (shared `DepthStepper`). Because the points analysis runs server-side, targets ride as the `depth` query param (compact `C:1|OF:5` encoding, part of the cache key) so the depth chart AND the swap engine honor them; persisted per league mode via `lib/roster/preferredDepth.ts`.
-2. **Suggested Moves** — batter moves from the shared **position-aware swap engine** (`generateSwapSuggestions` fed role-share-adjusted pts/wk): multi-position shuffles, gap weighting, drop resistance, pure adds against open slots (shared `computeOpenSlotCount`). Rendered with the shared [`RosterMoveCard`](../src/components/shared/RosterMoveCard.tsx); the per-stat delta strip shows the pts/wk components of each move's net value. The greedy `recommendSwaps` is **pitchers-only** (position-naive; fine until the joint pitcher effort).
+**Facts/preferences boundary** (same rule as the categories page): the server computes cacheable projection **facts** — per-player weekly points, per-stat point contributions (`statPoints`), VOR — once per league+team. The user's **preferences** (target-depth steppers) apply client-side in [`rosterStrategy.ts`](../src/lib/points/rosterStrategy.ts) via `usePointsRosterStrategy`, so a stepper click re-solves instantly with no refetch and no per-preference cache variants. The dashboard consumes the same hook — one source of batter moves.
+
+1. **Positional Depth** — shared [`PositionalDepthTable`](../src/components/shared/PositionalDepthTable.tsx) over the shared depth solver, points-valued, with Target steppers (shared `DepthStepper`); targets persist per league mode via `lib/roster/preferredDepth.ts`.
+2. **Suggested Moves** — batter moves from the shared **position-aware swap engine** (`generateSwapSuggestions` fed role-share-adjusted pts/wk): multi-position shuffles, gap weighting, drop resistance, pure adds against open slots (shared `computeOpenSlotCount`). Rendered with the shared [`RosterMoveCard`](../src/components/shared/RosterMoveCard.tsx); the per-stat delta strip shows the pts/wk components of each move's net value (the diff of the rows' `statPoints`). The greedy `recommendSwaps` is **pitchers-only** (position-naive; fine until the joint pitcher effort).
 3. **Your Batters ↔ Upgrade Targets** — VOR-ranked boards; every row (rostered and FA) carries `vor`; the FA board shows ownership and applies no extra floor (the pool is already the extended fetch's most-owned 60).
 
 **No strategy header by design.** Points has a single objective — nothing to weight or concede, so nothing earns the categories page's Focus-panel slot. Weekly-points-vs-the-field belongs to the streaming page (its overhaul); league standing belongs to `/league`. See history.md "2026-07 — Points roster page rebuilt".

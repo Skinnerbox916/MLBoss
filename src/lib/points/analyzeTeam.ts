@@ -40,19 +40,7 @@ import {
 } from '@/lib/roster/playingTime';
 import { recommendSwaps, type MoveCandidate, type SuggestedSwap } from './moves';
 import { optimizePointsLineup, type PointsLineupResult } from './lineupOptimizer';
-import {
-  parseStartingSlots,
-  getBatterPositions,
-  computeReplacementLevel,
-  computeRosterValue,
-  generateSwapSuggestions,
-  type ScoredPlayer,
-  type RankedSwap,
-} from '@/lib/roster/depth';
-import { computeOpenSlotCount } from '@/lib/roster/openSlots';
-import type { PreferredDepthMap } from '@/lib/roster/preferredDepth';
 import { batterPointsRateVector } from './rateVector';
-import { COMMON_MLB_STATS } from '@/constants/statCategories';
 
 // Batter cap sized for the upgrade board: the extended FA fetch returns
 // ~100 bats; keep the most-owned 60 so the stats fan-out stays bounded
@@ -83,6 +71,10 @@ export interface PointsPlayerRow {
   /** Weekly points above the position's replacement level — set for every
    *  row (rostered and FA) once replacement levels are known. */
   vor?: number;
+  /** Batters only: per-stat pts/wk contributions (rate × league weight ×
+   *  role-share-adjusted weekly PA). A projection FACT — the client-side
+   *  move builder diffs these for the impact strips. */
+  statPoints?: Record<number, number>;
 }
 
 export interface PointsVORRow {
@@ -94,42 +86,6 @@ export interface PointsVORRow {
   vor: number;
 }
 
-/** One side of a suggested batter move, serialized for the UI. */
-export interface PointsMovePlayer {
-  name: string;
-  team: string;
-  playerKey: string;
-  displayPosition: string;
-  percentOwned?: number;
-  averageDraftPick?: number;
-  /** Role-share-adjusted expected points per typical week. */
-  weeklyPoints: number;
-}
-
-/** Position-aware suggested batter move (drop → add, or pure add). */
-export interface PointsBatterMove {
-  add: PointsMovePlayer;
-  drop: PointsMovePlayer | null;
-  /** Net roster value change in pts/wk (position-gap weighted). */
-  netValue: number;
-  primaryReason: 'gap_fill' | 'upgrade' | 'matchup_depth';
-  /** Per-position roster value deltas, for the positional impact strip. */
-  positionChanges: Array<{ position: string; valueDelta: number }>;
-  /** Top per-stat pts/wk deltas (add − drop) — the components of netValue. */
-  impacts: Array<{ statId: number; label: string; delta: number }>;
-}
-
-/** Serialized positional-depth row for the shared depth table. */
-export interface PointsDepthRow {
-  position: string;
-  startingSlots: number;
-  eligibleCount: number;
-  minDepth: number;
-  depthShortfall: number;
-  starters: string[];
-  firstBackup: string | null;
-}
-
 export interface PointsTeamAnalysis {
   week: { target: WeekTarget; start?: string; end?: string; remainingDays: number };
   /** Sum of owned players' schedule-aware expected points for the horizon. */
@@ -138,13 +94,10 @@ export interface PointsTeamAnalysis {
   pitchers: PointsPlayerRow[];
   replacementByPosition: Record<string, number>;
   rosterVOR: PointsVORRow[];
-  /** Position-aware batter moves (shared swap engine, points-valued). */
-  batterMoves: PointsBatterMove[];
-  /** Batter positional depth (shared depth solver, points-valued). */
-  batterDepth: PointsDepthRow[];
-  /** Open roster slots an added batter could use (cap + placement gate). */
-  openSlots: number;
-  /** Greedy value swaps — pitchers only (batters use `batterMoves`). */
+  /** Greedy value swaps — pitchers only. Batter moves are a client-side
+   *  strategy computation (shared swap engine over these rows + the
+   *  user's depth targets) — see lib/points/rosterStrategy.ts and the
+   *  facts/preferences boundary in docs/points-leagues.md. */
   pitcherMoves: SuggestedSwap[];
   lineup: (PointsLineupResult & { day?: string }) | null;
 }
@@ -185,7 +138,7 @@ export async function analyzePointsTeam(
   leagueKey: string,
   teamKey: string,
   profile: ScoringProfile,
-  opts: { week?: WeekTarget; includeFA?: boolean; preferredDepth?: PreferredDepthMap } = {},
+  opts: { week?: WeekTarget; includeFA?: boolean } = {},
 ): Promise<PointsTeamAnalysis> {
   const week: WeekTarget = opts.week ?? 'current';
   const includeFA = opts.includeFA ?? true;
@@ -222,7 +175,10 @@ export async function analyzePointsTeam(
     })),
     ...faBatters.map(p => ({
       name: p.name, team: p.editorial_team_abbr, playerKey: p.player_key,
-      owned: false, injured: false,
+      // FA rows: `injured` = on a real IL. Keeps stash candidates visible
+      // on the boards (with the IL badge) while the client-side swap pool
+      // filters them out — you can't start them.
+      owned: false, injured: Boolean(p.on_disabled_list) || isILStatus(p.status),
       onIL: Boolean(p.on_disabled_list) || isILStatus(p.status), percentOwned: p.percent_owned,
       positions: p.eligible_positions,
     })),
@@ -272,6 +228,15 @@ export async function analyzePointsTeam(
         percentOwned: p.percentOwned,
       });
       const v = batterPointsValue(stats, profile, { roleShare });
+      // Per-stat pts/wk contributions — rate × weight × the same role-
+      // share-adjusted weekly PA the total uses, so the parts sum to the
+      // whole. The client-side move builder diffs these for impact strips.
+      const vec = batterPointsRateVector(stats).perPA;
+      const statPoints: Record<number, number> = {};
+      for (const [idStr, weight] of Object.entries(profile.weights)) {
+        const r = vec[Number(idStr)];
+        if (r) statPoints[Number(idStr)] = Number((r * weight * v.weeklyPA).toFixed(1));
+      }
       let thisWeek: number | null = null;
       if (p.owned) {
         const spot = lineupSpots.get(stats.mlbId) ?? null;
@@ -282,6 +247,7 @@ export async function analyzePointsTeam(
         name: p.name, team: p.team, playerKey: p.playerKey, owned: p.owned, injured: p.injured,
         percentOwned: p.percentOwned, positions: p.positions, kind: 'B',
         weeklyPoints: round1(v.weeklyPoints), perUnit: Number(v.pointsPerGame.toFixed(2)), thisWeekPoints: thisWeek,
+        statPoints,
       };
     })
     .filter((x): x is PointsPlayerRow => x !== null)
@@ -335,150 +301,12 @@ export async function analyzePointsTeam(
     }),
   ].sort((a, b) => b.vor - a.vor);
 
-  // ---- Batter moves + depth: the shared position-aware machinery -------
-  //
-  // The greedy `recommendSwaps` is position-naive — it can't answer the
-  // "fits within the roster slot picture" half of the page's job. Batters
-  // route through the categories swap engine (`generateSwapSuggestions`),
-  // which is score-agnostic: fed role-share-adjusted weekly points it
-  // brings multi-position shuffles, gap weighting, drop resistance, and
-  // pure adds against open slots. Pitchers stay greedy until the joint
-  // categories+points pitcher effort (see docs/roster-strategy.md).
+  // Batter moves/depth/open-slots are CLIENT-side strategy (shared swap
+  // engine over these rows + the user's depth targets) — see
+  // lib/points/rosterStrategy.ts. This keeps the facts/preferences
+  // boundary: this analysis is cacheable per league+team, never per
+  // user preference.
   const rosterPositions = await getLeagueRosterPositions(userId, leagueKey);
-  const startingSlots = parseStartingSlots(rosterPositions);
-  const openSlots = computeOpenSlotCount(roster as RosterEntry[], rosterPositions);
-
-  const rosterEntryByKey = new Map(
-    (roster as RosterEntry[]).map(p => [p.player_key, p]),
-  );
-  const faByKey = new Map(faBatters.map(p => [p.player_key, p]));
-
-  const toScored = (b: PointsPlayerRow): ScoredPlayer | null => {
-    const eligibleBatterPositions = getBatterPositions(b.positions);
-    if (eligibleBatterPositions.length === 0) return null;
-    const raw = (rosterEntryByKey.get(b.playerKey) ?? faByKey.get(b.playerKey)) as
-      | ScoredPlayer['raw']
-      | undefined;
-    if (!raw) return null;
-    return {
-      player_key: b.playerKey,
-      name: b.name,
-      eligibleBatterPositions,
-      score: b.weeklyPoints,
-      raw,
-      percentOwned: b.percentOwned,
-    };
-  };
-  const scoredRosterBatters = batters
-    .filter(b => b.owned && !b.injured)
-    .map(toScored)
-    .filter((x): x is ScoredPlayer => x !== null);
-  const ilFaKeys = new Set(
-    faBatters.filter(p => Boolean(p.on_disabled_list) || isILStatus(p.status)).map(p => p.player_key),
-  );
-  const scoredFABatters = batters
-    .filter(b => !b.owned && !ilFaKeys.has(b.playerKey))
-    .map(toScored)
-    .filter((x): x is ScoredPlayer => x !== null);
-
-  const batterReplacement = computeReplacementLevel(scoredFABatters);
-  const rankedMoves: RankedSwap[] =
-    scoredRosterBatters.length > 0 && scoredFABatters.length > 0
-      ? generateSwapSuggestions(scoredRosterBatters, scoredFABatters, startingSlots, batterReplacement, undefined, {
-          // pts/wk units: 1.0 matches the old greedy minGain — below a
-          // point a week the move is churn, not an upgrade.
-          minNetValue: 1.0,
-          limit: 10,
-          preferredDepth: opts.preferredDepth,
-          openSlotCount: openSlots,
-        })
-      : [];
-
-  // Per-stat pts/wk contributions for the move impact strips — the actual
-  // components of each move's net value.
-  const statPointsByKey = new Map<string, Record<number, number>>();
-  const statPointsFor = (b: PointsPlayerRow): Record<number, number> => {
-    const cached = statPointsByKey.get(b.playerKey);
-    if (cached) return cached;
-    const stats = batterStats[key(b.name, b.team)];
-    const out: Record<number, number> = {};
-    if (stats) {
-      const vec = batterPointsRateVector(stats).perPA;
-      // Recover the row's effective weekly PA from its weekly points so the
-      // per-stat split is consistent with the (role-share-adjusted) total.
-      let ptsPerPA = 0;
-      for (const [idStr, weight] of Object.entries(profile.weights)) {
-        const r = vec[Number(idStr)];
-        if (r) ptsPerPA += r * weight;
-      }
-      const weeklyPA = ptsPerPA > 0 ? b.weeklyPoints / ptsPerPA : 0;
-      for (const [idStr, weight] of Object.entries(profile.weights)) {
-        const id = Number(idStr);
-        const r = vec[id];
-        if (r) out[id] = r * weight * weeklyPA;
-      }
-    }
-    statPointsByKey.set(b.playerKey, out);
-    return out;
-  };
-  const batterRowByKey = new Map(batters.map(b => [b.playerKey, b]));
-
-  const toMovePlayer = (sp: ScoredPlayer): PointsMovePlayer => {
-    const raw = sp.raw as { display_position?: string; average_draft_pick?: number };
-    return {
-      name: sp.name,
-      team: batterRowByKey.get(sp.player_key)?.team ?? '',
-      playerKey: sp.player_key,
-      displayPosition: raw.display_position ?? sp.eligibleBatterPositions.join(','),
-      percentOwned: sp.percentOwned,
-      averageDraftPick: raw.average_draft_pick,
-      weeklyPoints: round1(sp.score),
-    };
-  };
-  const batterMoves: PointsBatterMove[] = rankedMoves.map(m => {
-    const addRow = batterRowByKey.get(m.add.player_key);
-    const dropRow = m.drop ? batterRowByKey.get(m.drop.player_key) : null;
-    const addPts = addRow ? statPointsFor(addRow) : {};
-    const dropPts = dropRow ? statPointsFor(dropRow) : {};
-    const statIds = new Set([...Object.keys(addPts), ...Object.keys(dropPts)].map(Number));
-    const impacts = Array.from(statIds)
-      .map(id => ({
-        statId: id,
-        label: COMMON_MLB_STATS[id]?.display ?? String(id),
-        delta: Number(((addPts[id] ?? 0) - (dropPts[id] ?? 0)).toFixed(1)),
-      }))
-      .filter(i => Math.abs(i.delta) >= 0.3)
-      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-    return {
-      add: toMovePlayer(m.add),
-      drop: m.drop ? toMovePlayer(m.drop) : null,
-      netValue: round1(m.netValue),
-      primaryReason: m.primaryReason,
-      positionChanges: m.positionChanges.map(c => ({ position: c.position, valueDelta: round1(c.valueDelta) })),
-      impacts,
-    };
-  });
-
-  // Positional depth — target steppers feed `opts.preferredDepth` via the
-  // route's `depth` param (rides in the cache key).
-  const rosterValueResult = computeRosterValue(
-    scoredRosterBatters,
-    startingSlots,
-    batterReplacement,
-    undefined,
-    opts.preferredDepth,
-  );
-  const batterDepth: PointsDepthRow[] = Array.from(rosterValueResult.byPosition.values())
-    .filter(pv => pv.startingSlots > 0)
-    .map(pv => ({
-      position: pv.position,
-      startingSlots: pv.startingSlots,
-      eligibleCount: pv.eligibleCount,
-      minDepth: pv.minDepth,
-      depthShortfall: pv.depthShortfall,
-      starters: pv.starters.map(x => x.name),
-      firstBackup: pv.firstBackup?.name ?? null,
-    }));
 
   // Greedy value swaps — pitchers only now.
   const rosterCands: MoveCandidate[] = pitchers
@@ -545,9 +373,6 @@ export async function analyzePointsTeam(
     pitchers,
     replacementByPosition: Object.fromEntries(Object.entries(replacement).map(([k, v]) => [k, round1(v)])),
     rosterVOR,
-    batterMoves,
-    batterDepth,
-    openSlots,
     pitcherMoves,
     lineup,
   };

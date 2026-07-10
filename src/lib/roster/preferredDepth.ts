@@ -41,28 +41,3 @@ export function savePreferredDepth(storageKey: string, value: PreferredDepthMap)
     // ignore quota/serialization errors — preference just won't persist
   }
 }
-
-/**
- * Compact wire encoding for the points API (`depth=C:1|OF:5`). Sorted so
- * the same map always serializes identically — it rides in a cache key.
- */
-export function encodePreferredDepth(value: PreferredDepthMap): string {
-  return Object.entries(value)
-    .filter(([, v]) => typeof v === 'number')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([pos, v]) => `${pos}:${v}`)
-    .join('|');
-}
-
-export function decodePreferredDepth(encoded: string | null | undefined): PreferredDepthMap {
-  if (!encoded) return {};
-  const out: PreferredDepthMap = {};
-  for (const part of encoded.split('|')) {
-    const [pos, vStr] = part.split(':');
-    const v = Number(vStr);
-    if ((BATTER_POSITIONS as readonly string[]).includes(pos) && Number.isFinite(v) && v >= 0) {
-      out[pos as BatterPosition] = Math.floor(v);
-    }
-  }
-  return out;
-}

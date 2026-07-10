@@ -6,7 +6,7 @@ import Badge from '@/components/ui/Badge';
 import Icon from '@/components/Icon';
 import { Text } from '@/components/typography';
 import type { SuggestedSwap } from '@/lib/points/moves';
-import type { PointsBatterMove } from '@/lib/points/analyzeTeam';
+import type { PointsBatterMove } from '@/lib/points/rosterStrategy';
 
 /**
  * Compact points-league "drop → add" upgrade list — the dashboard's

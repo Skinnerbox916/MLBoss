@@ -19,7 +19,9 @@ import {
   POINTS_PREFERRED_DEPTH_KEY,
   type PreferredDepthMap,
 } from '@/lib/roster/preferredDepth';
-import type { PointsPlayerRow, PointsBatterMove } from '@/lib/points/analyzeTeam';
+import type { PointsPlayerRow } from '@/lib/points/analyzeTeam';
+import type { PointsBatterMove } from '@/lib/points/rosterStrategy';
+import { usePointsRosterStrategy } from '@/lib/hooks/usePointsRosterStrategy';
 
 interface PointsRosterViewProps {
   leagueKey: string | undefined;
@@ -63,7 +65,10 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
     });
   }, []);
 
-  const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType, 'current', preferredDepth);
+  const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType);
+  // Strategy (moves / depth / open slots) solves client-side over the
+  // server's facts — a stepper click re-ranks instantly, no refetch.
+  const strategy = usePointsRosterStrategy(leagueKey, teamKey, data?.batters, preferredDepth);
 
   return (
     <div className="space-y-4">
@@ -106,7 +111,7 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
                 }
               >
                 <PositionalDepthTable
-                  rows={data.batterDepth}
+                  rows={strategy.depth}
                   renderTarget={row => {
                     const pos = row.position as BatterPosition;
                     const defaultDepth = getDefaultDepth(row.startingSlots);
@@ -128,7 +133,7 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
                 </p>
               </Panel>
 
-              <BatterMovesPanel moves={data.batterMoves} openSlots={data.openSlots} />
+              <BatterMovesPanel moves={strategy.moves} openSlots={strategy.openSlots} />
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                 <PlayerBoard

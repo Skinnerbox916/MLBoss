@@ -9,6 +9,7 @@ import Icon from '@/components/Icon';
 import { Heading, Text } from '@/components/typography';
 import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
 import { usePointsTeam } from '@/lib/hooks/usePointsTeam';
+import { usePointsRosterStrategy } from '@/lib/hooks/usePointsRosterStrategy';
 import SuggestedMovesPanel from '@/components/points/SuggestedMovesPanel';
 import type { PointsVORRow } from '@/lib/points/analyzeTeam';
 
@@ -22,6 +23,10 @@ import type { PointsVORRow } from '@/lib/points/analyzeTeam';
 export default function PointsDashboard() {
   const { leagueKey, teamKey, scoringType, leagueName } = useActiveLeague();
   const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType);
+  // Batter moves solve client-side over the analysis facts (default depth
+  // targets here — the roster page owns the steppers). Same hook as the
+  // roster page: one source of moves.
+  const strategy = usePointsRosterStrategy(leagueKey, teamKey, data?.batters);
 
   return (
     <div className="p-6 space-y-6">
@@ -51,7 +56,7 @@ export default function PointsDashboard() {
           />
 
           <div className="grid gap-6 md:grid-cols-2">
-            <SuggestedMovesPanel batterMoves={data.batterMoves} pitcherMoves={data.pitcherMoves} limit={5} />
+            <SuggestedMovesPanel batterMoves={strategy.moves} pitcherMoves={data.pitcherMoves} limit={5} />
             <RosterValueSummary vor={data.rosterVOR} />
           </div>
         </>

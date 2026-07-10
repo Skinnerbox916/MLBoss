@@ -38,7 +38,7 @@ This index is the single authoritative table of contents for all Markdown docs i
 
 ### In-flight migrations and proposals
 
-- **[points-roster-proposal.md](./points-roster-proposal.md)** — **Proposal (not implemented):** align the points `/roster` page with the rebuilt categories page (League Standing card, depth, moves cards, FA board) and carry over the roster-value improvements (role share, per-player 2B/3B, league points forecast). Finding: points already has its engine; no new one warranted.
+- **[points-roster-proposal.md](./points-roster-proposal.md)** — **Proposal (build-ready):** rebuild the points `/roster` page around its actual job — positionally-honest upgrade shopping (depth, position-aware moves via the shared swap engine, FA board) — plus engine carry-overs (role share, per-player 2B/3B/HBP rates). Finding: points already has its engine; no new one warranted. Batters only; pitchers deferred to a joint categories+points effort.
 - **[pivotality-migration.md](./pivotality-migration.md)** — Retiring chase/hold/punt as the weight driver; replacing with continuous `pivotality(distance)` + concede/contest. Phases 1-5 shipped for the matchup pages; the L6 roster half of Phase 6 shipped 2026-07 with the roster-value rebuild (leverage-weighted player values — see [roster-strategy.md](./roster-strategy.md) and history.md). Remaining: the L5-side `Focus`-union cleanup sweep (rating-engine bridge, `analyzeMatchup` suggestFocus, streaming-board props, bossBrief reads).
 
 ---

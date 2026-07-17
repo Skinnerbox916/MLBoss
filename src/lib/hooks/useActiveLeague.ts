@@ -1,4 +1,5 @@
-import { useFantasyContext, type FantasyLeagueContext } from './useFantasyContext';
+import { useMemo } from 'react';
+import { useFantasyContext, weekBoundsForLeague, type FantasyLeagueContext } from './useFantasyContext';
 import { useActiveLeagueKey } from './activeLeagueStore';
 import {
   scoringModeForType,
@@ -8,7 +9,7 @@ import {
   type LineupCadence,
   type RosterMoveTiming,
 } from '@/lib/fantasy/scoringMode';
-import { resolveEarliestPlayableDate } from '@/lib/dashboard/weekRange';
+import { resolveEarliestPlayableDate, type WeekBounds } from '@/lib/dashboard/weekRange';
 
 export interface ActiveLeague {
   /** All of the user's leagues this season (for the switcher). */
@@ -26,6 +27,10 @@ export interface ActiveLeague {
   /** Earliest date (YYYY-MM-DD) a pickup made now can play — the streaming
    *  window floor. Derived from Yahoo `edit_key`, falling back to timing. */
   earliestPlayableDate: string;
+  /** Real date range of the current (and next) matchup week from Yahoo's
+   *  game_weeks calendar. Undefined while loading — weekRange helpers then
+   *  fall back to Mon–Sun. */
+  weekBounds: WeekBounds | undefined;
   isLoading: boolean;
   isError: boolean;
 }
@@ -45,6 +50,9 @@ export function useActiveLeague(): ActiveLeague {
   const leagues = ctx.context?.leagues ?? [];
   const activeKey = override && leagues.some(l => l.league_key === override) ? override : ctx.leagueKey;
   const active = leagues.find(l => l.league_key === activeKey);
+  // Memoized: the bounds object is a memo dep in downstream hooks — a fresh
+  // object per render would churn every week-window computation.
+  const weekBounds = useMemo(() => weekBoundsForLeague(active), [active]);
 
   return {
     leagues,
@@ -58,7 +66,9 @@ export function useActiveLeague(): ActiveLeague {
     earliestPlayableDate: resolveEarliestPlayableDate({
       editKey: active?.edit_key,
       weeklyDeadline: active?.weekly_deadline,
+      bounds: weekBounds,
     }),
+    weekBounds,
     isLoading: ctx.isLoading,
     isError: ctx.isError,
   };

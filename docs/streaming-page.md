@@ -23,31 +23,34 @@ Both tabs operate over the same time horizon: the **pickup-playable window** —
 
 - **Next-day league** (`weekly_deadline: ''`): floor = tomorrow. Today's roster is locked, so today is excluded — the app's historical behavior.
 - **Immediate league** (`weekly_deadline: 'intraday'`): floor = today. A pickup can play in today's not-yet-started games, so **today is included** in value calculations.
-- **Weekly league** (day-number deadline): floor = next Monday (see [Weekly lineup cadence](#weekly-lineup-cadence)).
+- **Weekly league** (day-number deadline): floor = the next matchup week's first day (see [Weekly lineup cadence](#weekly-lineup-cadence)).
 
 `edit_key` also rolls the floor to tomorrow automatically once all of today's games lock, so the immediate-league window self-corrects through the day. (Residual: mid-afternoon, an immediate league's `today` column still counts games that already started — a per-game intraday-lock filter is a follow-up.)
 
-The floor flows to the client via `useActiveLeague().earliestPlayableDate` (or, on the categories page, resolved in `StreamingManager` from the league context) and into `getStreamingGridDays` / `getPickupPlayableDays`. Omitting it reproduces the legacy "today excluded, Sunday-pivots" behavior exactly. See [projection.md](./projection.md#pickup-window).
+The window's **outer edge is Yahoo's real week calendar**, not an assumed Mon–Sun: every `weekRange` helper takes a `WeekBounds` (see [data-architecture.md#matchup-week-calendar](./data-architecture.md#matchup-week-calendar)), so the grid is 7 days in a normal week and up to 14 in the combined all-star week. Without bounds (context loading / calendar fetch failed) everything falls back to the legacy Mon–Sun derivation.
+
+The floor flows to the client via `useActiveLeague().earliestPlayableDate` (or, on the categories page, resolved in `StreamingManager` from the league context) and into `getStreamingGridDays` / `getPickupPlayableDays` alongside `weekBounds`. See [projection.md](./projection.md#pickup-window).
 
 Implications for pitcher streaming (next-day league):
 
-- Sun/Mon picks see ~7 days — plenty of two-start coverage.
-- Wed picks see ~4 days — at most one start per pitcher.
+- Picks at the week's start see the full week — plenty of two-start coverage.
+- Mid-week picks see ~4 days — at most one start per pitcher.
+- Inside the combined all-star week the window can reach ~10 days — FA starters with 2-3 remaining starts surface and outrank single-start pitchers naturally.
 
-The engine just iterates the window; two-start coverage falls out naturally.
+The engine just iterates the window; multi-start coverage falls out naturally.
 
-## Sunday pivot
+## End-of-week pivot
 
-On Sunday a pickup that can't play until Monday lands on next week's roster and contributes only to next week's matchup, so the streaming page pivots the entire upper UI (Volume Gap, Game Plan chase/hold/punt, opponent label, W/L projection) to describe **next week**. The streaming grid and per-FA week scores follow via [`getStreamingGridDays`](../src/lib/dashboard/weekRange.ts).
+On the matchup week's **closing day**, a pickup that can't play until the next morning lands on next week's roster and contributes only to next week's matchup, so the streaming page pivots the entire upper UI (Volume Gap, Game Plan chase/hold/punt, opponent label, W/L projection) to describe **next week**. The streaming grid and per-FA week scores follow via [`getStreamingGridDays`](../src/lib/dashboard/weekRange.ts).
 
-The pivot is **floor-driven, not a bare day-of-week check**: the matchup we frame is whichever week contains the pickup floor (`getStreamingWeekTarget`). A **next-day** league on Sunday floors at Monday → pivots to next week (the historical behavior). An **immediate** league whose Sunday pickup still plays Sunday floors at Sunday → **stays on the current matchup**. This is why the target derives from `earliestPlayableDate` rather than `isSundayPivot` alone.
+The pivot is **floor-driven, not a bare day-of-week check**: the matchup we frame is whichever week contains the pickup floor (`getStreamingWeekTarget`). A **next-day** league on the closing day floors at the next week's first day → pivots to next week. An **immediate** league whose closing-day pickup still plays that day → **stays on the current matchup**. With real `WeekBounds` the closing day is Yahoo's `week_end` — a mid-span Sunday inside the combined all-star week does **not** pivot, and the season's final week never pivots (there is no next matchup; the window just runs dry).
 
-Vocabulary: a `WeekTarget = 'current' | 'next'` flows from [`StreamingManager`](../src/components/streaming/StreamingManager.tsx) through every consumer (analysis hook, projection hooks, panels). `getStreamingWeekTarget(now, earliestPlayableDate)` in [weekRange.ts](../src/lib/dashboard/weekRange.ts) is the single source; with no floor it falls back to the legacy `isSundayPivot()` behavior.
+Vocabulary: a `WeekTarget = 'current' | 'next'` flows from [`StreamingManager`](../src/components/streaming/StreamingManager.tsx) through every consumer (analysis hook, projection hooks, panels). `getStreamingWeekTarget(now, earliestPlayableDate, weekBounds)` in [weekRange.ts](../src/lib/dashboard/weekRange.ts) is the single source; with no floor/bounds it falls back to the legacy Sunday-pivot behavior.
 
 Mechanism — one canonical hook, one option, two explicit modes:
 
 - [`useCorrectedMatchupAnalysis`](../src/lib/hooks/useCorrectedMatchupAnalysis.ts) accepts `opts.targetWeek: WeekTarget`. When `'next'`, the hook:
-  - Routes both projection fetches to `?targetWeek=next` on `/api/projection/{batter,pitcher}-team`; the routes call `getWeekDays(now, 'next')` to project next Mon–Sun.
+  - Routes both projection fetches to `?targetWeek=next` on `/api/projection/{batter,pitcher}-team`; the routes call `getWeekDays(now, 'next', weekBounds)` to project the next matchup week (real calendar dates).
   - Fetches next-week scoreboard solely to resolve the next-week opponent (stat values for a not-yet-started week are not load-bearing here).
   - Calls [`composeCorrectedRows`](../src/lib/matchup/correctedRows.ts) in **`mode: 'projection-only'`** — a dedicated code path that writes pure-projection values for every projectable cat and passes un-projectable rows (K/9, BB/9, H/9) through unchanged. No MTD blending math is invoked; the rate-blend formulas in `blendAvg` / `blendPitcherRatio` are not on this path at all.
   - Passes empty maps to `buildMatchupRows` (every base row is em-dash) and lets the projection-only mode overwrite each with its corrected value. Em-dash rows that lack a projection are filtered out of consuming panels via `rowHasComparablePair`.
@@ -232,7 +235,7 @@ In the blend mode of the corrected matchup margin: **counting pitcher cats** (K,
 
 The reason: we don't project K/9 / BB/9 / H/9 separately. Ratio fidelity for those stays at the per-FA `scorePitcher` per-start view — where the user reads "this guy will torch my K/9" as a per-start pill — rather than risk wrong rate stats in the matchup margin.
 
-**Sunday-pivot path.** Projection-only mode skips the MTD blend entirely. ERA and WHIP get pure-projection values (`projected ER / projected IP × 9`, `projected (H+BB) / projected IP`). K/9 / BB/9 / H/9 still aren't projected, so their rows pass through em-dash and are filtered out of the panel — no synthetic rate-cat row.
+**End-of-week pivot path.** Projection-only mode skips the MTD blend entirely. ERA and WHIP get pure-projection values (`projected ER / projected IP × 9`, `projected (H+BB) / projected IP`). K/9 / BB/9 / H/9 still aren't projected, so their rows pass through em-dash and are filtered out of the panel — no synthetic rate-cat row.
 
 For batter AVG, the blend works in mid-week (batters' AB is recoverable from H / AVG) and reduces to a clean projected AVG in pivot mode (`projected H / projected AB`). See [recommendation-system.md](./recommendation-system.md) for the matchup-margin engine details.
 
@@ -242,7 +245,7 @@ Points leagues get a different /streaming experience ([StreamingModeRouter](../s
 
 Page order: **PointsWeekPlan** (header card) → **PointsMovesBoard** (the unified moves board) → tabs with the original **stream/plug browse boards**.
 
-Server engine: `analyzePointsStreaming` ([src/lib/points/streaming.ts](../src/lib/points/streaming.ts)), served by `/api/points/streaming` (cached semi-dynamic as a unit, like points-team). Same pickup window and Sunday pivot as the categories board (`getPickupPlayableDays`). Outputs:
+Server engine: `analyzePointsStreaming` ([src/lib/points/streaming.ts](../src/lib/points/streaming.ts)), served by `/api/points/streaming` (cached semi-dynamic as a unit, like points-team). Same pickup window and end-of-week pivot as the categories board (`getPickupPlayableDays`). Outputs:
 
 - **Coverage by day** — per playable day, how many starting batter slots the roster fills with a bat that actually plays, computed by the Phase 3 Hungarian lineup optimizer (a max-points assignment with per-player scores is also a max-coverage assignment). Open slots per day, with position labels.
 - **Pitcher streams** — FA/waiver arms matched to probables (same `isLikelySamePlayer` matching as above), ranked by **matchup-adjusted** expected points per start: the talent-neutral baseline (Phase 1 rate × Phase 2 volume) scaled by the `buildGameForecast` context-vs-neutral ratio (opposing offense vs the slate mean, park, weather). A streamable arm at Coors against a strong offense now ranks below his volume; per-start hints name the driver ("weak offense (0.681 OPS)").
@@ -260,7 +263,7 @@ Leagues whose lineups lock for the week (Yahoo `weekly_deadline` ≠ ''/'intrada
 - **Window** = the full next Mon–Sun (a pickup can't play sooner). ESPN's projected starters cover ~80–100% of pitcher slots 9 days out, so full-next-week start counts — including two-start weeks — are real, not just posted probables.
 - **Coverage** = idle slot-days of the optimal *week-sum* lineup (one Hungarian solve over rate × all next week's games — schedule density is part of every bat's value). An idle day is a baked-in zero, not a pluggable hole.
 - **Batter value** = one week-sum marginal re-solve per FA (`totalGain`), with `gameDays` chips showing his schedule instead of per-day plug marginals. A 7-game mediocre bat correctly outranks a 6-game better one when the marginal says so.
-- **Lineup write** = `optimizePointsWeekly` ([optimizeWeek.ts](../src/lib/points/optimizeWeek.ts)): one optimization, one `setTeamRoster` dated next Monday. The `/api/points/optimize-week` route branches on the server-derived cadence.
+- **Lineup write** = `optimizePointsWeekly` ([optimizeWeek.ts](../src/lib/points/optimizeWeek.ts)): one optimization, one `setTeamRoster` dated the next week’s first day. The `/api/points/optimize-week` route branches on the server-derived cadence.
 
 The `cadence` query param on `/api/points/streaming` overrides detection for smoke testing. **The weekly roster WRITE path is not yet validated against a live weekly league** (no test league available); the first weekly-league user is the validation path.
 

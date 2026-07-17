@@ -11,6 +11,7 @@ import { usePitcherTeamProjection } from '@/lib/hooks/usePitcherTeamProjection';
 import { buildMatchupRows, tallyMatchupRows } from '@/components/shared/matchupRows';
 import { analyzeMatchup } from '@/lib/matchup/analysis';
 import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
+import { useLeagueWeekBounds } from '@/lib/hooks/useFantasyContext';
 import { getBossBrief } from '@/lib/dashboard/bossBrief';
 import Skeleton from '@/components/ui/Skeleton';
 import { Text } from '@/components/typography';
@@ -43,6 +44,7 @@ const STAT_ID_GS = 25;
  */
 export default function BossCard() {
   const { leagueKey, teamKey, currentWeek, isLoading: ctxLoading } = useFantasy();
+  const weekBounds = useLeagueWeekBounds(leagueKey);
   const { matchups, week, isLoading: scoreLoading } = useScoreboard(leagueKey);
   const { standings, isLoading: standingsLoading } = useStandings(leagueKey);
   const { categories, isLoading: catsLoading } = useLeagueCategories(leagueKey);
@@ -67,7 +69,7 @@ export default function BossCard() {
     oppStarts,
     myRemaining,
     oppRemaining,
-  } = useWeekProbables(teamKey, opponent?.team_key);
+  } = useWeekProbables(teamKey, opponent?.team_key, weekBounds);
 
   // SP + RP IP projection per team — feeds the headline "IP left" number
   // and the SP/RP breakdown subline in the pitcher block. Independent
@@ -100,18 +102,19 @@ export default function BossCard() {
     };
   }, [userTeam, opponent, categories]);
 
-  // Days elapsed in the current Mon-Sun matchup week. We treat "today" as
+  // Days elapsed in the current matchup week (real Yahoo calendar — 7 days
+  // normally, up to 14 in the combined all-star week). We treat "today" as
   // half-elapsed because games are still live; the analysis engine clamps to
-  // [0.1, 1.0] week progress to avoid div/0 on Monday morning.
-  const daysElapsed = useMemo(() => {
-    const days = getMatchupWeekDays();
+  // [0.1, 1.0] week progress to avoid div/0 on the week's first morning.
+  const { daysElapsed, weekLengthDays } = useMemo(() => {
+    const days = getMatchupWeekDays(new Date(), weekBounds);
     const finished = days.filter(d => !d.isRemaining).length;
-    return finished + 0.5;
-  }, []);
+    return { daysElapsed: finished + 0.5, weekLengthDays: days.length || 7 };
+  }, [weekBounds]);
 
   const analysis = useMemo(
-    () => analyzeMatchup([...battingRows, ...pitchingRows], { daysElapsed }),
-    [battingRows, pitchingRows, daysElapsed],
+    () => analyzeMatchup([...battingRows, ...pitchingRows], { daysElapsed, weekLengthDays }),
+    [battingRows, pitchingRows, daysElapsed, weekLengthDays],
   );
 
   // Pick the single most contested losing category to highlight in the rail.

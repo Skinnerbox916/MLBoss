@@ -43,9 +43,12 @@ interface GamePlanPanelProps {
   /** Number of pickup-playable days remaining. Streaming-only. */
   actionableDays?: number;
   /** Which week the panel describes. Default `'current'` (mid-week
-   *  matchup). `'next'` adds a header chip and is set by the Sunday
+   *  matchup). `'next'` adds a header chip and is set by the end-of-week
    *  streaming pivot. */
   targetWeek?: WeekTarget;
+  /** Compact week label ("Wk 17 · 7/13–7/26") — the real matchup dates, so
+   *  an irregular week (all-star break) reads structurally. */
+  weekLabel?: string;
   /** Per-day slot baselines from the slot-aware engine (batter side
    *  only). When empty, the footer renders nothing. */
   dailyBaselines?: DailyBaseline[];
@@ -71,6 +74,7 @@ export default function GamePlanPanel({
   opponentName,
   actionableDays,
   targetWeek = 'current',
+  weekLabel,
   dailyBaselines = [],
   categoryWeights,
   isConceded,
@@ -123,6 +127,9 @@ export default function GamePlanPanel({
     <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
       {targetWeek === 'next' && (
         <Badge color="accent">Next week</Badge>
+      )}
+      {weekLabel && (
+        <span className="text-muted-foreground font-mono">{weekLabel}</span>
       )}
       {opponentName && (
         <span className="text-muted-foreground">vs {opponentName}</span>

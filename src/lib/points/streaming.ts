@@ -49,7 +49,7 @@ import type { LineupCadence } from '@/lib/fantasy/scoringMode';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
-import { getPickupPlayableDays, getWeekDays, type WeekDay } from '@/lib/dashboard/weekRange';
+import { getPickupPlayableDays, getWeekDays, type WeekBounds, type WeekDay } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 import { isLikelySamePlayer } from '@/lib/pitching/display';
@@ -251,16 +251,33 @@ export async function analyzePointsStreaming(
   leagueKey: string,
   teamKey: string,
   profile: ScoringProfile,
-  opts: { cadence?: LineupCadence; earliestPlayableDate?: string } = {},
+  opts: { cadence?: LineupCadence; earliestPlayableDate?: string; weekBounds?: WeekBounds } = {},
 ): Promise<PointsStreamingAnalysis> {
   const cadence = opts.cadence ?? 'daily';
-  // Weekly lineups lock Monday: the only week a pickup can affect is the full
-  // next Mon–Sun. Daily uses the pickup-playable window floored at the
-  // league's earliest playable date — today for immediate (Daily-Today)
-  // leagues, tomorrow for next-day, Sunday-pivoted at week's end.
+  // Weekly lineups lock at the week boundary: the only week a pickup can
+  // affect is the full next matchup week. Daily uses the pickup-playable
+  // window floored at the league's earliest playable date — today for
+  // immediate (Daily-Today) leagues, tomorrow for next-day, pivoted to next
+  // week on the closing day. With real `weekBounds` the window follows
+  // Yahoo's calendar (up to 14 days in the combined all-star week).
   const days = cadence === 'weekly'
-    ? getWeekDays(new Date(), 'next')
-    : getPickupPlayableDays(new Date(), opts.earliestPlayableDate);
+    ? getWeekDays(new Date(), 'next', opts.weekBounds)
+    : getPickupPlayableDays(new Date(), opts.earliestPlayableDate, opts.weekBounds);
+  if (days.length === 0) {
+    // Terminal week on weekly cadence (no next matchup) or an empty window —
+    // nothing to stream toward. Well-formed empty analysis, no crash.
+    return {
+      cadence,
+      week: { start: undefined, end: undefined, days: 0 },
+      days: [],
+      openSlotDays: 0,
+      myStartsRemaining: 0,
+      pitcherStreams: [],
+      batterPlugs: [],
+      batterFacts: [],
+      myPitcherFacts: [],
+    };
+  }
   const today = new Date().toISOString().slice(0, 10);
   const rosterDate = cadence === 'weekly' ? days[0].date : today;
 

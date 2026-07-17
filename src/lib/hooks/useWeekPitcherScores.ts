@@ -5,6 +5,7 @@ import { useGameDay, type EnrichedGame } from './useGameDay';
 import {
   getStreamingGridDays,
   getPickupPlayableDays,
+  type WeekBounds,
   type WeekDay,
 } from '@/lib/dashboard/weekRange';
 import {
@@ -43,11 +44,12 @@ interface UseWeekPitcherScoresResult {
  * Monday picks; by Wed the window is too short for any pitcher to start
  * twice (rotation gap > remaining window).
  *
- * Stable hook order: always seven `useGameDay` calls regardless of how
- * many days are playable, so React doesn't choke on conditional hooks.
- * The projection iterates `playableDays`; days outside the pickup window
- * are fetched-but-unused (their cache lines warm up for the
- * StreamingBoard date strip too).
+ * Stable hook order: always fourteen `useGameDay` calls regardless of how
+ * many days the grid holds (7 for a normal week, up to 14 for a combined
+ * week), so React doesn't choke on conditional hooks. Slots past the grid
+ * get `undefined` and skip their fetch. The projection iterates
+ * `playableDays`; days outside the pickup window are fetched-but-unused
+ * (their cache lines warm up for the StreamingBoard date strip too).
  */
 export function useWeekPitcherScores(
   faPool: FreeAgentPlayer[],
@@ -55,9 +57,10 @@ export function useWeekPitcherScores(
   teamOffense?: Record<number, TeamOffense>,
   categoryWeights?: Record<number, number>,
   earliestPlayableDate?: string,
+  weekBounds?: WeekBounds,
 ): UseWeekPitcherScoresResult {
-  const gridDays = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
-  const playableDays = useMemo(() => getPickupPlayableDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
+  const gridDays = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate, weekBounds), [earliestPlayableDate, weekBounds]);
+  const playableDays = useMemo(() => getPickupPlayableDays(new Date(), earliestPlayableDate, weekBounds), [earliestPlayableDate, weekBounds]);
 
   const day0 = useGameDay(gridDays[0]?.date);
   const day1 = useGameDay(gridDays[1]?.date);
@@ -66,16 +69,23 @@ export function useWeekPitcherScores(
   const day4 = useGameDay(gridDays[4]?.date);
   const day5 = useGameDay(gridDays[5]?.date);
   const day6 = useGameDay(gridDays[6]?.date);
-  const dayResults = [day0, day1, day2, day3, day4, day5, day6];
+  const day7 = useGameDay(gridDays[7]?.date);
+  const day8 = useGameDay(gridDays[8]?.date);
+  const day9 = useGameDay(gridDays[9]?.date);
+  const day10 = useGameDay(gridDays[10]?.date);
+  const day11 = useGameDay(gridDays[11]?.date);
+  const day12 = useGameDay(gridDays[12]?.date);
+  const day13 = useGameDay(gridDays[13]?.date);
+  const dayResults = [day0, day1, day2, day3, day4, day5, day6, day7, day8, day9, day10, day11, day12, day13];
 
   const gamesByDate = useMemo(() => {
     const m = new Map<string, EnrichedGame[]>();
     gridDays.forEach((day, i) => {
-      m.set(day.date, dayResults[i].games as EnrichedGame[]);
+      m.set(day.date, (dayResults[i]?.games ?? []) as EnrichedGame[]);
     });
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gridDays, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games]);
+  }, [gridDays, ...dayResults.map(d => d.games)]);
 
   // Pivot teamOffense Record into a Map for the engine.
   const teamOffenseMap = useMemo(() => {

@@ -129,11 +129,30 @@ export interface MatchupTeam {
 
 export interface MatchupData {
   week?: number;
+  /** First/last date (YYYY-MM-DD) of the matchup week, straight from Yahoo.
+   *  Not always a 7-day span — see `GameWeek`. */
+  week_start?: string;
+  week_end?: string;
   status: string;
   is_playoffs: boolean;
   is_tied: boolean;
   winner_team_key?: string;
   teams: MatchupTeam[];
+}
+
+// ---------------------------------------------------------------------------
+// Game weeks (per-season matchup-week calendar)
+// ---------------------------------------------------------------------------
+
+/** One matchup week's real date range from Yahoo's `game_weeks` resource.
+ *  Weeks are usually Mon–Sun but week 1 is short and the all-star break is
+ *  one combined ~14-day week — never assume 7 days. */
+export interface GameWeek {
+  week: number;
+  /** YYYY-MM-DD */
+  start: string;
+  /** YYYY-MM-DD, inclusive */
+  end: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -926,6 +945,41 @@ export class YahooFantasyAPI {
   }
 
   /**
+   * Get the game's week calendar — the authoritative start/end date of every
+   * matchup week in the season. Weeks are USUALLY 7 days but not always:
+   * week 1 is short and the all-star break produces one combined ~14-day
+   * week. Consumers should never assume Mon–Sun.
+   * @param gameKey - The game key (e.g., "469" for MLB 2026)
+   */
+  async getGameWeeks(gameKey: string): Promise<GameWeek[]> {
+    try {
+      const endpoint = `/game/${gameKey}/game_weeks`;
+      const response = await this.request<YahooAPIResponse<any>>(endpoint);
+
+      const weeks: GameWeek[] = [];
+      const container = response.fantasy_content?.game?.[1]?.game_weeks;
+      if (container) {
+        for (const [key, entry] of Object.entries(container)) {
+          if (key === 'count') continue;
+          if (typeof entry !== 'object' || !entry || !('game_week' in entry)) continue;
+          const gw = (entry as any).game_week;
+          if (!gw?.week || !gw?.start || !gw?.end) continue;
+          weeks.push({
+            week: Number(gw.week),
+            start: gw.start,
+            end: gw.end,
+          });
+        }
+      }
+      weeks.sort((a, b) => a.week - b.week);
+      return weeks;
+    } catch (error) {
+      console.error('Failed to get game weeks:', error);
+      throw new Error(`Failed to get game weeks: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
    * Build a stat category lookup map from an array of categories
    * @param categories - Array of stat categories
    * @returns Map of stat_id to category metadata
@@ -1300,6 +1354,8 @@ export class YahooFantasyAPI {
 
       const matchup = (mContainer as any).matchup;
       const matchupWeek = matchup.week ? Number(matchup.week) : week;
+      const weekStart = typeof matchup.week_start === 'string' ? matchup.week_start : undefined;
+      const weekEnd = typeof matchup.week_end === 'string' ? matchup.week_end : undefined;
       const status = matchup.status ?? 'unknown';
       const isPlayoffs = matchup.is_playoffs === '1';
       const isTied = matchup.is_tied === '1';
@@ -1359,6 +1415,8 @@ export class YahooFantasyAPI {
 
       matchups.push({
         week: matchupWeek,
+        week_start: weekStart,
+        week_end: weekEnd,
         status,
         is_playoffs: isPlayoffs,
         is_tied: isTied,
@@ -1871,6 +1929,8 @@ export class YahooFantasyAPI {
 
       matchups.push({
         week: matchup.week ? Number(matchup.week) : undefined,
+        week_start: typeof matchup.week_start === 'string' ? matchup.week_start : undefined,
+        week_end: typeof matchup.week_end === 'string' ? matchup.week_end : undefined,
         status: matchup.status ?? 'unknown',
         is_playoffs: matchup.is_playoffs === '1',
         is_tied: matchup.is_tied === '1',

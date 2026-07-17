@@ -45,6 +45,9 @@ export type {
   LeagueAnalysisSummary,
 } from './leagues';
 
+export { getGameWeeks, getWeekBounds, resolveWeekBounds } from './gameWeeks';
+export type { GameWeek } from './gameWeeks';
+
 export { getScoringProfile } from './scoringProfile';
 export type { ScoringProfile, ScoringMode } from './scoringProfile';
 

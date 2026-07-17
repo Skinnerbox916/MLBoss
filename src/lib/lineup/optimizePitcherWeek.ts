@@ -12,6 +12,9 @@ const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
 
 export interface OptimizePitcherWeekDeps {
   teamKey: string;
+  /** Last date (YYYY-MM-DD) of the matchup week — Yahoo's real `week_end`
+   *  via WeekBounds. Without it the run stops at the next Sunday. */
+  weekEnd?: string;
   rosterPositions: RosterPositionSlot[];
 }
 
@@ -146,16 +149,17 @@ async function optimizeOnePitcherDay(
 }
 
 /**
- * Optimize pitchers for every remaining day in the fantasy week (Mon–Sun).
- * Ensures probable starters are set to active, non-starters are benched.
- * Days are processed sequentially to avoid Yahoo rate limiting.
+ * Optimize pitchers for every remaining day in the fantasy week (through
+ * `deps.weekEnd`, else next Sunday). Ensures probable starters are set to
+ * active, non-starters are benched. Days are processed sequentially to
+ * avoid Yahoo rate limiting.
  */
 export async function optimizePitcherWeek(
   start: string,
   deps: OptimizePitcherWeekDeps,
   onProgress?: (date: string, index: number, total: number) => void,
 ): Promise<OptimizePitcherWeekResult> {
-  const dates = datesThroughEndOfWeek(start);
+  const dates = datesThroughEndOfWeek(start, deps.weekEnd);
   const results: PitcherDayResult[] = [];
   for (let i = 0; i < dates.length; i++) {
     const date = dates[i];

@@ -66,13 +66,17 @@ export interface CorrectedRowsInput {
   myProjection: Record<number, ProjectedCategory>;
   /** Per-cat projection for the opponent. */
   oppProjection: Record<number, ProjectedCategory>;
-  /** Days elapsed in the current matchup week (0-7). Used by the blend
+  /** Days elapsed in the current matchup week. Used by the blend
    *  mode's AB / IP recovery fallback when stat_id 8 (H) or 50 (IP) is
    *  not a scored category. Ignored in 'projection-only' mode. */
   daysElapsed: number;
+  /** Total days in the matchup week (default 7). Yahoo's calendar has
+   *  irregular weeks — the volume-recovery fallbacks use
+   *  `weekLengthDays - daysElapsed` as the remaining-days denominator. */
+  weekLengthDays?: number;
   /** Default `'blend'`. `'projection-only'` bypasses the MTD math
    *  entirely — every corrected value comes from the projection alone.
-   *  Used by the Sunday streaming pivot. See module docblock. */
+   *  Used by the end-of-week streaming pivot. See module docblock. */
   mode?: CorrectedRowsMode;
 }
 
@@ -86,6 +90,7 @@ export function composeCorrectedRows({
   myProjection,
   oppProjection,
   daysElapsed,
+  weekLengthDays = 7,
   mode = 'blend',
 }: CorrectedRowsInput): MatchupRow[] {
   if (mode === 'projection-only') {
@@ -114,14 +119,14 @@ export function composeCorrectedRows({
 
     if (row.isBatterStat) {
       if (row.statId === STAT_ID_AVG) {
-        return correctAvgRow(row, myProj, oppProj, { myMtdH, oppMtdH, daysElapsed });
+        return correctAvgRow(row, myProj, oppProj, { myMtdH, oppMtdH, daysElapsed, weekLengthDays });
       }
       return correctCountingRow(row, myProj, oppProj);
     }
 
     // Pitcher row branch.
     if (PITCHER_RATIO_STAT_IDS.has(row.statId)) {
-      return correctPitcherRatioRow(row, myProj, oppProj, { myMtdIP, oppMtdIP, daysElapsed });
+      return correctPitcherRatioRow(row, myProj, oppProj, { myMtdIP, oppMtdIP, daysElapsed, weekLengthDays });
     }
     if (!isProjectablePitcherStat(row.statId)) return row;
     return correctCountingRow(row, myProj, oppProj);
@@ -193,6 +198,7 @@ interface AvgContext {
   myMtdH: number | null;
   oppMtdH: number | null;
   daysElapsed: number;
+  weekLengthDays: number;
 }
 
 function correctAvgRow(
@@ -207,8 +213,8 @@ function correctAvgRow(
 
   return buildAvgCorrectedRow(
     row,
-    blendAvg(myMtdAvg, ctx.myMtdH, myProj, ctx.daysElapsed),
-    blendAvg(oppMtdAvg, ctx.oppMtdH, oppProj, ctx.daysElapsed),
+    blendAvg(myMtdAvg, ctx.myMtdH, myProj, ctx.daysElapsed, ctx.weekLengthDays),
+    blendAvg(oppMtdAvg, ctx.oppMtdH, oppProj, ctx.daysElapsed, ctx.weekLengthDays),
   );
 }
 
@@ -231,6 +237,7 @@ function blendAvg(
   mtdH: number | null,
   proj: ProjectedCategory | undefined,
   daysElapsed: number,
+  weekLengthDays: number,
 ): number {
   if (!proj || proj.expectedDenom <= 0) return mtdAvg;
   const projH = proj.expectedCount;
@@ -243,7 +250,7 @@ function blendAvg(
   } else {
     // Fall back to the projection-derived volume rate. If `daysRemaining`
     // is the projection's domain, mtdAB ≈ projAB × elapsed/remaining.
-    const daysRemaining = Math.max(0.5, 7 - daysElapsed);
+    const daysRemaining = Math.max(0.5, weekLengthDays - daysElapsed);
     const elapsedShare = Math.max(0, daysElapsed) / daysRemaining;
     mtdAB = projAB * elapsedShare;
   }
@@ -258,6 +265,7 @@ interface PitcherRatioContext {
   myMtdIP: number | null;
   oppMtdIP: number | null;
   daysElapsed: number;
+  weekLengthDays: number;
 }
 
 function correctPitcherRatioRow(
@@ -272,8 +280,8 @@ function correctPitcherRatioRow(
 
   return buildPitcherRatioCorrectedRow(
     row,
-    blendPitcherRatio(myMtdRatio, ctx.myMtdIP, myProj, ctx.daysElapsed, isEra),
-    blendPitcherRatio(oppMtdRatio, ctx.oppMtdIP, oppProj, ctx.daysElapsed, isEra),
+    blendPitcherRatio(myMtdRatio, ctx.myMtdIP, myProj, ctx.daysElapsed, ctx.weekLengthDays, isEra),
+    blendPitcherRatio(oppMtdRatio, ctx.oppMtdIP, oppProj, ctx.daysElapsed, ctx.weekLengthDays, isEra),
   );
 }
 
@@ -285,6 +293,7 @@ function blendPitcherRatio(
   mtdIP: number | null,
   proj: ProjectedCategory | undefined,
   daysElapsed: number,
+  weekLengthDays: number,
   isEra: boolean,
 ): number {
   if (!proj || proj.expectedDenom <= 0) return mtdRatio;
@@ -295,7 +304,7 @@ function blendPitcherRatio(
   if (mtdIP !== null && mtdIP > 0) {
     actualMtdIP = mtdIP;
   } else {
-    const daysRemaining = Math.max(0.5, 7 - daysElapsed);
+    const daysRemaining = Math.max(0.5, weekLengthDays - daysElapsed);
     const elapsedShare = Math.max(0, daysElapsed) / daysRemaining;
     actualMtdIP = projIP * elapsedShare;
   }

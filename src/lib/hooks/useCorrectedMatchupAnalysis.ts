@@ -11,6 +11,7 @@ import { analyzeMatchup, withSwing, type MatchupAnalysis } from '@/lib/matchup/a
 import { composeCorrectedRows } from '@/lib/matchup/correctedRows';
 import { isRatioCat } from '@/lib/league/forecast';
 import { getMatchupWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
+import { useLeagueWeekBounds } from './useFantasyContext';
 import type { ProjectedCategory } from './useBatterTeamProjection';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { MatchupData } from '@/lib/yahoo-fantasy-api';
@@ -115,6 +116,11 @@ export function useCorrectedMatchupAnalysis(
 ): CorrectedMatchupAnalysis {
   const { targetWeek = 'current' } = opts;
   const isPivot = targetWeek === 'next';
+
+  // Real matchup-week bounds (Yahoo game_weeks calendar) — drives elapsed/
+  // remaining day math so a combined ~14-day week doesn't read as "over"
+  // halfway through. Undefined while context loads → legacy Mon–Sun.
+  const weekBounds = useLeagueWeekBounds(leagueKey);
 
   // Current-week scoreboard is always fetched: in `'current'` mode it's
   // the MTD source AND the opponent source; in `'next'` mode it's only
@@ -243,11 +249,12 @@ export function useCorrectedMatchupAnalysis(
     const oppMap = new Map(opponent.stats.map(s => [s.stat_id, s.value]));
     const baseRows = buildMatchupRows(categories, myMap, oppMap);
 
-    const days = getMatchupWeekDays();
+    const days = getMatchupWeekDays(new Date(), weekBounds);
+    const weekLengthDays = days.length || 7;
     const finished = days.filter(d => !d.isRemaining).length;
     const daysElapsed = finished + 0.5;
 
-    const rawAnalysis = analyzeMatchup(baseRows, { daysElapsed });
+    const rawAnalysis = analyzeMatchup(baseRows, { daysElapsed, weekLengthDays });
     if (!hasAnyProjection) {
       return {
         analysis: rawAnalysis,
@@ -266,9 +273,10 @@ export function useCorrectedMatchupAnalysis(
       myProjection: myMerged,
       oppProjection: oppMerged,
       daysElapsed: finished, // integer days for the AB-estimation fallback
+      weekLengthDays,
       mode: 'blend',
     });
-    const correctedAnalysis = analyzeMatchup(correctedRows, { daysElapsed, mode: 'corrected' });
+    const correctedAnalysis = analyzeMatchup(correctedRows, { daysElapsed, weekLengthDays, mode: 'corrected' });
     const analysis = withSwing(correctedAnalysis, rawAnalysis);
 
     return {
@@ -283,7 +291,7 @@ export function useCorrectedMatchupAnalysis(
       opponentName,
     };
   }, [
-    matchups, teamKey, categories, isPivot, ratioByTeamKey,
+    matchups, teamKey, categories, isPivot, ratioByTeamKey, weekBounds,
     myProjection, oppProjection, myPitcherProjection, oppPitcherProjection,
     scoreLoading, nextScoreLoading, catsLoading,
     myProjLoading, oppProjLoading, myPitchProjLoading, oppPitchProjLoading,

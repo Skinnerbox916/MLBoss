@@ -112,11 +112,16 @@ export async function getLineupCadence(userId: string, leagueKey: string): Promi
  * `resolveEarliestPlayableDate`.
  */
 export async function getEarliestPlayableDate(userId: string, leagueKey: string): Promise<string> {
-  const leagues = await getUserLeagues(userId);
+  const { getWeekBounds } = await import('./gameWeeks');
+  const [leagues, bounds] = await Promise.all([
+    getUserLeagues(userId),
+    getWeekBounds(userId, leagueKey),
+  ]);
   const league = leagues.find(l => l.league_key === leagueKey);
   return resolveEarliestPlayableDate({
     editKey: league?.edit_key,
     weeklyDeadline: league?.weekly_deadline,
+    bounds,
   });
 }
 

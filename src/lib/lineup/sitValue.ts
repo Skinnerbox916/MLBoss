@@ -205,6 +205,9 @@ export interface SitPlanInput {
   /** Days elapsed in the matchup week — drives the AVG margin's
    *  week-progress confidence factor, mirroring `computeMargin`. */
   daysElapsed: number;
+  /** Total days in the matchup week (default 7) — irregular Yahoo weeks
+   *  (short week 1, combined all-star week) pass the real span. */
+  weekLengthDays?: number;
   deadband?: number;
 }
 
@@ -252,6 +255,7 @@ export interface SitPlan {
  */
 export function computeSitPlan(input: SitPlanInput): SitPlan {
   const { rows, concededSet, candidates, avgAnchor, daysElapsed } = input;
+  const weekLengthDays = input.weekLengthDays ?? 7;
   const deadband = input.deadband ?? SIT_DEADBAND;
 
   // Mutable copy of my projected totals; opponent totals are fixed.
@@ -265,7 +269,7 @@ export function computeSitPlan(input: SitPlanInput): SitPlan {
     const my = myTotal.get(r.statId) ?? r.my;
     const dir = r.betterIs === 'lower' ? -1 : 1;
     if (r.statId === AVG_STAT_ID) {
-      const confidence = 0.15 + 0.85 * clamp(daysElapsed / 7, 0.1, 1);
+      const confidence = 0.15 + 0.85 * clamp(daysElapsed / Math.max(weekLengthDays, 1), 0.1, 1);
       return (((my - r.opp) * dir) / RATE_SCALE.AVG) * confidence;
     }
     const scale = CORRECTED_COUNTING_SCALE[r.statId];

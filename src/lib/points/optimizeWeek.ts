@@ -19,7 +19,7 @@ import { getGameDay } from '@/lib/mlb/schedule';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { datesThroughEndOfWeek } from '@/lib/lineup/optimizeWeek';
-import { getWeekDays } from '@/lib/dashboard/weekRange';
+import { getWeekDays, type WeekBounds } from '@/lib/dashboard/weekRange';
 import { optimizeLineup } from '@/lib/lineup/optimize';
 import { resolveMatchup } from '@/lib/mlb/analysis';
 import { isPitcher } from '@/components/lineup/types';
@@ -109,10 +109,11 @@ export async function optimizePointsWeek(
   teamKey: string,
   profile: ScoringProfile,
   startDate?: string,
+  weekBounds?: WeekBounds,
 ): Promise<PointsWeekResult> {
   const today = todayStr();
   const start = !startDate || startDate < today ? today : startDate;
-  const dates = datesThroughEndOfWeek(start);
+  const dates = datesThroughEndOfWeek(start, weekBounds?.end);
   const rosterPositions = await getLeagueRosterPositions(userId, leagueKey);
 
   const days: PointsWeekDayResult[] = [];
@@ -147,8 +148,13 @@ export async function optimizePointsWeekly(
   leagueKey: string,
   teamKey: string,
   profile: ScoringProfile,
+  weekBounds?: WeekBounds,
 ): Promise<PointsWeekResult> {
-  const days = getWeekDays(new Date(), 'next');
+  const days = getWeekDays(new Date(), 'next', weekBounds);
+  if (days.length === 0) {
+    // Terminal week — no next matchup to write a lineup for.
+    return { days: [], succeeded: 0, failed: 0 };
+  }
   const monday = days[0].date;
 
   const [roster, rosterPositions, gameDayResults] = await Promise.all([

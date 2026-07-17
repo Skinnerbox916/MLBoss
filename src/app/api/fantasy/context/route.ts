@@ -4,6 +4,9 @@ import {
   getCurrentMLBGameKey,
   analyzeUserFantasyLeagues,
   getScoringProfile,
+  getGameWeeks,
+  resolveWeekBounds,
+  type GameWeek,
   type ScoringProfile,
 } from '@/lib/fantasy';
 
@@ -38,19 +41,36 @@ export async function GET() {
       });
     }
 
+    // Matchup-week calendar — real per-week date ranges (week 1 is short;
+    // the all-star break is one combined ~14-day week). Non-fatal: without
+    // it the client falls back to legacy Mon–Sun windows.
+    let gameWeeks: GameWeek[] = [];
+    try {
+      gameWeeks = await getGameWeeks(user.id, currentMLB.game_key);
+    } catch (err) {
+      console.warn('[fantasy/context] failed to load game weeks', err);
+    }
+
     // Return all leagues with their user team info
-    const leagues = result.data.leagues.map(league => ({
-      league_key: league.league_key,
-      league_name: league.league_name,
-      league_type: league.league_type,
-      scoring_type: league.scoring_type,
-      weekly_deadline: league.weekly_deadline,
-      edit_key: league.edit_key,
-      current_week: league.current_week,
-      total_teams: league.total_teams,
-      is_finished: league.is_finished,
-      user_team: league.user_team,
-    }));
+    const leagues = result.data.leagues.map(league => {
+      const bounds = resolveWeekBounds(gameWeeks, league.current_week);
+      return {
+        league_key: league.league_key,
+        league_name: league.league_name,
+        league_type: league.league_type,
+        scoring_type: league.scoring_type,
+        weekly_deadline: league.weekly_deadline,
+        edit_key: league.edit_key,
+        current_week: league.current_week,
+        week_start: bounds?.start,
+        week_end: bounds?.end,
+        next_week_start: bounds?.nextStart,
+        next_week_end: bounds?.nextEnd,
+        total_teams: league.total_teams,
+        is_finished: league.is_finished,
+        user_team: league.user_team,
+      };
+    });
 
     const primaryLeagueKey = leagues.find(l => l.user_team && !l.is_finished)?.league_key
       ?? leagues[0]?.league_key;

@@ -8,7 +8,8 @@ import Panel from '@/components/ui/Panel';
 import { Text } from '@/components/typography';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
-import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
+import { useFantasyContext, useLeagueWeekBounds } from '@/lib/hooks/useFantasyContext';
+import { weekRangeLabel } from '@/lib/dashboard/weekRange';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnalysis';
 import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
@@ -242,6 +243,7 @@ interface TodayPitchersProps {
 
 export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
   const { leagueKey } = useFantasyContext();
+  const weekBounds = useLeagueWeekBounds(leagueKey);
   const { roster, isLoading: rosterLoading, mutate: mutateRoster } = useRoster(teamKey, date);
   const { positions: rosterPositions } = useRosterPositions(leagueKey);
   const { games, isLoading: gamesLoading } = useGameDay(date);
@@ -355,7 +357,7 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
     try {
       const result = await optimizePitcherWeek(
         today,
-        { teamKey, rosterPositions },
+        { teamKey, weekEnd: weekBounds?.end, rosterPositions },
         (dateStr, i, total) => {
           setWeekStatus(`Optimizing ${dateStr} (${i + 1}/${total})…`);
         },
@@ -373,7 +375,7 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, rosterPositions, mutateRoster]);
+  }, [teamKey, weekBounds, rosterPositions, mutateRoster]);
 
   const isLoading = rosterLoading || gamesLoading;
 
@@ -386,6 +388,7 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
           isLoading={matchupLoading}
           side="pitching"
           opponentName={opponentName}
+          weekLabel={weekRangeLabel(weekBounds)}
           categoryWeights={pitcherCategoryWeights}
           isConceded={isConceded}
           isAutoConceded={isAutoConceded}

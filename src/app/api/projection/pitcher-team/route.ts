@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getTeamRosterByDate, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getTeamRosterByDate, getWeekBounds, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy/stats';
@@ -62,14 +62,17 @@ export async function GET(request: Request) {
     // closed one).
     const targetWeek: WeekTarget = searchParams.get('targetWeek') === 'next' ? 'next' : 'current';
 
+    // Real matchup-week bounds (Yahoo game_weeks) — the window is 7 days
+    // normally, up to 14 in the combined all-star week.
+    const weekBounds = await getWeekBounds(user.id, leagueKey);
     // Cache the assembled projection (see sibling batter-team route). Fanned
     // out by useCorrectedMatchupAnalysis (my+opp); 5-min TTL; single-flight in
     // withCache collapses concurrent my/opp calls.
     const payload = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:proj-pitcher-team:${teamKey}:${targetWeek}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:proj-pitcher-team:${teamKey}:${targetWeek}:${weekBounds?.end ?? 'legacy'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
       async () => {
-    const days = getWeekDays(new Date(), targetWeek);
+    const days = getWeekDays(new Date(), targetWeek, weekBounds);
     const remaining = days.filter(d => d.isRemaining);
     const weekStart = days[0]?.date;
     const weekEnd = days[days.length - 1]?.date;

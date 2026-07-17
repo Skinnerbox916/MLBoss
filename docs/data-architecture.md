@@ -252,6 +252,7 @@ src/lib/fantasy/
 ├── auth.ts          — token validation and refresh via Redis
 ├── stats.ts         — stat categories, enrichment, league-specific categories
 ├── leagues.ts       — league/team discovery, user team identification
+├── gameWeeks.ts     — matchup-week calendar (game_weeks), WeekBounds resolution
 ├── standings.ts     — league standings (ranks, records, points)
 ├── matchups.ts      — scoreboard (weekly matchup scores) and team schedule
 ├── teamStats.ts     — team stats (season-to-date and weekly)
@@ -262,6 +263,17 @@ src/lib/fantasy/
 ```
 
 Consumer code imports from `@/lib/fantasy`, never from the raw client directly.
+
+### Matchup-week calendar
+
+Yahoo matchup weeks are **usually Mon–Sun but not always**: week 1 is short (2026: Mar 25–29) and the all-star break is one combined ~14-day matchup week (2026 week 17: Jul 13–26). The authoritative per-week date ranges come from Yahoo's `game_weeks` resource, fetched once per season into `static:game-weeks:{gameKey}` ([gameWeeks.ts](../src/lib/fantasy/gameWeeks.ts), coverage-gated so an empty parse isn't pinned).
+
+The unit that flows everywhere is a `WeekBounds` — the current week's real `start`/`end` plus the next week's (`nextStart`/`nextEnd`, **null on the season's final week**). One resolver, two transports:
+
+- **Server**: `getWeekBounds(userId, leagueKey)` (league's `current_week` × the calendar) — route handlers pass it into the `weekRange` helpers and fold `weekBounds.end` into their cache keys so windows roll when the calendar resolves.
+- **Client**: `/api/fantasy/context` ships `week_start`/`week_end`/`next_week_start`/`next_week_end` per league; `useLeagueWeekBounds(leagueKey)` / `useActiveLeague().weekBounds` build the (memoized) bounds object.
+
+Every helper in [dashboard/weekRange.ts](../src/lib/dashboard/weekRange.ts) accepts optional bounds and **falls back to the legacy local Mon–Sun derivation without them** — first paint and calendar-fetch failures degrade gracefully rather than break. Scoreboard matchups also carry `week_start`/`week_end` per matchup (parsed into `MatchupData`). Nothing downstream may assume 7-day weeks; see [history.md](./history.md#2026-07--local-monsun-week-math-replaced-by-yahoos-game_weeks-calendar).
 
 ### Error handling
 

@@ -7,6 +7,7 @@ import { useLineupSpots } from './useLineupSpots';
 import {
   getStreamingGridDays,
   getPickupPlayableDays,
+  type WeekBounds,
   type WeekDay,
 } from '@/lib/dashboard/weekRange';
 import {
@@ -45,12 +46,13 @@ interface UseWeekBatterScoresResult {
  * IL exclusions, etc.). The hook scores everyone passed in.
  *
  * Time window: the projection iterates `getPickupPlayableDays(now,
- * earliestPlayableDate)`, floored at the league's earliest playable date —
- * today for immediate leagues (games not yet started), tomorrow→Sunday for
- * next-day leagues, full next Mon-Sun on Sunday / weekly. The grid for
- * game-day fetches is `getStreamingGridDays()` — same shape (7 days).
+ * earliestPlayableDate, weekBounds)`, floored at the league's earliest
+ * playable date — today for immediate leagues (games not yet started),
+ * tomorrow→week-end for next-day leagues, the full next week on the closing
+ * day / weekly. The grid for game-day fetches is `getStreamingGridDays()` —
+ * the whole matchup week (7 days normally, up to 14 in a combined week).
  *
- * Performance: ~100 FAs × ~5 remaining days × pure-CPU rating call —
+ * Performance: ~100 FAs × remaining days × pure-CPU rating call —
  * runs in well under a second in a typical browser.
  */
 export function useWeekBatterScores(
@@ -58,12 +60,14 @@ export function useWeekBatterScores(
   scoredCategories: EnrichedLeagueStatCategory[],
   categoryWeights?: Record<number, number>,
   earliestPlayableDate?: string,
+  weekBounds?: WeekBounds,
 ): UseWeekBatterScoresResult {
-  const gridDays = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
-  const playableDays = useMemo(() => getPickupPlayableDays(new Date(), earliestPlayableDate), [earliestPlayableDate]);
+  const gridDays = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate, weekBounds), [earliestPlayableDate, weekBounds]);
+  const playableDays = useMemo(() => getPickupPlayableDays(new Date(), earliestPlayableDate, weekBounds), [earliestPlayableDate, weekBounds]);
 
-  // Stable hook order: always seven `useGameDay` calls regardless of how
-  // many days are playable. Filtering happens in the projection deps.
+  // Stable hook order: always fourteen `useGameDay` calls regardless of how
+  // many days the grid holds (7 for a normal week, up to 14 for a combined
+  // week). Slots past the grid get `undefined` and skip their fetch.
   const day0 = useGameDay(gridDays[0]?.date);
   const day1 = useGameDay(gridDays[1]?.date);
   const day2 = useGameDay(gridDays[2]?.date);
@@ -71,7 +75,14 @@ export function useWeekBatterScores(
   const day4 = useGameDay(gridDays[4]?.date);
   const day5 = useGameDay(gridDays[5]?.date);
   const day6 = useGameDay(gridDays[6]?.date);
-  const dayResults = [day0, day1, day2, day3, day4, day5, day6];
+  const day7 = useGameDay(gridDays[7]?.date);
+  const day8 = useGameDay(gridDays[8]?.date);
+  const day9 = useGameDay(gridDays[9]?.date);
+  const day10 = useGameDay(gridDays[10]?.date);
+  const day11 = useGameDay(gridDays[11]?.date);
+  const day12 = useGameDay(gridDays[12]?.date);
+  const day13 = useGameDay(gridDays[13]?.date);
+  const dayResults = [day0, day1, day2, day3, day4, day5, day6, day7, day8, day9, day10, day11, day12, day13];
 
   // Stats for every FA + lineup-spot priors keyed by mlbId.
   const { statsMap, getPlayerStats, isLoading: statsLoading } = useFreeAgentStats(faPool);
@@ -88,17 +99,17 @@ export function useWeekBatterScores(
   }, [faPool, getPlayerStats]);
   const { spots: lineupSpots, isLoading: spotsLoading } = useLineupSpots(mlbIds);
 
-  // Build per-day game lookup from the seven SWR results, keyed by date.
+  // Build per-day game lookup from the per-day SWR results, keyed by date.
   // The projection engine only iterates `playableDays`, so days outside
   // the pickup window are fetched-but-unused.
   const gamesByDate = useMemo(() => {
     const m = new Map<string, EnrichedGame[]>();
     gridDays.forEach((day, i) => {
-      m.set(day.date, dayResults[i].games as EnrichedGame[]);
+      m.set(day.date, (dayResults[i]?.games ?? []) as EnrichedGame[]);
     });
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gridDays, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games]);
+  }, [gridDays, ...dayResults.map(d => d.games)]);
 
   // Stats lookup keyed by mlbId for the engine. The FA stats map is keyed
   // by `name|team` lowercase, so we re-key here.

@@ -238,11 +238,18 @@ export type AnalyzeMode = 'raw' | 'corrected';
 
 export interface AnalyzeOpts {
   /**
-   * Days elapsed in the current Mon-Sun matchup week. Fractional values
+   * Days elapsed in the current matchup week. Fractional values
    * (e.g. 2.5 to represent "midway through Wednesday") are fine — the math
-   * uses `daysElapsed / 7` to derive week progress.
+   * uses `daysElapsed / weekLengthDays` to derive week progress.
    */
   daysElapsed: number;
+  /**
+   * Total days in the matchup week. Usually 7, but Yahoo's calendar has
+   * irregular weeks (short week 1, ~14-day combined all-star week) —
+   * callers with real `WeekBounds` pass the actual span so week progress
+   * doesn't max out halfway through a long week.
+   */
+  weekLengthDays?: number;
   /**
    * Which counting-stat margin model to use. `'raw'` (default) is right
    * for matchup-to-date scoreboard rows; `'corrected'` is right for rows
@@ -259,9 +266,9 @@ export interface AnalyzeOpts {
  */
 export function analyzeMatchup(
   rows: MatchupRow[],
-  { daysElapsed, mode = 'raw' }: AnalyzeOpts,
+  { daysElapsed, weekLengthDays = 7, mode = 'raw' }: AnalyzeOpts,
 ): MatchupAnalysis {
-  const weekProgress = clamp(daysElapsed / 7, 0.1, 1);
+  const weekProgress = clamp(daysElapsed / Math.max(weekLengthDays, 1), 0.1, 1);
 
   const decorated: AnalyzedMatchupRow[] = rows.map(row => {
     const hasSignal = hasMatchupSignal(row);

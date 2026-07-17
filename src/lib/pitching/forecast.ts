@@ -685,7 +685,8 @@ function bbCompoundingPenalty(bbPerPA: number): number {
 //   - PitcherTalent with role='reliever' (callers should gate before
 //     invoking; behavior on a non-reliever talent is well-defined —
 //     returns all-zero — but semantically meaningless).
-//   - daysRemaining in the matchup window (1..7).
+//   - daysRemaining in the matchup window (1..14 — the combined all-star
+//     week is Yahoo's longest).
 //
 // Output: rollup of expected IP + counting cats over the window. Counting
 // cats use the same per-PA rates that drive the SP forecast (kPerPA,
@@ -730,7 +731,10 @@ export function buildReliefWeekForecast(
   pitcher: PitcherTalent,
   daysRemaining: number,
 ): ReliefWeekForecast {
-  const days = clamp(daysRemaining, 0, 7);
+  // Cap at 14: Yahoo's longest matchup window (the combined all-star week).
+  // `days / 7` below is a per-week RATE application, so windows longer than
+  // 7 days scale correctly — the cap only guards absurd inputs.
+  const days = clamp(daysRemaining, 0, 14);
   const appsPerWeek = pitcher.appearancesPerWeek ?? 0;
   const ipPerApp = pitcher.ipPerAppearance ?? 0;
 

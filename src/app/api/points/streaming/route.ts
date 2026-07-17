@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getScoringProfile, getLineupCadence, getEarliestPlayableDate, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getScoringProfile, getLineupCadence, getEarliestPlayableDate, getWeekBounds, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { analyzePointsStreaming } from '@/lib/points/streaming';
 
 /**
@@ -47,14 +47,19 @@ export async function GET(request: Request) {
       ? (floorParam as string)
       : await getEarliestPlayableDate(user.id, leagueKey);
 
+    // Real matchup-week bounds (Yahoo game_weeks) — the window is 7 days
+    // normally, up to 14 in the combined all-star week.
+    const weekBounds = await getWeekBounds(user.id, leagueKey);
+
     // Cache the assembled analysis as a unit (mirrors points-team): the FA
     // pools, game days, and stat batches underneath are each cached, but the
     // ~60 FA × per-day optimizer fan-out is worth skipping on every render.
-    // Keyed on the window floor so the analysis rolls when edit_key advances.
+    // Keyed on the window floor + week end so the analysis rolls when
+    // edit_key advances or the week calendar resolves.
     const analysis = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-streaming:${leagueKey}:${teamKey}:${cadence}:${earliestPlayableDate}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-streaming:${leagueKey}:${teamKey}:${cadence}:${earliestPlayableDate}:${weekBounds?.end ?? 'legacy'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
-      () => analyzePointsStreaming(user.id, leagueKey, teamKey, profile, { cadence, earliestPlayableDate }),
+      () => analyzePointsStreaming(user.id, leagueKey, teamKey, profile, { cadence, earliestPlayableDate, weekBounds }),
     );
     return NextResponse.json({ leagueKey, teamKey, scoringType, ...analysis });
   } catch (error) {

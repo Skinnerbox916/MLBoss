@@ -19,7 +19,7 @@ import { resolveMatchup, isWipedGame, type MatchupContext } from '@/lib/mlb/anal
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import { computeSitPlan, type SitPlan, type SitPlanCandidate, type SitPlanRow } from '@/lib/lineup/sitValue';
 import { isInjured } from '@/lib/lineup/optimize';
-import { getMatchupWeekDays } from '@/lib/dashboard/weekRange';
+import { getMatchupWeekDays, weekRangeLabel } from '@/lib/dashboard/weekRange';
 import { expectedPAperGame } from '@/lib/projection/batterTeam';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import { optimizeWeek } from '@/lib/lineup/optimizeWeek';
@@ -59,7 +59,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // Active league (primary, or whatever the switcher selected). `leagueMode`
   // is the scoring family (categories | points); the `mode` prop is the
   // batting/pitching side.
-  const { teamKey, leagueKey, mode: leagueMode, scoringType, lineupCadence, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
+  const { teamKey, leagueKey, mode: leagueMode, scoringType, lineupCadence, weekBounds, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
   const isPoints = leagueMode === 'points';
   // Per-stat point weights for client-side points scoring (points mode only).
   const { profile: pointsProfile } = useScoringProfile(leagueKey, scoringType, isPoints);
@@ -264,18 +264,20 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     }
     if (candidates.length === 0) return empty;
 
-    const finished = getMatchupWeekDays().filter(d => !d.isRemaining).length;
+    const weekDays = getMatchupWeekDays(new Date(), weekBounds);
+    const finished = weekDays.filter(d => !d.isRemaining).length;
     return computeSitPlan({
       rows,
       concededSet,
       candidates,
       avgAnchor,
       daysElapsed: finished + 0.5,
+      weekLengthDays: weekDays.length || 7,
     });
   }, [
     isPoints, mode, isCorrected, selectedDate, batterStatIds, matchupAnalysis,
     isConceded, roster, matchupIndex, dhTeams, getPlayerLine,
-    scoredBatterCategories, batterCategoryWeights, avgAnchor,
+    scoredBatterCategories, batterCategoryWeights, avgAnchor, weekBounds,
   ]);
 
   const satKeys = useMemo(() => new Set(sitPlan.sits.map(s => s.key)), [sitPlan]);
@@ -364,6 +366,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
         start,
         {
           teamKey,
+          weekEnd: weekBounds?.end,
           rosterPositions,
           scoredBatterCategories,
           categoryWeights: batterCategoryWeights,
@@ -386,7 +389,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     } finally {
       setWeekRunning(false);
     }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, isPoints, leagueKey, scoringType]);
+  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, isPoints, leagueKey, scoringType, weekBounds]);
 
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
@@ -455,6 +458,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
           isLoading={matchupLoading}
           side="batting"
           opponentName={opponentName}
+          weekLabel={weekRangeLabel(weekBounds)}
           categoryWeights={batterCategoryWeights}
           isConceded={isConceded}
           isAutoConceded={isAutoConceded}

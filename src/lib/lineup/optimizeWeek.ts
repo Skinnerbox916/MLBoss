@@ -15,6 +15,9 @@ interface EnrichedGame extends MLBGame {
 
 export interface OptimizeWeekDeps {
   teamKey: string;
+  /** Last date (YYYY-MM-DD) of the matchup week — Yahoo's real `week_end`
+   *  via WeekBounds. Without it the run stops at the next Sunday. */
+  weekEnd?: string;
   rosterPositions: RosterPositionSlot[];
   scoredBatterCategories: EnrichedLeagueStatCategory[];
   /** Numeric pivotality weights for the rating composite — must match the
@@ -52,16 +55,26 @@ function ymdAddDays(ymd: string, n: number): string {
 }
 
 /**
- * Returns dates from `start` (inclusive) through the next Sunday (inclusive).
- * Yahoo Fantasy MLB weeks run Monday–Sunday. If `start` is already Sunday,
- * returns just [start].
+ * Returns dates from `start` (inclusive) through the end of the matchup week
+ * (inclusive). Pass `weekEnd` (Yahoo's real `week_end` via `WeekBounds`) so
+ * irregular weeks — the combined ~14-day all-star week — are covered in full.
+ * Without it, falls back to the legacy Mon–Sun assumption (next Sunday).
  */
-export function datesThroughEndOfWeek(start: string): string[] {
+export function datesThroughEndOfWeek(start: string, weekEnd?: string): string[] {
+  const out: string[] = [];
+  if (weekEnd && /^\d{4}-\d{2}-\d{2}$/.test(weekEnd) && weekEnd >= start) {
+    // 21-day cap mirrors weekRange's MAX_WEEK_DAYS malformed-input guard.
+    for (let i = 0; i < 21; i++) {
+      const d = ymdAddDays(start, i);
+      if (d > weekEnd) break;
+      out.push(d);
+    }
+    return out;
+  }
   const [y, m, d] = start.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   const dow = date.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
   const daysRemaining = dow === 0 ? 0 : 7 - dow;
-  const out: string[] = [];
   for (let i = 0; i <= daysRemaining; i++) {
     out.push(ymdAddDays(start, i));
   }
@@ -191,16 +204,17 @@ async function optimizeOneDay(
 
 /**
  * Run the lineup optimizer for every day from `start` through the end of
- * the current fantasy week (Sunday). Each day is fetched, optimized, and
- * saved sequentially so we don't burn through Yahoo's rate limit in
- * parallel and so a partial failure produces a clean per-day report.
+ * the current fantasy week (`deps.weekEnd`, else next Sunday). Each day is
+ * fetched, optimized, and saved sequentially so we don't burn through
+ * Yahoo's rate limit in parallel and so a partial failure produces a clean
+ * per-day report.
  */
 export async function optimizeWeek(
   start: string,
   deps: OptimizeWeekDeps,
   onProgress?: (date: string, index: number, total: number) => void,
 ): Promise<OptimizeWeekResult> {
-  const dates = datesThroughEndOfWeek(start);
+  const dates = datesThroughEndOfWeek(start, deps.weekEnd);
   const results: DayResult[] = [];
   for (let i = 0; i < dates.length; i++) {
     const date = dates[i];

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getScoringProfile, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getScoringProfile, getWeekBounds, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { analyzePointsTeam } from '@/lib/points/analyzeTeam';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
 
@@ -34,14 +34,18 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: `League ${leagueKey} is ${profile.mode}, not points` }, { status: 400 });
     }
 
+    // Real matchup-week bounds (Yahoo game_weeks) — the window is 7 days
+    // normally, up to 14 in the combined all-star week.
+    const weekBounds = await getWeekBounds(user.id, leagueKey);
+
     // Cache the assembled analysis so the dashboard / roster / lineup-pitchers
     // tab don't each re-run the full pipeline. Semi-dynamic (5 min): roster +
     // FA pool shift with transactions; the optimize-week route busts this key
     // after it writes a lineup. Per-user-scoped via the team key.
     const analysis = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}:${weekBounds?.end ?? 'legacy'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
-      () => analyzePointsTeam(user.id, leagueKey, teamKey, profile, { week }),
+      () => analyzePointsTeam(user.id, leagueKey, teamKey, profile, { week, weekBounds }),
     );
     return NextResponse.json({ leagueKey, teamKey, scoringType, ...analysis });
   } catch (error) {

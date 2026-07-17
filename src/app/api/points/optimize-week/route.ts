@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getScoringProfile, getLineupCadence, getEarliestPlayableDate, invalidateCachePattern, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getScoringProfile, getLineupCadence, getEarliestPlayableDate, getWeekBounds, invalidateCachePattern, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { optimizePointsWeek, optimizePointsWeekly } from '@/lib/points/optimizeWeek';
 
 /**
@@ -35,12 +35,15 @@ export async function POST(request: Request) {
     }
 
     const cadence = await getLineupCadence(user.id, leagueKey);
+    // Real matchup-week bounds (Yahoo game_weeks) so the write window covers
+    // the full week — up to 14 days in the combined all-star week.
+    const weekBounds = await getWeekBounds(user.id, leagueKey);
     // Daily writes start at the first editable day (edit_key): today for an
     // immediate league, tomorrow for a next-day league (today is locked, so
     // writing it would be rejected).
     const result = cadence === 'weekly'
-      ? await optimizePointsWeekly(user.id, leagueKey, teamKey, profile)
-      : await optimizePointsWeek(user.id, leagueKey, teamKey, profile, await getEarliestPlayableDate(user.id, leagueKey));
+      ? await optimizePointsWeekly(user.id, leagueKey, teamKey, profile, weekBounds)
+      : await optimizePointsWeek(user.id, leagueKey, teamKey, profile, await getEarliestPlayableDate(user.id, leagueKey), weekBounds);
 
     // The week's lineups changed → drop the cached team analysis so the
     // dashboard / roster / pitchers tab reflect the new lineup immediately.

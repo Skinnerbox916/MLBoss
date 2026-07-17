@@ -21,7 +21,7 @@ import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
-import { getWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
+import { getWeekDays, type WeekBounds, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 import type { EnrichedGame } from '@/lib/mlb/types';
@@ -138,10 +138,11 @@ export async function analyzePointsTeam(
   leagueKey: string,
   teamKey: string,
   profile: ScoringProfile,
-  opts: { week?: WeekTarget; includeFA?: boolean } = {},
+  opts: { week?: WeekTarget; includeFA?: boolean; weekBounds?: WeekBounds } = {},
 ): Promise<PointsTeamAnalysis> {
   const week: WeekTarget = opts.week ?? 'current';
   const includeFA = opts.includeFA ?? true;
+  const weekBounds = opts.weekBounds;
 
   const today = new Date().toISOString().slice(0, 10);
   const roster = await getTeamRosterByDate(userId, teamKey, today);
@@ -195,8 +196,9 @@ export async function analyzePointsTeam(
 
   const key = (name: string, team: string) => `${name.toLowerCase()}|${team.toLowerCase()}`;
 
-  // Schedule for the horizon.
-  const days = getWeekDays(new Date(), week);
+  // Schedule for the horizon — Yahoo's real week calendar when bounds are
+  // supplied (up to 14 days in the combined all-star week).
+  const days = getWeekDays(new Date(), week, weekBounds);
   const remaining = days.filter(d => d.isRemaining);
   const gameDayResults = await Promise.all(remaining.map(d => getGameDay(d.date)));
   const gamesByDate = new Map<string, EnrichedGame[]>();

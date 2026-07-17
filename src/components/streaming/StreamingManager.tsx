@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import Tabs from '@/components/ui/Tabs';
 import { Heading } from '@/components/typography';
-import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
+import { useFantasyContext, weekBoundsForLeague } from '@/lib/hooks/useFantasyContext';
 import { useGameDay } from '@/lib/hooks/useGameDay';
 import { useAvailablePitchers } from '@/lib/hooks/useAvailablePitchers';
 import { useAvailableBatters } from '@/lib/hooks/useAvailableBatters';
@@ -18,7 +18,7 @@ import { useWeekBatterScores } from '@/lib/hooks/useWeekBatterScores';
 import { useWeekPitcherScores } from '@/lib/hooks/useWeekPitcherScores';
 import { useSlotAwareStreaming } from '@/lib/hooks/useSlotAwareStreaming';
 import { useLeagueLimits } from '@/lib/hooks/useLeagueLimits';
-import { getStreamingGridDays, getStreamingWeekTarget, resolveEarliestPlayableDate } from '@/lib/dashboard/weekRange';
+import { getStreamingGridDays, getStreamingWeekTarget, resolveEarliestPlayableDate, weekRangeLabel } from '@/lib/dashboard/weekRange';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
 import { moveTimingForDeadline } from '@/lib/fantasy/scoringMode';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
@@ -55,11 +55,14 @@ function faShouldShow(p: FreeAgentPlayer): boolean {
  * scoreboard) while the batter tab's come from `useCorrectedMatchupAnalysis`
  * (live scoreboard + forward projection — see plan doc).
  *
- * On Sunday the entire upper UI flips to `targetWeek: 'next'` (see
- * `isSundayPivot`). The current matchup is effectively closed for
- * streaming — any pickup lands on next week's roster — so the chase/hold/
- * punt, volume-gap, and opponent surfaces describe next week. Date strip
- * and per-FA scores already aim at next Mon-Sun via `getStreamingGridDays`.
+ * On the matchup week's closing day the entire upper UI flips to
+ * `targetWeek: 'next'` (see `getStreamingWeekTarget`). The current matchup
+ * is effectively closed for streaming — any pickup lands on next week's
+ * roster — so the chase/hold/punt, volume-gap, and opponent surfaces
+ * describe next week. Date strip and per-FA scores already aim at the next
+ * matchup week via `getStreamingGridDays`. The closing day comes from
+ * Yahoo's real week calendar (`WeekBounds`) — a mid-span Sunday inside the
+ * combined all-star week does NOT pivot.
  */
 export default function StreamingManager() {
   const { context, leagueKey, teamKey, isLoading: ctxLoading, isError: ctxError } = useFantasyContext();
@@ -70,19 +73,24 @@ export default function StreamingManager() {
   // `weekly_deadline`-derived timing. This floors the pickup window and picks
   // the matchup to frame.
   const activeLeague = context?.leagues.find(l => l.league_key === leagueKey);
+  // Real matchup-week bounds (Yahoo game_weeks) — the window is 7 days
+  // normally, up to 14 in the combined all-star week.
+  const weekBounds = useMemo(() => weekBoundsForLeague(activeLeague), [activeLeague]);
   const earliestPlayableDate = useMemo(
-    () => resolveEarliestPlayableDate({ editKey: activeLeague?.edit_key, weeklyDeadline: activeLeague?.weekly_deadline }),
-    [activeLeague?.edit_key, activeLeague?.weekly_deadline],
+    () => resolveEarliestPlayableDate({ editKey: activeLeague?.edit_key, weeklyDeadline: activeLeague?.weekly_deadline, bounds: weekBounds }),
+    [activeLeague?.edit_key, activeLeague?.weekly_deadline, weekBounds],
   );
   const moveTiming = moveTimingForDeadline(activeLeague?.weekly_deadline);
 
   // The matchup we frame follows the pickup floor: a next-day league still
-  // pivots to next week on Sunday (floor = Monday); an immediate league whose
-  // Sunday pickup still plays Sunday stays on the current matchup.
+  // pivots to next week on the closing day (floor = next week's first day);
+  // an immediate league whose closing-day pickup still plays that day stays
+  // on the current matchup.
   const targetWeek: WeekTarget = useMemo(
-    () => getStreamingWeekTarget(new Date(), earliestPlayableDate),
-    [earliestPlayableDate],
+    () => getStreamingWeekTarget(new Date(), earliestPlayableDate, weekBounds),
+    [earliestPlayableDate, weekBounds],
   );
+  const weekLabel = weekRangeLabel(weekBounds, targetWeek);
 
   // ----- Shared inputs (used by either tab) -----------------------------
   const { categories: leagueCategories } = useLeagueCategories(leagueKey);
@@ -148,7 +156,7 @@ export default function StreamingManager() {
   // tomorrow's slate just lose their opp-side adjustment (forecast
   // degrades gracefully to neutral). Acceptable trade for the simpler
   // wiring; revisit if the gap matters.
-  const tomorrowDate = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate)[0]?.date, [earliestPlayableDate]);
+  const tomorrowDate = useMemo(() => getStreamingGridDays(new Date(), earliestPlayableDate, weekBounds)[0]?.date, [earliestPlayableDate, weekBounds]);
   const { games: tomorrowGames } = useGameDay(tomorrowDate);
   const opposingTeamIds = useMemo(() => {
     const ids = new Set<number>();
@@ -161,7 +169,7 @@ export default function StreamingManager() {
   const { teams: teamOffense } = useTeamOffense(opposingTeamIds);
 
   const { scored: pitcherWeekScores, days: pitcherPickupDays, isLoading: pitcherScoresLoading } =
-    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, teamOffense, pitcherCategoryWeights, earliestPlayableDate);
+    useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, teamOffense, pitcherCategoryWeights, earliestPlayableDate, weekBounds);
 
   // ----- Batter tab inputs ---------------------------------------------
   const { batters: batterFAs, isLoading: batterFaLoading } = useAvailableBatters(leagueKey, true);
@@ -201,7 +209,7 @@ export default function StreamingManager() {
   // Mon-Sun on Sunday — so today is automatically excluded from value
   // calculations.
   const { scored: batterFAScores, days: pickupDays, isLoading: batterScoresLoading } =
-    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterCategoryWeights, earliestPlayableDate);
+    useWeekBatterScores(filteredBatterFAs, scoredBatterCategories, batterCategoryWeights, earliestPlayableDate, weekBounds);
 
   // Slot-aware streaming value: per-day assignStarters with and without
   // each FA. Captures position competition, multi-step rebalancing, and
@@ -215,8 +223,8 @@ export default function StreamingManager() {
   );
 
   const pitcherHelper = targetWeek === 'next'
-    ? 'Sunday picks land on next week\'s matchup — week-aggregate scores reflect Mon-Sun coverage.'
-    : 'Multi-day window: rankings reward two-start pitchers when matchups favor it. MLB probables thin out past D+3.';
+    ? 'Picks made now land on next week\'s matchup — week-aggregate scores reflect full-week coverage.'
+    : 'Multi-day window: rankings reward multi-start pitchers when matchups favor it. MLB probables thin out past D+3.';
 
   // When a pickup made now first takes effect — sets expectations for whether
   // today's column is actionable. Driven by the league's Yahoo roster-change
@@ -280,6 +288,7 @@ export default function StreamingManager() {
             side="pitching"
             opponentName={opponentName}
             targetWeek={targetWeek}
+            weekLabel={weekLabel}
             categoryWeights={pitcherCategoryWeights}
             isConceded={pitcherIsConceded}
             isAutoConceded={pitcherIsAutoConceded}
@@ -307,6 +316,7 @@ export default function StreamingManager() {
             side="batting"
             opponentName={opponentName}
             targetWeek={targetWeek}
+            weekLabel={weekLabel}
             actionableDays={pickupDays.length}
             dailyBaselines={slotAware.dailyBaselines}
             categoryWeights={batterCategoryWeights}

@@ -39,7 +39,21 @@ Don't reintroduce:
 
 Still unmodeled after this change: HLD (needs a holds field on `PitcherOverallLine` plus the same appearance-rate treatment), and SV on the L4 schedule-aware path (`projectRelieverPlayer` in `pitcherTeam.ts` still leaves SV at 0, so weekly matchup surfaces — Boss Card, GamePlanPanel corrected margins — don't project saves; `CORRECTED_COUNTING_SCALE` already carries an SV weight for whenever that lands).
 
-## 2026-07 — Points /streaming rebuilt around the unified week-moves board
+## 2026-07 — Local Mon–Sun week math replaced by Yahoo's game_weeks calendar
+
+Every week window in the app used to be derived client/server-locally from "now" assuming Mon–Sun 7-day weeks: `weekRange.ts` built weeks with a `for i<7` loop off a computed Monday, pivoted on `getDay()===0`, and the engines hardcoded `/7` (`analyzeMatchup` week progress, `correctedRows` remaining-volume fallbacks, `sitValue` AVG confidence) and "stop at next Sunday" (`datesThroughEndOfWeek`). The assumption was even documented as safe in the old `weekRange.ts` docblock.
+
+It isn't: Yahoo's calendar has a short week 1 and merges the all-star break into one ~14-day matchup week (2026 week 17 = Jul 13–26). Mid-week-17 the old math read the matchup as finished at day 7, streaming boards couldn't see the back half of the week, and the mid-span Sunday falsely pivoted the streaming page to a "next week" that didn't exist yet.
+
+Replaced by the `WeekBounds` substrate: Yahoo's `game_weeks` fetched once per season (static tier), resolved per league, threaded through every `weekRange` helper and week-length-sensitive engine as an explicit parameter, with the legacy Mon–Sun derivation kept **only** as the no-bounds fallback. Canonical write-up: [data-architecture.md#matchup-week-calendar](./data-architecture.md#matchup-week-calendar).
+
+Decisions an LLM would otherwise re-litigate:
+
+- **Don't re-introduce local week math.** Any new "days this week" / "days remaining" / "next Monday" computation must take `WeekBounds` (client: `useLeagueWeekBounds`; server: `getWeekBounds`) — the Mon–Sun path in `weekRange.ts` exists solely as the loading/failure fallback.
+- **`isSundayPivot` was deleted.** The pivot is floor-vs-`week_end` (`getStreamingWeekTarget`), never a day-of-week check.
+- **Fixed hook fan-outs sized to 14.** `useWeekBatterScores` / `useWeekPitcherScores` / `useWeekProbables` mount exactly fourteen `useGameDay` slots (React hook-order rule; extra slots get `undefined` and skip fetching). Don't shrink them back to 7.
+- **`buildReliefWeekForecast`'s `days/7` stays.** That's a per-week *rate* applied to a window; only its clamp widened (7→14). Same for `points/schedule.ts` `horizonFraction`.
+- **The season's final week has no next week.** `nextStart`/`nextEnd` are null; next-week windows come back empty and the streaming target stays `current`. Don't "fix" that by synthesizing week 27.
 
 The points streaming page was two separate ranked boards (FA pitcher streams, FA batter plugs) under a display-only week-plan header. Rebuilt around the owner's framing — "I have N moves left this week, what's the best way to spend them?" — as one value-sorted board of net add/drop moves (`weekMoves.ts`, client-side over new streaming facts) with a moves-budget header and a session plan. The old boards survive below as browse sections. Detail: [points-leagues.md#week-moves](./points-leagues.md#week-moves).
 

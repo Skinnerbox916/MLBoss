@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useGameDay, type EnrichedGame } from './useGameDay';
 import { useRoster } from './useRoster';
 import { matchProbableStarts, type MatchedProbable } from '@/lib/pitching/probableMatch';
-import { getMatchupWeekDays, type WeekDay } from '@/lib/dashboard/weekRange';
+import { getMatchupWeekDays, type WeekBounds, type WeekDay } from '@/lib/dashboard/weekRange';
 
 export interface DayProbables {
   /** Pre-computed week-day metadata (date, label, today flag, etc.). */
@@ -12,7 +12,7 @@ export interface DayProbables {
 }
 
 interface UseWeekProbablesResult {
-  /** Mon..Sun, exactly seven entries. */
+  /** Every day of the matchup week — 7 normally, up to 14 in a combined week. */
   days: WeekDay[];
   /** Per-day matched probables for the user's roster. */
   myStarts: DayProbables[];
@@ -27,19 +27,22 @@ interface UseWeekProbablesResult {
 /**
  * Multi-day probable-pitcher runway for the current matchup week.
  *
- * Fetches each of the seven matchup-week days (Mon..Sun) in parallel via
- * `useGameDay`, then matches each rostered pitcher to a probable start on
- * any day where their MLB team plays. Surfaces both per-day breakdowns
- * (for the day-strip rendering) and a single "starts remaining" count.
+ * Fetches each matchup-week day in parallel via `useGameDay`, then matches
+ * each rostered pitcher to a probable start on any day where their MLB team
+ * plays. Surfaces both per-day breakdowns (for the day-strip rendering) and
+ * a single "starts remaining" count.
  *
- * Hook count is stable: we always call `useGameDay` exactly seven times,
- * one per matchup-week day, so React's hook-order rule is satisfied.
+ * Hook count is stable: we always call `useGameDay` exactly fourteen times
+ * (the longest possible matchup week — the combined all-star week), so
+ * React's hook-order rule is satisfied; slots past the real week length get
+ * `undefined` and skip their fetch.
  */
 export function useWeekProbables(
   myTeamKey: string | undefined,
   opponentTeamKey: string | undefined,
+  weekBounds?: WeekBounds,
 ): UseWeekProbablesResult {
-  const days = useMemo(() => getMatchupWeekDays(), []);
+  const days = useMemo(() => getMatchupWeekDays(new Date(), weekBounds), [weekBounds]);
 
   // Roster as of the LAST remaining day of the matchup week — captures
   // pickups effective for upcoming starts that aren't on today's roster
@@ -54,7 +57,7 @@ export function useWeekProbables(
   const { roster: myRoster, isLoading: myRosterLoading } = useRoster(myTeamKey, rosterDate);
   const { roster: oppRoster, isLoading: oppRosterLoading } = useRoster(opponentTeamKey, rosterDate);
 
-  // Stable hook order: seven calls, one per Mon..Sun day.
+  // Stable hook order: fourteen calls, one per possible matchup-week day.
   const day0 = useGameDay(days[0]?.date);
   const day1 = useGameDay(days[1]?.date);
   const day2 = useGameDay(days[2]?.date);
@@ -62,7 +65,14 @@ export function useWeekProbables(
   const day4 = useGameDay(days[4]?.date);
   const day5 = useGameDay(days[5]?.date);
   const day6 = useGameDay(days[6]?.date);
-  const dayResults = [day0, day1, day2, day3, day4, day5, day6];
+  const day7 = useGameDay(days[7]?.date);
+  const day8 = useGameDay(days[8]?.date);
+  const day9 = useGameDay(days[9]?.date);
+  const day10 = useGameDay(days[10]?.date);
+  const day11 = useGameDay(days[11]?.date);
+  const day12 = useGameDay(days[12]?.date);
+  const day13 = useGameDay(days[13]?.date);
+  const dayResults = [day0, day1, day2, day3, day4, day5, day6, day7, day8, day9, day10, day11, day12, day13];
 
   const isLoading =
     myRosterLoading ||
@@ -78,21 +88,21 @@ export function useWeekProbables(
   const myStarts: DayProbables[] = useMemo(
     () =>
       days.map((day, i): DayProbables => {
-        const games = dayResults[i].games as EnrichedGame[];
+        const games = (dayResults[i]?.games ?? []) as EnrichedGame[];
         return { day, starts: matchProbableStarts(myRoster, games) };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [days, myRoster, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games],
+    [days, myRoster, ...dayResults.map(d => d.games)],
   );
 
   const oppStarts: DayProbables[] = useMemo(
     () =>
       days.map((day, i): DayProbables => {
-        const games = dayResults[i].games as EnrichedGame[];
+        const games = (dayResults[i]?.games ?? []) as EnrichedGame[];
         return { day, starts: matchProbableStarts(oppRoster, games) };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [days, oppRoster, day0.games, day1.games, day2.games, day3.games, day4.games, day5.games, day6.games],
+    [days, oppRoster, ...dayResults.map(d => d.games)],
   );
 
   // "Remaining" excludes past days entirely (they're informational only)

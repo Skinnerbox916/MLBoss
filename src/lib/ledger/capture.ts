@@ -1,7 +1,10 @@
 import { getDb, forecastSnapshots } from '@/lib/db';
 import { buildGameForecast } from '@/lib/pitching/forecast';
 import { getTeamOffense } from '@/lib/mlb/teams';
+import { getRosterSeasonStats } from '@/lib/mlb/players';
+import { projectBatterPlayer, type ActiveBatter, type ProjectionDeps } from '@/lib/projection/batterTeam';
 import type { EnrichedGame } from '@/lib/mlb/types';
+import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { PointsStreamingAnalysis } from '@/lib/points/streaming';
 import { MODEL_VERSION } from './modelVersion';
 
@@ -17,7 +20,11 @@ import { MODEL_VERSION } from './modelVersion';
  * product surfaces use — capture never re-implements forecast math.
  */
 
-export type ForecastEngine = 'pitcher-start' | 'points-pitcher-start' | 'points-batter-day';
+export type ForecastEngine =
+  | 'pitcher-start'
+  | 'batter-day'
+  | 'points-pitcher-start'
+  | 'points-batter-day';
 
 export interface SnapshotRow {
   gameDate: string; // YYYY-MM-DD
@@ -127,6 +134,108 @@ export async function capturePitcherSlate(
 }
 
 // ---------------------------------------------------------------------------
+// Engine: batter-day — every batter in a posted lineup, league-free
+// ---------------------------------------------------------------------------
+
+/**
+ * League-free capture vocabulary for the batter engine: the counting cats
+ * the L2/L3 batter path supports and an actual game line can grade.
+ * (AVG and HBP are derivable from the same graded counts at read time.)
+ */
+const BATTER_CAPTURE_CATS: EnrichedLeagueStatCategory[] = ([
+  [7, 'Runs', 'R'], [8, 'Hits', 'H'], [10, 'Doubles', '2B'], [11, 'Triples', '3B'],
+  [12, 'Home Runs', 'HR'], [13, 'Runs Batted In', 'RBI'], [16, 'Stolen Bases', 'SB'],
+  [18, 'Walks', 'BB'], [21, 'Strikeouts', 'K'], [23, 'Total Bases', 'TB'],
+] as const).map(([stat_id, name, display_name]) => ({
+  stat_id, name, display_name, betterIs: 'higher' as const,
+  position_types: ['B'], is_batter_stat: true, is_pitcher_stat: false, sort_order: '1',
+}));
+
+/** predicted-key ↔ statId mapping, shared with the scorecard's grading. */
+export const BATTER_STAT_KEYS: [string, number][] = [
+  ['r', 7], ['h', 8], ['doubles', 10], ['triples', 11], ['hr', 12],
+  ['rbi', 13], ['sb', 16], ['bb', 18], ['k', 21], ['tb', 23],
+];
+
+/**
+ * Snapshot the canonical batter day projection (`projectBatterPlayer` —
+ * L2 forecast × lineup-spot PA model) for every batter in a POSTED
+ * lineup on the slate. Posted-only keeps the sample honest: the engine
+ * is graded on days it knew who was playing, and a batter who then
+ * doesn't play is a real forecast miss (late scratch), not noise.
+ * ~200–300 snapshots per full slate.
+ */
+export async function captureBatterSlate(
+  gameDate: string,
+  games: EnrichedGame[],
+): Promise<number> {
+  const byMlbId = new Map<number, ActiveBatter>();
+  for (const game of games) {
+    if (!PREGAME_STATUSES.has(game.status)) continue;
+    for (const isHome of [true, false]) {
+      const lineup = isHome ? game.homeLineup : game.awayLineup;
+      const team = isHome ? game.homeTeam : game.awayTeam;
+      for (const entry of lineup) {
+        if (entry.mlbId > 0 && !byMlbId.has(entry.mlbId)) {
+          byMlbId.set(entry.mlbId, {
+            mlbId: entry.mlbId,
+            name: entry.fullName,
+            teamAbbr: team.abbreviation,
+          });
+        }
+      }
+    }
+  }
+  if (byMlbId.size === 0) return 0;
+
+  const batters = [...byMlbId.values()];
+  const statsRecord = await getRosterSeasonStats(
+    batters.map(b => ({ name: b.name, team: b.teamAbbr })),
+  );
+  const statsByMlbId = new Map(
+    Object.values(statsRecord).filter(s => s.mlbId > 0).map(s => [s.mlbId, s]),
+  );
+
+  const deps: ProjectionDeps = {
+    days: [{ date: gameDate, dayLabel: '', dayName: '', isRemaining: true, isToday: gameDate === todayEt() }],
+    statsByMlbId,
+    gamesByDate: new Map([[gameDate, games]]),
+    scoredCategories: BATTER_CAPTURE_CATS,
+    lineupSpots: new Map(),
+  };
+
+  const rows: SnapshotRow[] = [];
+  for (const batter of batters) {
+    if (!statsByMlbId.has(batter.mlbId)) continue;
+    const proj = projectBatterPlayer(batter, deps);
+    const day = proj.perDay[0];
+    if (!day?.hasGame || day.expectedPA <= 0 || !day.rating) continue;
+    const predicted: Record<string, number> = {
+      pa: day.expectedPA,
+      score: day.rating.score,
+    };
+    for (const [key, statId] of BATTER_STAT_KEYS) {
+      const cat = proj.byCategory.get(statId);
+      if (cat) predicted[key] = cat.expectedCount;
+    }
+    rows.push({
+      gameDate,
+      engine: 'batter-day',
+      mlbId: batter.mlbId,
+      playerName: batter.name,
+      predicted,
+      context: {
+        teamAbbr: batter.teamAbbr,
+        spot: day.spotUsed,
+        spotSource: day.spotSource,
+        doubleHeader: day.doubleHeader,
+      },
+    });
+  }
+  return insertSnapshots(rows);
+}
+
+// ---------------------------------------------------------------------------
 // Fire-and-forget wrappers for request-path write-through
 // ---------------------------------------------------------------------------
 
@@ -148,6 +257,21 @@ export function capturePitcherSlateInBackground(gameDate: string, games: Enriche
   const lead = leadDaysFor(gameDate);
   if (lead < 0) return;
   inBackground(`pitcher-start:${gameDate}:${lead}`, () => capturePitcherSlate(gameDate, games));
+}
+
+export function captureBatterSlateInBackground(gameDate: string, games: EnrichedGame[]): void {
+  const lead = leadDaysFor(gameDate);
+  if (lead < 0) return;
+  // Lineups post progressively through the day; keying the memo on how
+  // many pregame games have one lets capture re-run as new lineups land
+  // (already-captured batters dedupe on the unique index).
+  const lineupsPosted = games.filter(
+    g => PREGAME_STATUSES.has(g.status) && (g.homeLineup.length > 0 || g.awayLineup.length > 0),
+  ).length;
+  if (lineupsPosted === 0) return;
+  inBackground(`batter-day:${gameDate}:${lead}:${lineupsPosted}`, () =>
+    captureBatterSlate(gameDate, games),
+  );
 }
 
 // ---------------------------------------------------------------------------

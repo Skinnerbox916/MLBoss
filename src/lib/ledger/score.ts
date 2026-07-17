@@ -19,7 +19,7 @@ import { todayEt } from './capture';
 type Side = 'pit' | 'bat';
 
 function sideOf(engine: string): Side {
-  return engine === 'points-batter-day' ? 'bat' : 'pit';
+  return engine.includes('batter') ? 'bat' : 'pit';
 }
 
 export interface ScoreRunResult {

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireOperator } from '@/lib/auth';
 import { buildScorecard, type ForecastEngine } from '@/lib/ledger';
 
-const ENGINES: ForecastEngine[] = ['pitcher-start', 'points-pitcher-start', 'points-batter-day'];
+const ENGINES: ForecastEngine[] = ['pitcher-start', 'batter-day', 'points-pitcher-start', 'points-batter-day'];
 
 /**
  * GET /api/admin/forecast/scorecard?engine=...&from=YYYY-MM-DD&to=YYYY-MM-DD

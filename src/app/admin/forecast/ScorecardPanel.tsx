@@ -10,8 +10,18 @@ interface ScorecardResponse {
 
 const ENGINE_LABEL: Record<string, string> = {
   'pitcher-start': 'Pitcher starts (L2 game forecast, league-free)',
+  'batter-day': 'Batter days (L2 forecast × lineup PA, league-free)',
   'points-pitcher-start': 'Points — pitcher starts',
   'points-batter-day': 'Points — batter days',
+};
+
+/** Where each engine's snapshots come from — shown for engines with no
+ *  data yet so an empty card explains itself. */
+const ENGINE_SOURCE: Record<string, string> = {
+  'pitcher-start': 'game-day slate traffic (lineup/streaming pages) or Capture button — every probable starter',
+  'batter-day': 'game-day slate traffic or Capture button — every batter in a posted MLB lineup',
+  'points-pitcher-start': 'opening the points /streaming page — priced FA + rostered starts with board rank',
+  'points-batter-day': 'opening the points /streaming page — per-batter day values',
 };
 
 export default function ScorecardPanel() {
@@ -71,11 +81,17 @@ export default function ScorecardPanel() {
 
       {loading && <Text variant="caption">Loading…</Text>}
       {error && <Text variant="caption" className="text-error-600">{error}</Text>}
-      {data && data.engines.length === 0 && (
-        <Text variant="caption">No snapshots yet — capture a slate or browse the streaming pages.</Text>
-      )}
 
       {data?.engines.map(card => <EngineCard key={card.engine} card={card} />)}
+
+      {data && Object.keys(ENGINE_LABEL)
+        .filter(engine => !data.engines.some(c => c.engine === engine))
+        .map(engine => (
+          <div key={engine} className="bg-surface rounded-lg border border-border border-dashed p-5">
+            <Heading as="h3">{ENGINE_LABEL[engine]}</Heading>
+            <Text variant="caption">No snapshots yet · captures from {ENGINE_SOURCE[engine]}</Text>
+          </div>
+        ))}
     </div>
   );
 }
@@ -103,6 +119,12 @@ function EngineCard({ card }: { card: EngineScorecard }) {
         </Text>
       </div>
 
+      {card.graded === 0 ? (
+        <Text variant="caption">
+          Nothing graded yet — grades appear after the game dates pass and &ldquo;Score pending actuals&rdquo; runs.
+        </Text>
+      ) : (
+      <>
       <StatTable title="Bias / MAE" stats={card.stats} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -156,28 +178,32 @@ function EngineCard({ card }: { card: EngineScorecard }) {
       )}
 
       {card.worstMisses && card.worstMisses.length > 0 && (
-        <Section title="Largest per-player misses (≥3 starts)">
+        <Section title="Largest per-player misses">
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="text-left border-b border-border">
                 <th className="py-1 pr-4 font-normal">Player</th>
-                <th className="py-1 pr-4 font-normal">Starts</th>
-                <th className="py-1 pr-4 font-normal">K bias</th>
-                <th className="py-1 pr-4 font-normal">ER bias</th>
+                <th className="py-1 pr-4 font-normal">n</th>
+                {card.worstMisses[0].biases.map(b => (
+                  <th key={b.stat} className="py-1 pr-4 font-normal uppercase">{b.stat} bias</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {card.worstMisses.map(m => (
                 <tr key={m.mlbId} className="border-b border-border/40">
                   <td className="py-1 pr-4">{m.playerName}</td>
-                  <td className="py-1 pr-4">{m.starts}</td>
-                  <td className="py-1 pr-4">{fmtSigned(m.kBias)}</td>
-                  <td className="py-1 pr-4">{fmtSigned(m.erBias)}</td>
+                  <td className="py-1 pr-4">{m.n}</td>
+                  {m.biases.map(b => (
+                    <td key={b.stat} className="py-1 pr-4">{fmtSigned(b.bias)}</td>
+                  ))}
                 </tr>
               ))}
             </tbody>
           </table>
         </Section>
+      )}
+      </>
       )}
     </div>
   );

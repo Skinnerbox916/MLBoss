@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireOperator } from '@/lib/auth';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
-import { capturePitcherSlate, todayEt } from '@/lib/ledger';
+import { capturePitcherSlate, captureBatterSlate, todayEt } from '@/lib/ledger';
 
 /**
  * POST /api/admin/forecast/capture?date=YYYY-MM-DD
@@ -26,8 +26,11 @@ export async function POST(request: Request) {
       ...game,
       park: getParkByVenueId(game.venue.mlbId) ?? null,
     }));
-    const inserted = await capturePitcherSlate(date, enriched);
-    return NextResponse.json({ date, games: enriched.length, snapshotsInserted: inserted });
+    const [pitcherStarts, batterDays] = await Promise.all([
+      capturePitcherSlate(date, enriched),
+      captureBatterSlate(date, enriched),
+    ]);
+    return NextResponse.json({ date, games: enriched.length, pitcherStarts, batterDays });
   } catch (error) {
     console.error('/api/admin/forecast/capture failed:', error);
     return NextResponse.json(

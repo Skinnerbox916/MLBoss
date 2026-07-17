@@ -4,11 +4,14 @@
 export {
   capturePitcherSlate,
   capturePitcherSlateInBackground,
+  captureBatterSlate,
+  captureBatterSlateInBackground,
   capturePointsInBackground,
   pointsSnapshotRows,
   insertSnapshots,
   leadDaysFor,
   todayEt,
+  BATTER_STAT_KEYS,
 } from './capture';
 export type { ForecastEngine, SnapshotRow } from './capture';
 

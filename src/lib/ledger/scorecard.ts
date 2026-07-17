@@ -37,9 +37,8 @@ export interface CalibrationBucket {
 export interface PlayerMiss {
   mlbId: number;
   playerName: string;
-  starts: number;
-  kBias: number;
-  erBias: number;
+  n: number;
+  biases: { stat: string; bias: number }[];
 }
 
 export interface RankBucket {
@@ -126,17 +125,52 @@ function calibrate(rows: { p: number; hit: boolean }[]): CalibrationBucket[] {
   return out;
 }
 
-/** Per-stat (predicted key → actual line key) pairs graded for pitcher-start. */
-const PITCHER_STATS: [string, string][] = [
-  ['ip', 'ip'], ['k', 'k'], ['bb', 'bb'], ['er', 'er'], ['h', 'h'], ['hr', 'hr'],
-];
+/** Per-stat predicted/actual keys graded for the raw stat-line engines
+ *  (predicted keys and materialized actual-line keys are aligned by
+ *  construction — see capture.ts and score.ts). */
+const PITCHER_STATS = ['ip', 'k', 'bb', 'er', 'h', 'hr'];
+const BATTER_STATS = ['pa', 'h', 'r', 'hr', 'rbi', 'sb', 'bb', 'k', 'tb', 'doubles', 'triples'];
 
 const isQs = (p: Record<string, number>) => (p.outs ?? 0) >= 18 && (p.er ?? 0) <= 3;
 
-function pitcherStatGrades(rows: JoinedRow[]): StatGrade[] {
-  return PITCHER_STATS.map(([pk, ak]) =>
-    gradeStat(rows.map(r => ({ pred: r.predicted[pk] ?? 0, actual: r.pitching![ak] ?? 0 })), pk),
+function lineStatGrades(rows: JoinedRow[], stats: string[], side: 'pit' | 'bat'): StatGrade[] {
+  return stats.map(stat =>
+    gradeStat(
+      rows.map(r => {
+        const line = (side === 'pit' ? r.pitching : r.batting)!;
+        return { pred: r.predicted[stat] ?? 0, actual: line[stat] ?? 0 };
+      }),
+      stat,
+    ),
   );
+}
+
+/** Per-player systematic misses over the graded rows (≥minN appearances). */
+function playerMisses(rows: JoinedRow[], stats: string[], side: 'pit' | 'bat', minN: number): PlayerMiss[] {
+  const byPlayer = new Map<number, JoinedRow[]>();
+  for (const r of rows) byPlayer.set(r.mlbId, [...(byPlayer.get(r.mlbId) ?? []), r]);
+  return [...byPlayer.entries()]
+    .filter(([, rs]) => rs.length >= minN)
+    .map(([mlbId, rs]) => ({
+      mlbId,
+      playerName: rs[0].playerName,
+      n: rs.length,
+      biases: stats.map(stat => ({
+        stat,
+        bias: round(
+          rs.reduce((s, r) => {
+            const line = (side === 'pit' ? r.pitching : r.batting)!;
+            return s + ((r.predicted[stat] ?? 0) - (line[stat] ?? 0));
+          }, 0) / rs.length,
+          2,
+        ),
+      })),
+    }))
+    .sort((a, b) =>
+      b.biases.reduce((s, x) => s + Math.abs(x.bias), 0) -
+      a.biases.reduce((s, x) => s + Math.abs(x.bias), 0),
+    )
+    .slice(0, 10);
 }
 
 /**
@@ -203,17 +237,19 @@ export async function buildScorecard(
     const pendingActuals = past.filter(r => r.status === null);
     const resolved = past.filter(r => r.status !== null);
 
-    const side: 'pit' | 'bat' = engine === 'points-batter-day' ? 'bat' : 'pit';
+    const side: 'pit' | 'bat' = engine.includes('batter') ? 'bat' : 'pit';
+    const kind: 'pitcher-line' | 'batter-line' | 'points' =
+      engine === 'pitcher-start' ? 'pitcher-line'
+      : engine === 'batter-day' ? 'batter-line'
+      : 'points';
     const played = resolved.filter(r =>
       side === 'pit' ? r.pitching != null && (r.pitching.gs ?? 0) > 0 : r.batting != null,
     );
     const didNotPlay = resolved.length - played.length;
 
-    // predicted/actual value per row, per engine flavor
+    // Points engines grade one value per row: predicted vs realized points.
     let valueRows: { row: JoinedRow; pred: number; actual: number }[] = [];
-    if (engine === 'pitcher-start') {
-      valueRows = played.map(row => ({ row, pred: row.predicted.k ?? 0, actual: row.pitching!.k ?? 0 }));
-    } else {
+    if (kind === 'points') {
       valueRows = played
         .filter(row => weightsByLeague.has(row.leagueKey))
         .map(row => {
@@ -223,15 +259,14 @@ export async function buildScorecard(
         });
     }
 
-    const statGrades = engine === 'pitcher-start'
-      ? pitcherStatGrades(played)
-      : [gradeStat(valueRows.map(v => ({ pred: v.pred, actual: v.actual })), 'points')];
-
     const sliceGrades = (slice: JoinedRow[]): StatGrade[] => {
-      if (engine === 'pitcher-start') return pitcherStatGrades(slice);
+      if (kind === 'pitcher-line') return lineStatGrades(slice, PITCHER_STATS, 'pit');
+      if (kind === 'batter-line') return lineStatGrades(slice, BATTER_STATS, 'bat');
       const vs = valueRows.filter(v => slice.includes(v.row));
       return [gradeStat(vs.map(v => ({ pred: v.pred, actual: v.actual })), 'points')];
     };
+
+    const statGrades = sliceGrades(played);
 
     const byLeadDays = [...new Set(played.map(r => r.leadDays))].sort((a, b) => a - b).map(ld => {
       const slice = played.filter(r => r.leadDays === ld);
@@ -258,20 +293,12 @@ export async function buildScorecard(
     if (engine === 'pitcher-start') {
       card.qsCalibration = calibrate(played.map(r => ({ p: r.predicted.qs ?? 0, hit: isQs(r.pitching!) })));
       card.wCalibration = calibrate(played.map(r => ({ p: r.predicted.w ?? 0, hit: (r.pitching!.w ?? 0) > 0 })));
+      card.worstMisses = playerMisses(played, ['k', 'er'], 'pit', 3);
+    }
 
-      const byPlayer = new Map<number, JoinedRow[]>();
-      for (const r of played) byPlayer.set(r.mlbId, [...(byPlayer.get(r.mlbId) ?? []), r]);
-      card.worstMisses = [...byPlayer.entries()]
-        .filter(([, rs]) => rs.length >= 3)
-        .map(([mlbId, rs]) => ({
-          mlbId,
-          playerName: rs[0].playerName,
-          starts: rs.length,
-          kBias: round(rs.reduce((s, r) => s + ((r.predicted.k ?? 0) - (r.pitching!.k ?? 0)), 0) / rs.length, 2),
-          erBias: round(rs.reduce((s, r) => s + ((r.predicted.er ?? 0) - (r.pitching!.er ?? 0)), 0) / rs.length, 2),
-        }))
-        .sort((a, b) => Math.abs(b.kBias) + Math.abs(b.erBias) - (Math.abs(a.kBias) + Math.abs(a.erBias)))
-        .slice(0, 10);
+    if (engine === 'batter-day') {
+      // PA bias isolates the playing-time model; TB/K biases the rate model.
+      card.worstMisses = playerMisses(played, ['pa', 'tb', 'k'], 'bat', 5);
     }
 
     if (engine === 'points-pitcher-start') {

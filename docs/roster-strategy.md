@@ -27,7 +27,7 @@ This is the right input for a question about **roster shape**. Schedule-aware pr
 | Engine | File | What it produces |
 |---|---|---|
 | `computeLeagueForecast` | [league/forecast.ts](../src/lib/league/forecast.ts) | Per-cat per-team neutral-week projected output across the league, outlier detection, RUPM-based moves-to-target, reachable-target rank |
-| `computeCategoryLeverage` | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Per-cat leverage weight: `conceded ? 0 : pivotality(distance)`, distance = moves-from-a-winning-rank (batters) / z (pitchers, pending pitcher RUPM) |
+| `computeCategoryLeverage` | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Per-cat leverage weight: `conceded ? 0 : pivotality(distance)`, distance side-aware (RUPM moves where priced / z otherwise); auto-concede via the chase coalition (winning number + one shared move budget) |
 | `playerContributions` / `playerRosterValue` | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Per-player per-cat contributions in RUPM move units → leverage-weighted value to this team |
 | `useRosterCategoryWeights` | [hooks/useRosterCategoryWeights.ts](../src/lib/hooks/useRosterCategoryWeights.ts) | Client hook: leverage + concede/contest override store (localStorage), the L6 mirror of `useCategoryWeights` |
 | `playingTimeFactor` | [roster/playingTime.ts](../src/lib/roster/playingTime.ts) | Role share (0–1) scaling per-player weekly volume; applied server-side to value lines and RUPM inputs |
@@ -72,7 +72,11 @@ Each team's neutral-week projection is built from:
 - **Pitcher talent rates** — per-IP rates from [`pitching/talent.ts`](../src/lib/pitching/talent.ts) for K9, BB9, WHIP, ERA components.
 - **Typical-week volume** — a stable per-player assumption, **not** observed YTD pace:
   - Batter: `paPerGame × TYPICAL_GAMES_PER_WEEK` (6 games/week). `paPerGame` is the player's intrinsic per-game PA rate (`stats.pa / stats.gp`); games/week is a role-typical constant. This is deliberate — using observed YTD pace would punish IL-returned hitters and call-ups for missed time, which is precisely the YTD distortion the page exists to strip.
-  - Pitcher: role-typical workload. SP: `TYPICAL_SP_STARTS_PER_WEEK (1.2) × talent.ipPerStart`. RP: `TYPICAL_RP_IP_PER_WEEK (3.0)`. Role itself is observed (set inside `getPitcherTalentBatch` from current/prior-season GS and IP), so we condition the volume assumption on "is this pitcher actually being used as an SP / RP" — but a healthy SP and an IL-returned SP get the same starts/week projection.
+  - Pitcher: role-typical workload. SP: `TYPICAL_SP_STARTS_PER_WEEK (1.2) × talent.ipPerStart`. RP: blended per-player `ipPerAppearance × appearancesPerWeek` from the talent vector (a closer's usage differs from a mop-up arm's — that's role signal, not schedule noise), falling back to `TYPICAL_RP_IP_PER_WEEK (3.0)`. Role itself is observed (set inside `getPitcherTalentBatch` from the current/prior-season OVERALL line — starts + relief), so we condition the volume assumption on "is this pitcher actually being used as an SP / RP" — but a healthy SP and an IL-returned SP get the same starts/week projection.
+
+### Saves
+
+SV has no rating-engine window (save chances are role-driven, not per-PA skill), so the neutral-week projection models it directly: `observedSavesPerAppearance(seasonSaves, seasonGames) × appearancesPerWeek`, relievers only. The save-conversion helper lives in [`pitching/talent.ts`](../src/lib/pitching/talent.ts) beside the other observed role signals and is shared with the points rate vector, so both engines agree on who's a closer. Non-closers (below `SAVE_CLOSER_THRESHOLD` season saves) project 0 — an honest under-count for just-anointed closers until saves accrue; refine with save-opportunity data (`statSplits` carries it team-level) if that bites. Starters contribute no SV entry at all, so an SP-only roster aggregates to 0 projected saves and the SV tile lands where it should for a saves-punting team: bottom rank, auto-concede candidate. HLD is still unmodeled.
 - **Neutral context** — league-average opposition, neutral park. No park factor, no opp SP adjustment, no weather. Those belong on the day/week pages.
 - **IL players are included.** The premise: an IL player will be back to weekly production (or the team would've dropped them). Excluding them asymmetrically distorts the league forecast — a Full count without Acuña doesn't represent Full count's real SB strength. IL players are projected at full-time volume same as healthy hitters; the starting-lineup optimizer still caps each team at the league's daily capacity, so low-talent stash candidates don't displace healthy starters.
 
@@ -91,7 +95,8 @@ The result is a per-team per-cat vector that depends **only on the rosters and t
 |---|---|---|---|
 | `TYPICAL_GAMES_PER_WEEK` | [projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) | 6 | Empirical MLB pace (~6.2 games/calendar week, slightly discounted for scheduled days off). |
 | `TYPICAL_SP_STARTS_PER_WEEK` | [projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) | 1.2 | Every-5-day rotation = 1.4/week, discounted for skipped starts and 6-man cycles. |
-| `TYPICAL_RP_IP_PER_WEEK` | [projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) | 3.0 | Median across rostered RPs; high-leverage arms can be 5+, mop-up ~2. |
+| `TYPICAL_RP_IP_PER_WEEK` | [projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) | 3.0 | Fallback only (live RPs use blended per-player workload). Median across rostered RPs; high-leverage arms can be 5+, mop-up ~2. |
+| `TYPICAL_RP_APPEARANCES_PER_WEEK` | [projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) | 3.0 | Fallback companion for the SV volume when the talent vector lacks `appearancesPerWeek`. |
 | `MIN_GP_FOR_PA_RATE` | [projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) | 5 | Below this we use the league default per-game PA rate (4.1) instead of the player's noisy small-sample rate. |
 
 ## League forecast
@@ -144,15 +149,29 @@ distance(cat) = signed moves-from-a-winning-rank, scaled so the
                 reachability bar lands on the decided-boundary (0.7)
 ```
 
-- **Batter distance** is RUPM-based: rank ≤ 2 → +cushion over the best competitive team below the rank-2/3 boundary, in move units; rank > 2 → −`movesToTarget`. The scale maps `REACHABLE_GAP_MOVES` (2.0) onto pivotality distance 0.7 — the exact geometry the L5 matchup pages use for margin, so "decided" means the same thing on both horizons.
-- **Pitcher distance** is z-based (`zCompetitive / 1.5`, a continuous port of the old v1 bands) until pitcher RUPM exists.
-- **Auto-concede** = the existing unreachability rule: rank > 2 and no rank-1/2 target within `REACHABLE_GAP_MOVES`. Deliberately a higher bar than the weekly page — conceding a cat in roster construction forfeits its output all season. A cushioned lead is never auto-conceded; it stays in play at its naturally small weight.
-- **Contest** un-concedes: the cat gets its honest (usually small) pivotality weight. The math stays truthful that a 2-move gap buys little; the user stays in charge.
+- **Distance is side-aware per entry**: RUPM-based where a price exists (`rupm > 0`; batters today): rank ≤ 2 → +cushion over the best competitive team below the rank-2/3 boundary, in move units; rank > 2 → −`movesToTarget`. The scale maps `REACHABLE_GAP_MOVES` (2.0) onto pivotality distance 0.7 — the exact geometry the L5 matchup pages use for margin, so "decided" means the same thing on both horizons. Unpriced cats (pitchers, pending pitcher RUPM) use z-based distance (`zCompetitive / 1.5`, a continuous port of the old v1 bands).
+- **Auto-concede** comes from the chase coalition (below), tagged with a reason: `'unreachable'` (no winning rank buyable from here) or `'budget'` (a target exists but the shared budget went to cheaper cats). Deliberately a higher bar than the weekly page — conceding a cat in roster construction forfeits its output all season. A cushioned lead is never auto-conceded; it stays in play at its naturally small weight.
+- **Contest** un-concedes: the cat gets its honest (usually small) pivotality weight — and if it has a price, the coalition pre-funds it (see below). The math stays truthful that a 2-move gap buys little; the user stays in charge.
 - **Flat fallback** (owner decision): if every cat's weight lands ≈ 0 — everything cushioned/conceded, or the user conceded the board — weights all snap to 1 (unweighted talent value) with a visible note, so the page always ranks something. Deferred follow-up: adaptively relax `REACHABLE_GAP_MOVES` for buried teams so at least one cat stays chaseable instead of conceding the whole board.
 
 Why rank-1/2 as the winning boundary, why RUPM not z — unchanged from the forecast design: rank 1 wins ~90% of weekly H2H cat matchups, rank 2 ~80%, rank 3 ~67%; z over-punishes tight distributions (H, AVG) while RUPM prices gaps in the unit managers actually trade in (moves). See "Closeability" above.
 
-Resolution + overrides live in [`useRosterCategoryWeights`](../src/lib/hooks/useRosterCategoryWeights.ts) (localStorage `mlboss-roster-concede:{league}:{side}`; batting and pitching stay independent).
+### The chase coalition
+
+Per-cat reachability alone produces "chase everything": each cat is checked against the 2-move bar *as if it were the only chase*, so a team that's 3rd everywhere sees nine rank-1 targets whose combined price (~8 moves) no manager can pay. The mechanism that was missing is the one a smart manager applies without thinking: **you need a winning number of categories, not all of them, and every chase draws on the same move budget.**
+
+`computeCategoryLeverage` therefore takes BOTH sides' cats in one call and builds a coalition:
+
+1. **Banked** — cats already at a winning rank (≤ 2) count for free.
+2. **Ride-alongs** — unpriced (z-side) cats above the competitive middle count as winnable without spend.
+3. **Chases** — priced cats behind a reachable target, funded cheapest-first (`movesToTarget` ascending) from the single `CHASE_BUDGET_MOVES` pool. The fill extends past the budget only while the coalition is still short of the winning number (majority of all scored cats: `⌊N/2⌋+1`).
+4. Everything else **auto-concedes** — the tile caption distinguishes "out of reach" from "moves better spent," and one click contests either.
+
+User overrides participate in the arithmetic: a manual concede frees its budget for the next-cheapest cat; a manual contest on a priced cat pre-funds that chase before the engine picks, so the manager's commitments are paid for honestly. The "→ Nth" chip renders only on funded chases (`targeted`) — an in-play cat without the chip is riding its natural weight, no spend planned.
+
+Known approximation (documented, accepted for v1): chase costs are summed as if independent, but one good add often closes several correlated cats at once (R/RBI/TB travel together), so the budget slightly *understates* what's affordable. The winning-number floor absorbs most of this; the full answer is the concede-set optimizer sketched under "Concession as resource reallocation" below.
+
+Resolution + overrides live in [`useRosterCategoryWeights`](../src/lib/hooks/useRosterCategoryWeights.ts) (localStorage `mlboss-roster-concede:v2:{league}`; one store spanning both sides — the coalition is whole-matchup, so per-side independence is gone by design).
 
 Tunables:
 
@@ -161,7 +180,8 @@ Tunables:
 | `DECIDED_DISTANCE` (0.7) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Distance the reachability bar maps to — mirrors the L5 decided-loss threshold so both layers share pivotality geometry |
 | `PITCHER_Z_AT_EDGE` (1.5) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | z that lands at distance ±1 on the pitcher side — the old v1 LOCKED/HARD_PUNT bands, made continuous |
 | `FLAT_FALLBACK_EPS` (0.05) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Weight floor below which the whole board counts as out-of-play and the unweighted fallback engages |
-| `REACHABLE_GAP_MOVES` (2.0) | [league/forecast.ts](../src/lib/league/forecast.ts) | Max gap (in RUPM units) for a target rank to count as reachable; doubles as the auto-concede bar |
+| `REACHABLE_GAP_MOVES` (2.0) | [league/forecast.ts](../src/lib/league/forecast.ts) | Max gap (in RUPM units) for a target rank to count as reachable — the per-cat bar |
+| `CHASE_BUDGET_MOVES` (3.0) | [league/rosterValue.ts](../src/lib/league/rosterValue.ts) | Total move budget across ALL funded chases. Estimated: ~1.5× the per-cat bar ("a couple of good swaps plus one more"); the structure (one budget) matters more than the value |
 
 ## Player value: leverage-weighted move units
 
@@ -221,7 +241,7 @@ If you find yourself wanting to merge them, push back. They're decisions on diff
 
 A future iteration could surface infeasibility by inspecting the FA pool's conditional distributions (top-K producers of cat X, median contribution on a conflicting cat). If battleground combinations look unrealistic in practice, that's the lever to add.
 
-**Concession as resource reallocation (punt strategy).** The engine today concedes a category only when it's *unreachable* (`targetRank` undefined) and scores every cat independently. It therefore can't model the strongest lever in category-league roster construction: conceding a *winnable* category on purpose because doing so frees roster resources that lift the categories you're contesting. The canonical case is punting saves — you may well be able to compete in SV, but rostering closers costs slots and add/drop budget that buy little outside a narrow archetype (SV + some ERA/WHIP/K). Conceding SV unlocks those slots for bats/SPs that help everywhere else. The payoff is the freed resource, not the SV margin. This is the sharpest instance of the stat-shape-correlation gap above.
+**Concession as resource reallocation (punt strategy).** The chase coalition (above) now delivers the v1 of this: it concedes winnable-in-isolation categories when the shared budget is better spent elsewhere — a real punt recommendation, not just an unreachability flag. What it still can't do is model the *roster-slot* side of the trade: conceding a *winnable* category on purpose because doing so frees roster resources that lift the categories you're contesting. The canonical case is punting saves — you may well be able to compete in SV, but rostering closers costs slots and add/drop budget that buy little outside a narrow archetype (SV + some ERA/WHIP/K). Conceding SV unlocks those slots for bats/SPs that help everywhere else. The payoff is the freed resource, not the SV margin. This is the sharpest instance of the stat-shape-correlation gap above.
 
 A tractable future approach reuses existing infra: enumerate a small set of realistic concede-sets (SV, SB, a ratio), re-run [`assignStarters`](../src/lib/roster/depth.ts) + the neutral-week projection under the constraint "don't spend slots/archetype budget on the conceded cats," score the resulting roster on the *kept* set ("dominate a winning number + a real shot at a couple more"), and recommend the concede-set that maximizes that profile. Bounded search, no new engine. Out of scope until the talent-vacuum foundation is trusted; recorded here so the pivotality work doesn't foreclose it.
 

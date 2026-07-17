@@ -23,6 +23,7 @@
 import { buildNeutralGame } from '@/lib/pitching/roster';
 import { buildGameForecast } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
+import { observedSavesPerAppearance } from '@/lib/pitching/talent';
 import { getBatterRating } from '@/lib/mlb/batterRating';
 import type { Focus } from '@/lib/rating/focus';
 import type { MatchupContext } from '@/lib/mlb/matchupContext';
@@ -71,11 +72,20 @@ const DEFAULT_PA_PER_GAME = 4.1;
 const TYPICAL_SP_STARTS_PER_WEEK = 1.2;
 
 /**
- * Typical reliever weekly innings. RP usage varies widely (high-leverage
- * arm: ~5 IP/week; mop-up: ~2 IP/week). Median across rostered RPs is
- * ~3 IP/week.
+ * Typical reliever weekly innings — fallback when the talent vector has
+ * no blended `ipPerAppearance`/`appearancesPerWeek` (shouldn't happen for
+ * a live RP, but degrade gracefully). RP usage varies widely (high-
+ * leverage arm: ~5 IP/week; mop-up: ~2 IP/week); median across rostered
+ * RPs is ~3 IP/week.
  */
 const TYPICAL_RP_IP_PER_WEEK = 3.0;
+
+/**
+ * Typical reliever appearances per calendar week — fallback companion to
+ * `TYPICAL_RP_IP_PER_WEEK`. Live RPs carry a blended per-player value on
+ * the talent vector (`appearancesPerWeek`).
+ */
+const TYPICAL_RP_APPEARANCES_PER_WEEK = 3.0;
 
 /** Min observed GP to use the player's own per-game PA rate. Below this
  *  we fall back to the league average so call-ups with 2 games don't
@@ -90,6 +100,7 @@ const MIN_WEEKLY_IP = 0.5;
 const STAT_ID_AVG = 3;
 const STAT_ID_K = 42;
 const STAT_ID_W = 28;
+const STAT_ID_SV = 32;
 const STAT_ID_QS = 83;
 const STAT_ID_IP = 50;
 const STAT_ID_ERA = 26;
@@ -269,6 +280,10 @@ export interface NeutralPitcherEntry {
   isGhost: boolean;
   seasonGS: number;
   seasonIP: number;
+  /** Current-season saves — closer signal for the SV projection. */
+  seasonSaves: number;
+  /** Current-season appearances (G) — denominator for save pace. */
+  seasonGames: number;
 }
 
 export interface NeutralPitcherDeps {
@@ -369,13 +384,21 @@ function projectOnePitcherNeutral(
   // the talent comparison reflects roster shape, not who got hurt.
   // `entry.role` was already inferred from observed GS/IP (see
   // `getPitcherTalentBatch`), so this implicitly conditions on "this
-  // pitcher is actually being used as an SP / RP."
+  // pitcher is actually being used as an SP / RP." Relievers use their
+  // blended per-player workload (usage differences between a closer and
+  // a mop-up arm are role signal, not schedule noise), with league-
+  // typical fallbacks.
+  const isReliever = entry.role === 'reliever';
   const startsPerWeek =
     entry.role === 'starter' ? TYPICAL_SP_STARTS_PER_WEEK : 0;
-  const ipPerWeek =
-    entry.role === 'starter'
-      ? startsPerWeek * entry.talent.ipPerStart
-      : TYPICAL_RP_IP_PER_WEEK;
+  const appearancesPerWeek = isReliever
+    ? entry.talent.appearancesPerWeek ?? TYPICAL_RP_APPEARANCES_PER_WEEK
+    : 0;
+  const ipPerWeek = isReliever
+    ? entry.talent.ipPerAppearance != null
+      ? entry.talent.ipPerAppearance * appearancesPerWeek
+      : TYPICAL_RP_IP_PER_WEEK
+    : startsPerWeek * entry.talent.ipPerStart;
   if (ipPerWeek < MIN_WEEKLY_IP) return null;
 
   const rates = getNeutralRateBundle(
@@ -389,8 +412,17 @@ function projectOnePitcherNeutral(
   // The L6 forecast cares about each scored cat's expectedCount (for
   // counting cats) or expectedCount/expectedDenom (for ratio cats). We
   // iterate scoredCategories — not rating.categories — so non-modeled
-  // cats (SV, HLD, K9/BB9/H9) just get skipped without producing zero
+  // cats (HLD, K9/BB9/H9) just get skipped without producing zero
   // entries that would skew the team's mean.
+  //
+  // SV is modeled directly (the rating engine has no SV window): observed
+  // save-conversion pace × blended appearances/week, relievers only.
+  // Starters contribute no SV entry — same as an unmodeled cat — so a
+  // roster with zero relievers aggregates to 0 projected saves.
+  const svPerAppearance = isReliever
+    ? observedSavesPerAppearance(entry.seasonSaves, entry.seasonGames)
+    : 0;
+
   for (const cat of deps.scoredCategories) {
     if (!cat.is_pitcher_stat) continue;
 
@@ -398,6 +430,10 @@ function projectOnePitcherNeutral(
       accumulate(byCat, cat.stat_id, rates.kPerIP * ipPerWeek, ipPerWeek);
     } else if (cat.stat_id === STAT_ID_W) {
       accumulate(byCat, cat.stat_id, rates.wPerStart * startsPerWeek, startsPerWeek);
+    } else if (cat.stat_id === STAT_ID_SV) {
+      if (isReliever) {
+        accumulate(byCat, cat.stat_id, svPerAppearance * appearancesPerWeek, appearancesPerWeek);
+      }
     } else if (cat.stat_id === STAT_ID_QS) {
       accumulate(byCat, cat.stat_id, rates.qsPerStart * startsPerWeek, startsPerWeek);
     } else if (cat.stat_id === STAT_ID_IP) {

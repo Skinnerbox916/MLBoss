@@ -5,7 +5,11 @@ import { FiLock, FiCalendar, FiSlash, FiRotateCcw } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Panel from '@/components/ui/Panel';
 import type { ForecastEntry, LeagueForecast } from '@/lib/league/forecast';
-import { DECIDED_DISTANCE, type RosterLeverage } from '@/lib/league/rosterValue';
+import {
+  DECIDED_DISTANCE,
+  type CategoryLeverage,
+  type RosterLeverage,
+} from '@/lib/league/rosterValue';
 
 /**
  * Roster Focus: per-cat tiles for ROS roster construction, split into
@@ -17,9 +21,11 @@ import { DECIDED_DISTANCE, type RosterLeverage } from '@/lib/league/rosterValue'
  *
  * Chase/hold/punt is gone here too: every category is in-play by
  * default, weighted by how contested it is. The only lever is concede
- * vs contest. Auto-concede fires when no winning rank is reachable
- * within the moves bar; a cushioned lead stays in-play at its naturally
- * small weight, never on the shelf.
+ * vs contest. Auto-concede comes from the chase coalition
+ * (rosterValue.ts): unreachable cats and chases the shared move budget
+ * didn't fund go to the shelf; a cushioned lead stays in-play at its
+ * naturally small weight, never on the shelf. The "→ Nth" chip marks
+ * funded chases only.
  */
 interface RosterFocusPanelProps {
   forecast: LeagueForecast | undefined;
@@ -216,13 +222,28 @@ function ordinal(n: number): string {
 }
 
 /** Plain-language read of the leverage state for the tile caption. */
-function reasonText(entry: ForecastEntry, distance: number, conceded: boolean, autoConceded: boolean): string {
-  if (conceded) return autoConceded ? 'conceded · out of reach' : 'conceded';
+function reasonText(
+  entry: ForecastEntry,
+  lev: CategoryLeverage | undefined,
+  distance: number,
+  conceded: boolean,
+  autoConceded: boolean,
+): string {
+  if (conceded) {
+    if (!autoConceded) return 'conceded';
+    return lev?.concedeReason === 'budget'
+      ? 'conceded · moves better spent'
+      : 'conceded · out of reach';
+  }
   if (distance >= DECIDED_DISTANCE) return 'cushioned — defend, don’t dilute';
   if (distance > 0.2) return 'ahead, contestable';
   if (distance >= -0.2) return 'battleground';
-  if (entry.movesToTarget !== undefined && entry.movesToTarget <= 1) return 'one good move away';
-  return 'chaseable with moves';
+  if (lev?.targeted) {
+    return entry.movesToTarget !== undefined && entry.movesToTarget <= 1
+      ? 'one good move away'
+      : 'chaseable with moves';
+  }
+  return 'behind, contestable';
 }
 
 function CategoryTile({
@@ -254,8 +275,11 @@ function CategoryTile({
     : distance <= -0.2 ? 'text-error'
     : 'text-foreground';
 
+  // Chip only for FUNDED chases — a reachable target the coalition chose
+  // to spend moves on. A cat can be in play without a chip (riding its
+  // natural weight, no spend planned).
   const targetChip =
-    !conceded && entry.targetRank !== undefined && entry.targetRank < entry.me.rank
+    lev?.targeted && entry.targetRank !== undefined && entry.targetRank < entry.me.rank
       ? `→ ${ordinal(entry.targetRank)}`
       : null;
 
@@ -298,7 +322,7 @@ function CategoryTile({
         )}
       </div>
       <span className="text-caption text-muted-foreground/80 italic mt-0.5 leading-tight">
-        {reasonText(entry, distance, conceded, autoConceded)}
+        {reasonText(entry, lev, distance, conceded, autoConceded)}
       </span>
     </div>
   );

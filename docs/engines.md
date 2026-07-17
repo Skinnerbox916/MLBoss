@@ -94,7 +94,7 @@ Standings → category strategy. The bridge layer (reads from L4, writes `catego
 
 ROS (rest-of-season) roster construction in a matchup vacuum — talent-only, neutral context, league-wide comparison. Does **not** consume `analyzeMatchup` (that's L5 weekly thinking) and does **not** depend on this week's schedule.
 
-- Neutral-week team projection (`projectBatterTeamNeutral`, `projectPitcherTeamNeutral`) — [src/lib/projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts)
+- Neutral-week team projection (`projectBatterTeamNeutral`, `projectPitcherTeamNeutral`) — [src/lib/projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) — pitcher side covers SP and RP, including SV from observed save pace (see [roster-strategy.md#saves](./roster-strategy.md#saves))
 - League forecast (`computeLeagueForecast`) — [src/lib/league/forecast.ts](../src/lib/league/forecast.ts)
 - Replacement Upgrade Per Move (`computeRupm`) — [src/lib/league/rupm.ts](../src/lib/league/rupm.ts)
 - Manager-engagement multiplier (`computeTeamEngagements`) — [src/lib/league/engagement.ts](../src/lib/league/engagement.ts)

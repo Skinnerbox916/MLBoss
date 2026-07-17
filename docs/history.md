@@ -8,6 +8,37 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Roster auto-concede: per-cat reachability replaced by the chase coalition
+
+The roster page's auto-concede used to be a per-category rule: concede iff no rank-1/2 target within `REACHABLE_GAP_MOVES` (2.0) of *that cat alone* (batters), or a z-deficit rule (pitchers). On any mid-pack competitive roster this concedes nothing — a team ranked 3rd everywhere sees nine individually-"reachable" rank-1 targets whose combined price (~8 moves on live July data) no manager can pay. Every tile said "chaseable with moves," every tile got a "→ 1st" chip, and the caption literally fell through to "chaseable with moves" even when `movesToTarget` was undefined (the SV case: 0.00 projected saves, rank 10, no target — labeled chaseable). Owner verdict that triggered the rebuild: "when I'm chasing everything, I'm chasing nothing."
+
+**Replaced with:** the chase coalition in `computeCategoryLeverage` — one call over BOTH sides' cats: banked leads (rank ≤ 2) count free, unpriced above-middle cats ride along, and priced chases are funded cheapest-first from a single `CHASE_BUDGET_MOVES` (3.0) pool, extended past budget only while short of the winning number (`⌊N/2⌋+1` of all scored cats). Everything unfunded auto-concedes with a reason (`'unreachable'` vs `'budget'`); user contest/concede overrides participate in the budget arithmetic. Canonical write-up: [roster-strategy.md#the-chase-coalition](./roster-strategy.md#the-chase-coalition).
+
+Don't reintroduce:
+
+- **Per-cat-only reachability as the concede rule.** Any cat-level "is this chaseable" check must be joined to the shared budget/winning-number logic — reachable-in-isolation is the exact illusion this replaced.
+- **Per-side leverage stores or hooks.** `useRosterCategoryWeights` takes both sides in one call (persist key `mlboss-roster-concede:v2:{league}`); splitting per side lets each side chase its own majority, which is not how a matchup is won. The v1 per-side keys (`:bat`/`:pit`) are orphaned on purpose — they carried stale overrides (an SV 'contest' pinned during the all-zeros-SV era that blocked auto-concede entirely).
+- **"Chaseable with moves" as a fallback caption.** Captions must distinguish funded chases from unfunded ("moves better spent") and unreachable ("out of reach") states.
+
+Known v1 approximation (accepted, documented in the doc section): chase costs sum as if independent; correlated cats make the true combined cost lower. The full concede-set optimizer (re-run projection under each punt set) remains the recorded future direction.
+
+## 2026-07 — Categories pitcher batch: relievers un-ghosted, SV modeled, points fork folded in
+
+`getPitcherTalentBatch` (the categories-side pitcher assembly feeding the L6 forecast and the roster pitchers tab) used to fetch only the SP-filtered season line (`sitCodes=sp`). Pure relievers have no SP line, so every RP in the league came back `role: 'inactive'`, `isGhost: true` and was silently skipped by the neutral-week projection — no K/IP/ERA/WHIP contribution from any bullpen, active closers flagged as IL-stash candidates on the roster page, and SV unmodelable. The league forecast still emitted an SV entry with every team at 0, ranked by stable-sort input order (= standings order), producing the absurdity that surfaced this whole area: the standings leader saw "SV 1st" while rostering zero relievers and sitting last in actual saves.
+
+Two deliberate decisions from that era are hereby reversed, with reasons:
+
+- **"The points module owns its own pitcher assembly rather than change the shared batch"** (old `pitcherInputs.ts` header). Made when the reliever gap was "fine for the categories roster page." It stopped being fine the moment categories needed SV — and the duplication was exactly the drift risk the docs discipline warns about. The shared batch now fetches the OVERALL line too (role/liveness from starts+relief, reliever workload signals, `seasonSaves`/`seasonGames` in metadata, cache key `pitcher-talent-batch:v2`), and `getPointsPitcherInputs` is a thin adapter over it.
+- **"Closer SV-opportunity projection: not load-bearing for any decision"** (2026 bullpen-splits entry below). The L6 forecast now needs it. SV is modeled as `observedSavesPerAppearance(seasonSaves, seasonGames) × appearancesPerWeek`, relievers only — the save-conversion helper moved to [`pitching/talent.ts`](../src/lib/pitching/talent.ts) as the one home shared with the points rate vector. Rationale: [roster-strategy.md#saves](./roster-strategy.md#saves).
+
+Don't reintroduce:
+
+- **A second pitcher-input assembly.** If a consumer needs a new pitcher signal, add it to `getPitcherTalentBatch` metadata; don't fork the fetch pipeline again.
+- **Role/liveness from the SP-filtered line.** `isGhost`/`role` must come from the OVERALL line or they misclassify every pure reliever.
+- **An all-teams-zero forecast entry as "harmless."** `computeLeagueForecast` ranks whatever it's given; an unmodeled cat must either be modeled or produce no entry — a tied ranking renders as confident nonsense.
+
+Still unmodeled after this change: HLD (needs a holds field on `PitcherOverallLine` plus the same appearance-rate treatment), and SV on the L4 schedule-aware path (`projectRelieverPlayer` in `pitcherTeam.ts` still leaves SV at 0, so weekly matchup surfaces — Boss Card, GamePlanPanel corrected margins — don't project saves; `CORRECTED_COUNTING_SCALE` already carries an SV weight for whenever that lands).
+
 ## 2026-07 — Points /streaming rebuilt around the unified week-moves board
 
 The points streaming page was two separate ranked boards (FA pitcher streams, FA batter plugs) under a display-only week-plan header. Rebuilt around the owner's framing — "I have N moves left this week, what's the best way to spend them?" — as one value-sorted board of net add/drop moves (`weekMoves.ts`, client-side over new streaming facts) with a moves-budget header and a session plan. The old boards survive below as browse sections. Detail: [points-leagues.md#week-moves](./points-leagues.md#week-moves).

@@ -59,6 +59,18 @@ export type ConcedeState = 'concede' | 'contest';
 
 export type LeverageStatus = 'contested' | 'cushioned' | 'conceded';
 
+/**
+ * Why the engine auto-conceded a category:
+ *  - 'unreachable' — no winning rank is buyable from here (no target
+ *    within the per-cat reachability bar, or a catastrophic z deficit
+ *    on the z-fallback side).
+ *  - 'budget' — a target exists, but funding it didn't make the cut:
+ *    the shared chase budget went to cheaper cats and the coalition
+ *    already holds a winning number. "Chaseable in isolation" is not
+ *    chaseable when every move is spoken for.
+ */
+export type ConcedeReason = 'unreachable' | 'budget';
+
 export interface CategoryLeverage {
   statId: number;
   displayName: string;
@@ -75,8 +87,14 @@ export interface CategoryLeverage {
    *  the flat fallback). */
   weight: number;
   status: LeverageStatus;
-  /** Conceded by the reachability rule with no user override. */
+  /** Conceded by the coalition rule with no user override. */
   autoConceded: boolean;
+  /** Set only when `autoConceded` — which rule shelved it. */
+  concedeReason?: ConcedeReason;
+  /** Funded chase: behind, with a reachable target the coalition chose
+   *  to spend moves on. Drives the "→ Nth" chip; a cat can be in play
+   *  without being targeted (riding its natural weight, no spend). */
+  targeted: boolean;
 }
 
 export interface RosterLeverage {
@@ -152,41 +170,126 @@ export function forecastDistanceZ(entry: ForecastEntry): number {
   return clamp(entry.zCompetitive / PITCHER_Z_AT_EDGE, -1, 1);
 }
 
-/** Auto-concede rule for one entry, side-aware (see computeCategoryLeverage). */
-function isAutoConcededEntry(entry: ForecastEntry, useZDistance: boolean): boolean {
-  if (useZDistance) {
-    // v1-band port: catastrophic deficit, or below-average with nothing
-    // reachable above.
-    return (
-      entry.zCompetitive <= -PITCHER_Z_AT_EDGE ||
-      (entry.zCompetitive < -0.5 && entry.targetRank === undefined)
-    );
-  }
-  return entry.me.rank > 2 && entry.targetRank === undefined;
+/**
+ * Total roster-shaping moves the coalition may fund across ALL chases,
+ * in RUPM move units. This is the budget a season-long manager actually
+ * has for stable ROS upgrades (streaming churn is a different resource
+ * — that's the L5/streaming layer's business). Estimated, not sourced:
+ * ~1.5× the per-cat reachability bar, on the logic that a committed
+ * manager can land "a couple of good swaps plus one more." The value
+ * matters less than the structure: it's ONE budget, so chasing
+ * everything is arithmetically impossible — which is the point.
+ * See docs/roster-strategy.md#the-chase-coalition.
+ */
+export const CHASE_BUDGET_MOVES = 3.0;
+
+/** z-fallback auto-concede (no RUPM price data): catastrophic deficit,
+ *  or below-average with nothing reachable above. */
+function isZUnreachable(entry: ForecastEntry): boolean {
+  return (
+    entry.zCompetitive <= -PITCHER_Z_AT_EDGE ||
+    (entry.zCompetitive < -0.5 && entry.targetRank === undefined)
+  );
 }
 
 /**
- * Resolve per-category leverage for one side's forecast entries.
- * `overrides` mirrors the L5 concede/contest store (`useCategoryWeights`):
- * user 'concede' forces weight 0, 'contest' un-concedes an auto-conceded
- * cat (it gets its natural — usually small — pivotality weight; the math
- * is honest that a 2-move gap buys little, but the user stays in charge).
+ * Resolve per-category leverage for the forecast entries — pass BOTH
+ * sides' cats in one call: the coalition below reasons about the whole
+ * matchup (you win a week by winning a majority of ALL scored cats, not
+ * a majority per side).
  *
- * `opts.useZDistance` selects the pitcher-side z-based distance (no
- * pitcher RUPM yet); default is the batter RUPM distance.
+ * Distance is side-aware per entry: RUPM move units where a price
+ * exists (`entry.rupm > 0`, batters today), z-based otherwise (pitchers,
+ * pending pitcher RUPM).
+ *
+ * **The chase coalition** (see docs/roster-strategy.md#the-chase-coalition):
+ * a smart manager doesn't chase every reachable cat — they bank what
+ * they hold, then spend a single shared move budget on the cheapest
+ * paths to a winning number of cats, and concede the rest on purpose.
+ *
+ *  1. Banked: cats already at a winning rank (≤ 2) count for free.
+ *  2. Ride-alongs: unpriced (z-side) cats above the competitive middle
+ *     count as winnable without spend.
+ *  3. Chases: priced cats behind a reachable target, funded
+ *     cheapest-first from `CHASE_BUDGET_MOVES` — extended past the
+ *     budget only while the coalition is still short of the winning
+ *     number (majority of scored cats).
+ *  4. Everything else auto-concedes, tagged 'unreachable' or 'budget'.
+ *
+ * `overrides` mirrors the L5 concede/contest store (`useCategoryWeights`)
+ * and participates in the coalition math: a user 'concede' frees its
+ * budget for the next-cheapest cat; a user 'contest' on a priced cat
+ * pre-funds that chase (consuming budget before the engine picks), so
+ * the manager's commitments are paid for honestly. 'contest' on an
+ * unpriced/unreachable cat keeps it in play at its natural — usually
+ * small — pivotality weight; the math stays honest, the user stays in
+ * charge.
  */
 export function computeCategoryLeverage(
   entries: ForecastEntry[],
   overrides: Record<number, ConcedeState> = {},
-  opts: { useZDistance?: boolean } = {},
 ): RosterLeverage {
   const byStatId = new Map<number, CategoryLeverage>();
-  const useZ = opts.useZDistance ?? false;
+  const winningNumber = Math.floor(entries.length / 2) + 1;
 
-  for (const entry of entries) {
-    const distance = useZ ? forecastDistanceZ(entry) : forecastDistance(entry);
-    const autoConceded = isAutoConcededEntry(entry, useZ);
+  const work = entries.map(entry => {
+    const useZ = entry.rupm <= 0;
     const ov = overrides[entry.statId];
+    return {
+      entry,
+      useZ,
+      ov,
+      distance: useZ ? forecastDistanceZ(entry) : forecastDistance(entry),
+      banked: entry.me.rank <= 2,
+      priced: !useZ && entry.me.rank > 2 && entry.movesToTarget !== undefined,
+      zUnreachable: useZ && isZUnreachable(entry),
+    };
+  });
+
+  // Coalition members that cost nothing: banked leads, and unpriced cats
+  // sitting above the competitive middle (winnable without spend).
+  let coalitionCount = 0;
+  for (const w of work) {
+    if (w.ov === 'concede') continue;
+    if (w.banked) coalitionCount += 1;
+    else if (w.useZ && !w.zUnreachable && w.entry.zCompetitive >= 0) coalitionCount += 1;
+  }
+
+  // Fund chases from the one shared budget: user-contested cats first
+  // (the manager already committed those moves), then cheapest-first.
+  const queue = work
+    .filter(w => w.priced && w.ov !== 'concede')
+    .sort((a, b) => a.entry.movesToTarget! - b.entry.movesToTarget!);
+  const targeted = new Set<number>();
+  let spent = 0;
+  for (const w of queue) {
+    if (w.ov !== 'contest') continue;
+    targeted.add(w.entry.statId);
+    spent += w.entry.movesToTarget!;
+    coalitionCount += 1;
+  }
+  for (const w of queue) {
+    if (targeted.has(w.entry.statId)) continue;
+    const cost = w.entry.movesToTarget!;
+    if (spent + cost <= CHASE_BUDGET_MOVES || coalitionCount < winningNumber) {
+      targeted.add(w.entry.statId);
+      spent += cost;
+      coalitionCount += 1;
+    } else {
+      break; // queue is sorted — nothing after this is affordable either
+    }
+  }
+
+  for (const w of work) {
+    const { entry, ov, distance } = w;
+    let concedeReason: ConcedeReason | undefined;
+    if (w.useZ) {
+      if (w.zUnreachable) concedeReason = 'unreachable';
+    } else if (entry.me.rank > 2) {
+      if (entry.movesToTarget === undefined) concedeReason = 'unreachable';
+      else if (!targeted.has(entry.statId)) concedeReason = 'budget';
+    }
+    const autoConceded = concedeReason !== undefined;
     const conceded = ov === 'concede' ? true : ov === 'contest' ? false : autoConceded;
     const pivotalWeight = pivotality(distance);
     const status: LeverageStatus = conceded
@@ -201,6 +304,8 @@ export function computeCategoryLeverage(
       weight: conceded ? 0 : pivotalWeight,
       status,
       autoConceded: autoConceded && ov === undefined,
+      concedeReason: autoConceded && ov === undefined ? concedeReason : undefined,
+      targeted: !conceded && targeted.has(entry.statId),
     });
   }
 

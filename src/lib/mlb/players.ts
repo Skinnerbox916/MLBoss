@@ -660,9 +660,14 @@ export interface PitcherTalentWithMetadata {
     /** Games started in the current season. Used by the neutral-week
      *  projection to derive starts/week. */
     seasonGS: number;
-    /** Innings pitched in the current season. Drives the talent-only
-     *  per-week IP assumption in the L6 forecast. */
+    /** Innings pitched in the current season (all appearances). Drives
+     *  the talent-only per-week IP assumption in the L6 forecast. */
     seasonIP: number;
+    /** Current-season saves (closer signal — feeds
+     *  `observedSavesPerAppearance`). */
+    seasonSaves: number;
+    /** Current-season appearances (G) — denominator for save pace. */
+    seasonGames: number;
   };
 }
 
@@ -687,7 +692,9 @@ export async function getPitcherTalentBatch(
     .map(p => `${p.name.toLowerCase()}|${p.team.toLowerCase()}`)
     .sort()
     .join(',');
-  const cacheKey = `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:pitcher-talent-batch:${season}:${hashCode(sortedKey)}`;
+  // v2: batch fetches OVERALL lines too — relievers get real role/ghost
+  // status and the metadata carries save signals.
+  const cacheKey = `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:pitcher-talent-batch:v2:${season}:${hashCode(sortedKey)}`;
   const minCoverage = Math.max(1, Math.ceil(players.length * 0.7));
   return withCacheGated(
     cacheKey,
@@ -718,8 +725,15 @@ async function computePitcherTalentBatch(
         const identity = await resolveMLBId(name, team);
         if (!identity) return;
 
-        const [seasonLines] = await Promise.all([
+        // SP-filtered line drives per-start talent; OVERALL line (starts +
+        // relief) drives role, liveness, reliever workload signals
+        // (`appearancesPerWeek`, `ipPerAppearance`), and the save pace.
+        // Before v2 only the SP line was fetched, which made every pure
+        // reliever look like a 0-IP ghost on the categories path — see
+        // docs/history.md (2026-07 reliever-ghost entry).
+        const [seasonLines, overallLines] = await Promise.all([
           getPitcherSeasonLines(identity.mlbId, season),
+          getPitcherOverallLines(identity.mlbId, season),
         ]);
 
         const talent = computePitcherTalent({
@@ -729,38 +743,39 @@ async function computePitcherTalentBatch(
           priorLine: seasonLines.prior,
           currentSavant: savantMap.get(identity.mlbId) ?? null,
           priorSavant: priorSavantMap.get(identity.mlbId) ?? null,
+          currentOverall: overallLines.current,
+          priorOverall: overallLines.prior,
         });
 
-        // Role Detection & Liveness (2026 Focus)
-        const currentIP = seasonLines.current?.ip ?? 0;
-        const currentGS = seasonLines.current?.gamesStarted ?? 0;
-        const priorGS = seasonLines.prior?.gamesStarted ?? 0;
-        const priorIP = seasonLines.prior?.ip ?? 0;
-        
-        // A "Ghost" has 0 IP in the current season (2026).
-        // This is the trigger for the "Liveness Gate" in the UI.
+        // Role & liveness from the OVERALL line, prior-season fallback for
+        // stashed/IL arms. Mirrors the role precedence in
+        // `detectPitcherRole` (talent.ts).
+        const oc = overallLines.current;
+        const op = overallLines.prior;
+        const currentIP = oc?.ip ?? 0;
+        const currentGS = oc?.gamesStarted ?? 0;
+
+        // A "Ghost" has 0 IP in the current season — the trigger for the
+        // "Liveness Gate" in the UI.
         const isGhost = currentIP === 0;
 
-        // Role Detection:
-        // 1. If they have started in 2026, they are a Starter.
-        // 2. If they have pitched but NOT started in 2026, they are a Reliever.
-        // 3. If they haven't pitched in 2026, fallback to 2025 GS.
         let role: 'starter' | 'reliever' | 'inactive';
-        if (currentGS > 0) {
-          role = 'starter';
-        } else if (currentIP > 0) {
-          role = 'reliever';
-        } else if (priorGS > 0) {
-          role = 'starter'; // Probable starter on IL/stashed
-        } else if (priorIP > 0) {
-          role = 'reliever';
-        } else {
-          role = 'inactive';
-        }
+        if (currentGS > 0) role = 'starter';
+        else if (currentIP > 0) role = 'reliever';
+        else if ((op?.gamesStarted ?? 0) > 0) role = 'starter'; // stashed/IL starter
+        else if ((op?.ip ?? 0) > 0) role = 'reliever';
+        else role = 'inactive';
 
         results[key] = {
           talent,
-          metadata: { role, isGhost, seasonGS: currentGS, seasonIP: currentIP },
+          metadata: {
+            role,
+            isGhost,
+            seasonGS: currentGS,
+            seasonIP: currentIP,
+            seasonSaves: oc?.saves ?? 0,
+            seasonGames: oc?.gamesPitched ?? 0,
+          },
         };
       } catch (err) {
         console.error(`getPitcherTalentBatch: failed for ${name} (${team}):`, err);

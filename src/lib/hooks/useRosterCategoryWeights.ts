@@ -12,18 +12,21 @@ import {
  * L6 mirror of `useCategoryWeights` (the L5 matchup hook): per-category
  * leverage from the league forecast, with a concede/contest override
  * store in localStorage. Weight = conceded ? 0 : pivotality(distance) —
- * distance is the roster layer's own (RUPM moves for batters, z for
- * pitchers pending pitcher RUPM). See src/lib/league/rosterValue.ts and
+ * distance is the roster layer's own, side-aware per entry (RUPM moves
+ * where priced, z otherwise). Pass BOTH sides' entries in ONE call: the
+ * chase-coalition auto-concede reasons over the whole matchup's scored
+ * cats. See src/lib/league/rosterValue.ts and
  * docs/pivotality-migration.md#roster-side-l6.
  *
- * Deliberately a NEW persistence key shape (`mlboss-roster-concede:*`).
+ * Deliberately a NEW persistence key shape (`mlboss-roster-concede:v2:*`).
  * The old 3-state chase/hold/punt overrides (`mlboss-roster-focus:*`)
- * are orphaned, which doubles as a one-time reset — stale chase/punt
- * flips from the retired system (the SB/K incident that triggered this
- * rebuild) don't leak into the leverage era.
+ * and the v1 per-side concede keys (`mlboss-roster-concede:<league>:bat|pit`)
+ * are orphaned, which doubles as a one-time reset — stale flips from
+ * the retired systems (the SB/K incident; the SV 'contest' pinned during
+ * the all-zeros-SV era) don't leak into the coalition era.
  */
 export function rosterConcedePersistKey(leagueKey: string | undefined): string | undefined {
-  return leagueKey ? `mlboss-roster-concede:${leagueKey}` : undefined;
+  return leagueKey ? `mlboss-roster-concede:v2:${leagueKey}` : undefined;
 }
 
 function isConcedeState(v: unknown): v is ConcedeState {
@@ -74,9 +77,9 @@ export interface RosterCategoryWeights {
 
 export function useRosterCategoryWeights(
   entries: ForecastEntry[],
-  opts: { useZDistance?: boolean; persistKey?: string },
+  opts: { persistKey?: string },
 ): RosterCategoryWeights {
-  const { useZDistance, persistKey } = opts;
+  const { persistKey } = opts;
   const [overrides, setOverrides] = useState<Record<number, ConcedeState>>(() =>
     loadOverrides(persistKey),
   );
@@ -90,8 +93,8 @@ export function useRosterCategoryWeights(
   }, [persistKey, overrides]);
 
   const leverage = useMemo(
-    () => computeCategoryLeverage(entries, overrides, { useZDistance }),
-    [entries, overrides, useZDistance],
+    () => computeCategoryLeverage(entries, overrides),
+    [entries, overrides],
   );
 
   const categoryWeights = useMemo(() => {

@@ -1011,6 +1011,33 @@ function blendIpPerAppearance(
   return blend.value;
 }
 
+/** Season saves at which a reliever is treated as holding a closer role.
+ *  Low bar so committee/emerging closers aren't missed; non-closers sit
+ *  at 0 and contribute no projected saves (honest under-count until
+ *  save-opportunity data lands — see docs/roster-strategy.md#saves). */
+export const SAVE_CLOSER_THRESHOLD = 3;
+
+/** Cap on observed saves-per-appearance. Elite closers convert ~0.45-0.55
+ *  of their outings into saves; the cap guards small-sample spikes. */
+export const SV_PER_APPEARANCE_CAP = 0.6;
+
+/**
+ * Observed save-conversion pace: saves per appearance, gated to pitchers
+ * with a real save sample (`SAVE_CLOSER_THRESHOLD`). Differentiates a
+ * closer (≈0.4-0.5 sv/app) from a setup man (0). This is a role signal
+ * like GS/week — observed usage, not modeled talent — so it lives beside
+ * the other role/workload blends. Shared by the points rate vector and
+ * the neutral-week SV projection so both engines agree on who's a closer.
+ */
+export function observedSavesPerAppearance(
+  seasonSaves: number,
+  seasonGames: number,
+): number {
+  if (seasonSaves < SAVE_CLOSER_THRESHOLD) return 0;
+  const games = Math.max(1, seasonGames);
+  return Math.min(SV_PER_APPEARANCE_CAP, Math.max(0, seasonSaves / games));
+}
+
 /**
  * Role detector. Order of precedence:
  *   1. Current-season GS > 0 → starter.

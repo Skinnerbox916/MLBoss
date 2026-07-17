@@ -750,18 +750,19 @@ export default function RosterManager() {
     () => forecast?.entries.filter(e => e.isBatterStat) ?? [],
     [forecast],
   );
-  const pitcherEntries = useMemo<ForecastEntry[]>(
-    () => forecast?.entries.filter(e => e.isPitcherStat) ?? [],
+  const allEntries = useMemo<ForecastEntry[]>(
+    () => forecast?.entries ?? [],
     [forecast],
   );
 
-  const batterWeights = useRosterCategoryWeights(batterEntries, {
-    persistKey: rosterConcedePersistKey(leagueKey ? `${leagueKey}:bat` : undefined),
+  // ONE hook over both sides' cats — the chase-coalition auto-concede
+  // reasons about the whole matchup (win a majority of all scored cats),
+  // so splitting per side would let each side chase its own majority.
+  const rosterWeights = useRosterCategoryWeights(allEntries, {
+    persistKey: rosterConcedePersistKey(leagueKey),
   });
-  const pitcherWeights = useRosterCategoryWeights(pitcherEntries, {
-    useZDistance: true,
-    persistKey: rosterConcedePersistKey(leagueKey ? `${leagueKey}:pit` : undefined),
-  });
+  const batterWeights = rosterWeights;
+  const pitcherWeights = rosterWeights;
 
   const battingCategories = useMemo(
     () => categories.filter(c => c.is_batter_stat),

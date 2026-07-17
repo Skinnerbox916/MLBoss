@@ -694,9 +694,11 @@ function bbCompoundingPenalty(bbPerPA: number): number {
 // from L4, matching SP behavior).
 //
 // What's deliberately NOT modeled here:
-//   - Holds, Saves, Losses: requires bullpen role tagging (closer / setup /
-//     long man) we don't have a data source for yet. Add when streaming-
-//     board reliever tab lands.
+//   - Holds, Saves, Losses: the L6 neutral-week projection models SV
+//     directly from observed save pace (`observedSavesPerAppearance` in
+//     talent.ts — see docs/roster-strategy.md#saves); this L2/L4 weekly
+//     rollup still doesn't. Add here when a weekly surface (streaming
+//     reliever tab, matchup SV margin) needs schedule-aware saves.
 //   - Opponent quality: relievers face whoever's up; over a week the
 //     opponent mix averages to neutral. Park/weather similarly average
 //     out over the week of appearances.
@@ -717,12 +719,12 @@ export interface ReliefWeekForecast {
   expectedWhipNumerator: number;
 }
 
-// TODO: closer SV-opportunity projection. `team.staffSplits` (and the
+// TODO: closer SV-opportunity refinement. `team.staffSplits` (and the
 // underlying MLB Stats API statSplits response) carries saves,
 // saveOpportunities, blownSaves, holds per role per team. A team with
 // high SV-opp rate generates more save chances for its closer; the
-// current forecast doesn't use this. Not load-bearing until there's a
-// reliever-streaming surface that surfaces SV as a decision variable.
+// observed-pace model (`observedSavesPerAppearance`) doesn't use this,
+// so just-anointed closers under-credit until saves accrue.
 // See docs/history.md "2026-05 — Batter forecast SP/RP blend".
 export function buildReliefWeekForecast(
   pitcher: PitcherTalent,

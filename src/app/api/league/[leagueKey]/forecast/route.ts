@@ -101,9 +101,10 @@ export async function GET(
     const myRoster = await getTeamRoster(user.id, teamKey);
     const rosterFp = hashCode(myRoster.map(p => p.player_key).sort().join(','));
 
-    // v2: bundle shape gained per-player value lines (roster-value engine).
+    // v3: pitcher side gained relievers (previously ghosts on the
+    // categories path) + modeled SV. v2: per-player value lines.
     const aggregateBundle = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:v2:${leagueKey}:${rosterFp}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:v3:${leagueKey}:${rosterFp}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong,
       () => computeAggregateBundle(user.id, leagueKey),
     );
@@ -565,6 +566,8 @@ async function projectOneTeam(input: {
         isGhost: entry.metadata.isGhost,
         seasonGS: entry.metadata.seasonGS,
         seasonIP: entry.metadata.seasonIP,
+        seasonSaves: entry.metadata.seasonSaves,
+        seasonGames: entry.metadata.seasonGames,
       });
     }
 

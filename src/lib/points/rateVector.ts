@@ -25,7 +25,14 @@
 import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { PitcherTalent } from '@/lib/pitching/talent';
 import { blendedBaselineForCategory } from '@/lib/mlb/categoryBaselines';
-import { talentHitsPerPA, talentExpectedEra, LEAGUE_IP_PER_START } from '@/lib/pitching/talent';
+import {
+  talentHitsPerPA,
+  talentExpectedEra,
+  LEAGUE_IP_PER_START,
+  observedSavesPerAppearance,
+  SAVE_CLOSER_THRESHOLD,
+  SV_PER_APPEARANCE_CAP,
+} from '@/lib/pitching/talent';
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
@@ -192,10 +199,6 @@ const W_DEPTH_CLAMP: [number, number] = [-0.04, 0.05];
 const W_FLOOR = 0.22;
 const W_CEIL = 0.55;
 
-/** Cap on observed saves-per-appearance. Elite closers convert ~0.45-0.55 of
- *  their outings into saves; the cap guards against small-sample spikes. */
-const SV_PER_APPEARANCE_CAP = 0.6;
-
 export interface PitcherRateOptions {
   /** Observed season saves — drives the closer signal + save pace.
    *  ≥ SAVE_CLOSER_THRESHOLD season saves ⇒ treat as a closer. */
@@ -214,10 +217,6 @@ export interface PitcherRateOptions {
   role?: 'starter' | 'reliever' | 'inactive';
 }
 
-/** Season saves at which we treat a reliever as holding a closer role.
- *  Low bar so committee/emerging closers aren't missed; non-closers sit at 0
- *  and contribute no save points (honest under-count, flagged in v1). */
-const SAVE_CLOSER_THRESHOLD = 3;
 
 /**
  * Convert a `PitcherTalent` vector into per-IP event rates plus per-start W
@@ -269,16 +268,12 @@ export function pitcherPointsRateVector(
     wPerStart = clamp(BASE_P_WIN_PER_START + qualityAdj + depthAdj, W_FLOOR, W_CEIL);
   }
 
-  // SV: observed conversion pace (saves / appearances), gated to relievers
-  // with a real save sample. Differentiates a closer (≈0.4-0.5 sv/app) from a
-  // setup man (≈0). Emerging closers with few season saves under-credit until
-  // saves accrue — refine with save-opportunity data later.
-  let svPerAppearance = 0;
-  const seasonSaves = opts.seasonSaves ?? 0;
-  if (isReliever && seasonSaves >= SAVE_CLOSER_THRESHOLD) {
-    const games = Math.max(1, opts.seasonGames ?? 0);
-    svPerAppearance = clamp(seasonSaves / games, 0, SV_PER_APPEARANCE_CAP);
-  }
+  // SV: observed conversion pace (saves / appearances), gated to relievers.
+  // Shared with the neutral-week SV projection — see
+  // `observedSavesPerAppearance` in @/lib/pitching/talent.
+  const svPerAppearance = isReliever
+    ? observedSavesPerAppearance(opts.seasonSaves ?? 0, opts.seasonGames ?? 0)
+    : 0;
 
   return { perIP, wPerStart, svPerAppearance };
 }

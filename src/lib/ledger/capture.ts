@@ -1,5 +1,7 @@
 import { getDb, forecastSnapshots } from '@/lib/db';
 import { buildGameForecast } from '@/lib/pitching/forecast';
+import { getPitcherRating } from '@/lib/pitching/rating';
+import { DEFAULT_SCORED_CATS } from '@/lib/pitching/scoring';
 import { getTeamOffense } from '@/lib/mlb/teams';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
 import { projectBatterPlayer, type ActiveBatter, type ProjectionDeps } from '@/lib/projection/batterTeam';
@@ -107,6 +109,9 @@ export async function capturePitcherSlate(
         opposingPitcher: opposing?.talent ?? null,
       });
       const g = forecast.expectedPerGame;
+      // Composite 0-100 under the league-free default cats — captured so
+      // the scorecard can test discrimination (do 80s out-produce 55s?).
+      const rating = getPitcherRating({ forecast, scoredCategories: DEFAULT_SCORED_CATS, focusMap: {} });
       rows.push({
         gameDate,
         engine: 'pitcher-start',
@@ -118,6 +123,7 @@ export async function capturePitcherSlate(
           w: forecast.probabilities.w,
           era: forecast.expectedERA,
           xwoba: forecast.xwobaAllowed,
+          score: rating.score,
         },
         context: {
           opponentTeamId: oppTeam.mlbId,
@@ -125,6 +131,7 @@ export async function capturePitcherSlate(
           isHome,
           venue: game.venue.name,
           parkKnown: game.park !== null,
+          parkMult: forecast.multipliers.park.multiplier,
           oppPitcherKnown: opposing?.talent != null,
         },
       });
@@ -169,7 +176,7 @@ export async function captureBatterSlate(
   gameDate: string,
   games: EnrichedGame[],
 ): Promise<number> {
-  const byMlbId = new Map<number, ActiveBatter>();
+  const byMlbId = new Map<number, ActiveBatter & { isHome: boolean }>();
   for (const game of games) {
     if (!PREGAME_STATUSES.has(game.status)) continue;
     for (const isHome of [true, false]) {
@@ -181,6 +188,7 @@ export async function captureBatterSlate(
             mlbId: entry.mlbId,
             name: entry.fullName,
             teamAbbr: team.abbreviation,
+            isHome,
           });
         }
       }
@@ -224,11 +232,19 @@ export async function captureBatterSlate(
       mlbId: batter.mlbId,
       playerName: batter.name,
       predicted,
+      // Slice keys for conditional-bias findings: what the aggregate table
+      // averages away (platoon side, park, home/away) is where engines hide
+      // their systematic misses.
       context: {
         teamAbbr: batter.teamAbbr,
+        isHome: batter.isHome,
+        opponent: day.opponent ?? null,
         spot: day.spotUsed,
         spotSource: day.spotSource,
         doubleHeader: day.doubleHeader,
+        spThrows: day.spThrows ?? null,
+        parkFactor: day.parkFactor ?? null,
+        weatherFlag: day.weatherFlag ?? null,
       },
     });
   }

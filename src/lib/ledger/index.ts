@@ -20,12 +20,15 @@ export type { ScoreRunResult } from './score';
 
 export { buildScorecard } from './scorecard';
 export type {
+  Scorecard,
   EngineScorecard,
   ScorecardFilters,
   StatGrade,
   CalibrationBucket,
   RankBucket,
+  ScoreBucket,
   PlayerMiss,
+  Finding,
 } from './scorecard';
 
 export { MODEL_VERSION } from './modelVersion';

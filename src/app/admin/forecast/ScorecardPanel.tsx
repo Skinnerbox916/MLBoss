@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Heading, Text } from '@/components/typography';
-import type { EngineScorecard, StatGrade, CalibrationBucket } from '@/lib/ledger';
+import type { EngineScorecard, StatGrade, CalibrationBucket, Finding } from '@/lib/ledger';
 
 interface ScorecardResponse {
   engines: EngineScorecard[];
+  findings: Finding[];
 }
 
 const ENGINE_LABEL: Record<string, string> = {
@@ -82,6 +83,8 @@ export default function ScorecardPanel() {
       {loading && <Text variant="caption">Loading…</Text>}
       {error && <Text variant="caption" className="text-error-600">{error}</Text>}
 
+      {data && <FindingsPanel findings={data.findings} anyGraded={data.engines.some(e => e.graded > 0)} />}
+
       {data?.engines.map(card => <EngineCard key={card.engine} card={card} />)}
 
       {data && Object.keys(ENGINE_LABEL)
@@ -92,6 +95,36 @@ export default function ScorecardPanel() {
             <Text variant="caption">No snapshots yet · captures from {ENGINE_SOURCE[engine]}</Text>
           </div>
         ))}
+    </div>
+  );
+}
+
+function FindingsPanel({ findings, anyGraded }: { findings: Finding[]; anyGraded: boolean }) {
+  return (
+    <div className="bg-surface rounded-lg border border-border p-5 space-y-2">
+      <Heading as="h3">Findings</Heading>
+      {findings.length === 0 && (
+        <Text variant="caption">
+          {anyGraded
+            ? 'No statistically significant misses. Every bias is inside its noise floor at the current sample size.'
+            : 'Nothing graded yet — findings appear once actuals are scored.'}
+        </Text>
+      )}
+      {findings.map((f, i) => (
+        <div key={i} className="flex items-start gap-2">
+          <span
+            className={`mt-0.5 shrink-0 px-1.5 py-0.5 rounded text-xs font-mono uppercase ${
+              f.severity === 'flag' ? 'bg-error-100 text-error-700' : 'bg-accent-100 text-accent-800'
+            }`}
+          >
+            {f.severity}
+          </span>
+          <div>
+            <Text className="font-medium">{f.title}</Text>
+            <Text variant="caption" className="font-mono">{f.detail}</Text>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -115,7 +148,8 @@ function EngineCard({ card }: { card: EngineScorecard }) {
         <Heading as="h3">{ENGINE_LABEL[card.engine] ?? card.engine}</Heading>
         <Text variant="caption" className="font-mono">
           {card.snapshots} snapshots · {card.future} future · {card.pendingActuals} pending ·{' '}
-          {card.graded} graded · {card.didNotPlay} DNP
+          {card.graded} graded · {card.didNotPlay} DNP ·{' '}
+          {card.coverage.capturedDays}/{card.coverage.spanDays}d captured
         </Text>
       </div>
 
@@ -135,6 +169,33 @@ function EngineCard({ card }: { card: EngineScorecard }) {
           <CalibrationTable title="Win probability calibration" buckets={card.wCalibration} />
         )}
       </div>
+
+      {card.scoreBuckets && card.scoreBuckets.length > 1 && (
+        <Section title="Score buckets → realized outcomes">
+          <table className="w-full text-sm font-mono">
+            <thead>
+              <tr className="text-left border-b border-border">
+                <th className="py-1 pr-4 font-normal">Predicted score</th>
+                <th className="py-1 pr-4 font-normal">n</th>
+                {Object.keys(card.scoreBuckets[0].outcomes).map(k => (
+                  <th key={k} className="py-1 pr-4 font-normal uppercase">{k}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {card.scoreBuckets.map(b => (
+                <tr key={b.bucket} className="border-b border-border/40">
+                  <td className="py-1 pr-4">{b.bucket}</td>
+                  <td className="py-1 pr-4">{b.n}</td>
+                  {Object.values(b.outcomes).map((v, i) => (
+                    <td key={i} className="py-1 pr-4">{v}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
+      )}
 
       {card.rankBuckets && card.rankBuckets.length > 0 && (
         <Section title="FA board rank → realized points">
@@ -258,22 +319,30 @@ function StatTable({ title, stats }: { title: string; stats: StatGrade[] }) {
             <th className="py-1 pr-4 font-normal">Predicted</th>
             <th className="py-1 pr-4 font-normal">Actual</th>
             <th className="py-1 pr-4 font-normal">Bias</th>
+            <th className="py-1 pr-4 font-normal">Bias %</th>
             <th className="py-1 pr-4 font-normal">MAE</th>
           </tr>
         </thead>
         <tbody>
-          {stats.map(s => (
+          {stats.map(s => {
+            // Same significance test the findings run: bias vs its noise floor.
+            const significant = s.se > 0 && Math.abs(s.bias / s.se) >= 3 && s.biasPct !== null && Math.abs(s.biasPct) >= 0.05;
+            return (
             <tr key={s.stat} className="border-b border-border/40">
               <td className="py-1 pr-4 uppercase">{s.stat}</td>
               <td className="py-1 pr-4">{s.n}</td>
               <td className="py-1 pr-4">{s.predictedMean}</td>
               <td className="py-1 pr-4">{s.actualMean}</td>
-              <td className={`py-1 pr-4 ${Math.abs(s.bias) > s.mae * 0.5 && s.n >= 20 ? 'text-error-600' : ''}`}>
+              <td className={`py-1 pr-4 ${significant ? 'text-error-600' : ''}`}>
                 {fmtSigned(s.bias)}
+              </td>
+              <td className={`py-1 pr-4 ${significant ? 'text-error-600' : ''}`}>
+                {s.biasPct === null ? '—' : `${fmtSigned(Math.round(s.biasPct * 100))}%`}
               </td>
               <td className="py-1 pr-4">{s.mae}</td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </Section>

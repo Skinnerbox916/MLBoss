@@ -23,12 +23,12 @@ export async function GET(request: Request) {
     const from = searchParams.get('from');
     const to = searchParams.get('to');
 
-    const cards = await buildScorecard(authz.userId, {
+    const scorecard = await buildScorecard(authz.userId, {
       engine: ENGINES.includes(engineParam as ForecastEngine) ? (engineParam as ForecastEngine) : undefined,
       from: isDate(from) ? (from as string) : undefined,
       to: isDate(to) ? (to as string) : undefined,
     });
-    return NextResponse.json({ engines: cards });
+    return NextResponse.json(scorecard);
   } catch (error) {
     console.error('/api/admin/forecast/scorecard failed:', error);
     return NextResponse.json(

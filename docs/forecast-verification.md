@@ -37,11 +37,26 @@ The categories streaming boards are ranked client-side (see [streaming-page.md](
 
 Safety: an empty game log for a player we forecast is treated as a failed fetch (skip + retry next run), never as "didn't play" — first-write-wins storage means a wrong `no_game` would be permanent. Per-game parsers: `parsePitcherGameLines` / `parseBatterGameLines` in `src/lib/mlb/model/playerStats.ts` (IP converted via `parseIPToOuts`, not `parseFloat`).
 
+## Findings
+
+The page leads with **findings** — automatic, significance-tested flags — because per-game baseball stats are noisy enough that raw bias tables either scream everywhere or nowhere. A finding needs `|t| ≥ 3` (flag) or `≥ 2` (watch), where `t = bias / SE`, **and** a relative bias ≥ 5% / 3% of the actual mean. The t-bar is deliberately high: the page tests ~30 stat × slice combinations at once, so at t = 2 one false alarm per page is expected — treat *watch* as a hypothesis, *flag* as a to-do.
+
+Detectors (in `buildScorecard`):
+
+- **Per-stat bias** per engine (min n: 300 batter-days / 50 starts / 30 points rows; rare-event stats with actual mean < 0.05/game are excluded from ratio tests).
+- **Conditional bias slices** — where aggregate tables hide misses: home/away (both sides), platoon side vs LHP/RHP, hitter vs pitcher parks, lineup spots 1–3 vs 7–9 (PA model). Two-sample t on the group biases. Slice keys come from snapshot `context` — new slices need the context captured *from that day forward*, which is why capture context is deliberately rich.
+- **Probability calibration** (QS, W): any bucket whose forecast rate misses the realized rate by ≥ 6 points (n ≥ 25).
+- **Discrimination inversion**: the 70+ composite-score bucket must out-produce the <45 bucket (K for pitchers, TB for batters), or the score isn't ranking.
+- **Board-rank inversion** (points): FA ranks 1–3 realizing fewer points than ranks 11+.
+- **Did-not-play rate**: scratches/bench days above baseline (a playing-time forecast miss, not noise).
+- **Operational**: capture-coverage gaps (< 75% of days in span) and actuals backlog.
+
 ## Scorecard
 
 `src/lib/ledger/scorecard.ts`, served by `GET /api/admin/forecast/scorecard`. All metrics computed in app code over one joined query — adding a slice never needs a migration.
 
-- **Bias** (mean predicted − actual) and **MAE** per stat per engine. Bias is the tuning signal; MAE is the noise floor.
+- **Bias** (mean predicted − actual), **relative bias** (% of actual mean — comparable across stats), and **MAE** per stat per engine. Bias is the tuning signal; MAE is the noise floor.
+- **Score buckets** — realized production by predicted composite score (<45 / 45–55 / 55–70 / 70+): the discrimination view behind "does an 80 actually out-produce a 55?"
 - **Calibration** for probability forecasts (QS, W): predicted-probability buckets vs realized rates.
 - **Lead-day segments** — D−0 vs D−3 accuracy.
 - **Model-version segments** — before/after a tuning change (see below).

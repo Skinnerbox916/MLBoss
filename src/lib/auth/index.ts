@@ -10,3 +10,6 @@ export type { YahooUserInfo } from './yahoo-oauth';
 
 export { getSession, sessionOptions } from './session';
 export type { SessionData } from './session';
+
+export { requireOperator } from './authz';
+export type { OperatorCheck } from './authz';

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
+import { useSyncedPref } from './useSyncedPref';
 import type { ForecastEntry } from '@/lib/league/forecast';
 import {
   computeCategoryLeverage,
@@ -11,7 +12,8 @@ import {
 /**
  * L6 mirror of `useCategoryWeights` (the L5 matchup hook): per-category
  * leverage from the league forecast, with a concede/contest override
- * store in localStorage. Weight = conceded ? 0 : pivotality(distance) —
+ * store synced server-side per user (`useSyncedPref`).
+ * Weight = conceded ? 0 : pivotality(distance) —
  * distance is the roster layer's own, side-aware per entry (RUPM moves
  * where priced, z otherwise). Pass BOTH sides' entries in ONE call: the
  * chase-coalition auto-concede reasons over the whole matchup's scored
@@ -33,35 +35,17 @@ function isConcedeState(v: unknown): v is ConcedeState {
   return v === 'concede' || v === 'contest';
 }
 
-function loadOverrides(persistKey: string | undefined): Record<number, ConcedeState> {
-  if (!persistKey || typeof window === 'undefined') return {};
-  try {
-    const raw = window.localStorage.getItem(persistKey);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const clean: Record<number, ConcedeState> = {};
-    for (const [statId, value] of Object.entries(parsed)) {
-      const id = Number(statId);
-      if (Number.isFinite(id) && isConcedeState(value)) clean[id] = value;
-    }
-    return clean;
-  } catch {
-    return {};
+function cleanOverrides(raw: unknown): Record<number, ConcedeState> {
+  if (!raw || typeof raw !== 'object') return {};
+  const clean: Record<number, ConcedeState> = {};
+  for (const [statId, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = Number(statId);
+    if (Number.isFinite(id) && isConcedeState(value)) clean[id] = value;
   }
+  return clean;
 }
 
-function persistOverrides(persistKey: string | undefined, overrides: Record<number, ConcedeState>) {
-  if (!persistKey || typeof window === 'undefined') return;
-  try {
-    if (Object.keys(overrides).length === 0) {
-      window.localStorage.removeItem(persistKey);
-    } else {
-      window.localStorage.setItem(persistKey, JSON.stringify(overrides));
-    }
-  } catch {
-    // ignore quota / serialization errors — overrides just won't persist
-  }
-}
+const noOverrides = (v: Record<number, ConcedeState>) => Object.keys(v).length === 0;
 
 export interface RosterCategoryWeights {
   /** Full leverage detail per stat (distance, weight, status). */
@@ -80,17 +64,11 @@ export function useRosterCategoryWeights(
   opts: { persistKey?: string },
 ): RosterCategoryWeights {
   const { persistKey } = opts;
-  const [overrides, setOverrides] = useState<Record<number, ConcedeState>>(() =>
-    loadOverrides(persistKey),
+  const [overrides, setOverrides] = useSyncedPref<Record<number, ConcedeState>>(
+    persistKey,
+    cleanOverrides,
+    noOverrides,
   );
-
-  useEffect(() => {
-    setOverrides(loadOverrides(persistKey));
-  }, [persistKey]);
-
-  useEffect(() => {
-    persistOverrides(persistKey, overrides);
-  }, [persistKey, overrides]);
 
   const leverage = useMemo(
     () => computeCategoryLeverage(entries, overrides),
@@ -123,10 +101,10 @@ export function useRosterCategoryWeights(
         return { ...prev, [statId]: currentlyConceded ? 'contest' : 'concede' };
       });
     },
-    [leverage],
+    [leverage, setOverrides],
   );
 
-  const reset = useCallback(() => setOverrides({}), []);
+  const reset = useCallback(() => setOverrides({}), [setOverrides]);
 
   return {
     leverage,

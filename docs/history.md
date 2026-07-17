@@ -8,6 +8,17 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — localStorage strategy prefs replaced by the server-side pref store; single-user framing retired
+
+Concede/contest overrides (`useCategoryWeights`, `useRosterCategoryWeights`) and target-depth steppers (`loadPreferredDepth`/`savePreferredDepth`) used to persist in browser localStorage. That was fine for one user on one machine, but it meant phone and desktop carried *different strategy states* and clearing browser data silently wiped mid-week concede calls. Same day, the owner retired the "single-user app" design assumption entirely (target: usable by 15–100 users), which added Postgres as the durable third storage leg (users + roles, prefs, forecast ledger — see [data-architecture.md#the-three-storage-legs](./data-architecture.md#the-three-storage-legs)).
+
+**Replaced with:** `useSyncedPref` (`src/lib/hooks/useSyncedPref.ts`) — localStorage stays as the instant-read/offline cache, but the durable copy lives in `user_prefs` via `/api/user/prefs`, server value wins, non-empty local values migrate up once. `usePreferredDepth` wraps it for the depth steppers.
+
+Don't reintroduce:
+
+- **Raw localStorage persistence for user strategy/preference state.** Anything the user *decides* must survive devices and browser resets — add a key through `useSyncedPref`, not `window.localStorage`. Device-local UI state (sidebar collapse, active-league selection) legitimately stays in localStorage.
+- **"It's a single-user app" as a design justification.** Schema and authz are multi-tenant now (users table, operator role gating /admin). The *rollout* posture (no compat shims, whole-architecture branches) still stands while there are zero external users.
+
 ## 2026-07 — Roster auto-concede: per-cat reachability replaced by the chase coalition
 
 The roster page's auto-concede used to be a per-category rule: concede iff no rank-1/2 target within `REACHABLE_GAP_MOVES` (2.0) of *that cat alone* (batters), or a z-deficit rule (pitchers). On any mid-pack competitive roster this concedes nothing — a team ranked 3rd everywhere sees nine individually-"reachable" rank-1 targets whose combined price (~8 moves on live July data) no manager can pay. Every tile said "chaseable with moves," every tile got a "→ 1st" chip, and the caption literally fell through to "chaseable with moves" even when `movesToTarget` was undefined (the SV case: 0.00 projected saves, rank 10, no target — labeled chaseable). Owner verdict that triggered the rebuild: "when I'm chasing everything, I'm chasing nothing."

@@ -20,7 +20,8 @@ This index is the single authoritative table of contents for all Markdown docs i
 - **[stat-levels.md](./stat-levels.md)** — The four stat levels (raw counting / raw rate / regressed talent / matchup-adjusted) and common pitfalls.
 - **[league-baselines.md](./league-baselines.md)** — Cross-engine league-mean constants (`LEAGUE_K_RATE`, `LEAGUE_OPS`, etc.).
 - **[points-leagues.md](./points-leagues.md)** — Points-league engine layer (rate vectors, values, VOR, moves) and the points roster page.
-- **[data-architecture.md](./data-architecture.md)** — Source / model / compose layering, cache tier discipline, identity contract.
+- **[data-architecture.md](./data-architecture.md)** — Source / model / compose layering, the three storage legs (Redis cache / obs / Postgres ledger), cache tier discipline, identity contract.
+- **[forecast-verification.md](./forecast-verification.md)** — The forecast ledger and scorecard: snapshotting engine predictions, grading them against actual MLB results, model-version discipline. Operator-only, never feeds back into engines.
 - **[stats.md](./stats.md)** — Canonical `stat_id` model, stat enrichment, disambiguation patterns.
 
 ### UI and page-specific

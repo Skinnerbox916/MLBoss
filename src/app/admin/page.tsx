@@ -22,6 +22,11 @@ export default async function AdminPage() {
               title="Cache"
               description="View cached keys by tier, clear stale data"
             />
+            <AdminCard
+              href="/admin/forecast"
+              title="Forecast Scorecard"
+              description="Grade prediction engines against actual MLB results"
+            />
           </div>
         </div>
       </main>

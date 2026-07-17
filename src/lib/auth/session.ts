@@ -6,6 +6,13 @@ export interface SessionData {
     id: string;
     email: string;
     name: string;
+    /**
+     * Authorization role, resolved at login (users table + operator env
+     * allowlist). Optional because sessions minted before roles existed
+     * lack it — middleware treats missing as 'user', so pre-role cookies
+     * must re-login to reach /admin.
+     */
+    role?: 'operator' | 'user';
     accessToken: string;
     refreshToken: string;
     expiresAt: number;

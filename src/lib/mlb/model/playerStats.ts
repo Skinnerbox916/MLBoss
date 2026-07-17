@@ -315,3 +315,103 @@ export function aggregatePitcherRecentForm(
     ip: totalIP,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Per-game lines — forecast-ledger grading
+// ---------------------------------------------------------------------------
+
+/** One pitching appearance's full counting line, dated. IP is true decimal
+ *  innings (5.2 → 5.667 via outs), unlike `PitcherAppearance.ip`'s
+ *  parseFloat approximation which only weights SoS samples. */
+export interface PitcherGameLine {
+  date: string;
+  isStart: boolean;
+  ip: number;
+  outs: number;
+  battersFaced: number;
+  k: number;
+  bb: number;
+  er: number;
+  h: number;
+  hr: number;
+  w: number;
+  sv: number;
+  /** Hit batsmen (points leagues can score HBP-against). */
+  hb: number;
+}
+
+export function parsePitcherGameLines(gameLog: RawSplit[]): PitcherGameLine[] {
+  const out: PitcherGameLine[] = [];
+  for (const entry of gameLog) {
+    if (!entry.date) continue;
+    const s = entry.stat;
+    const outs = parseIPToOuts(s.inningsPitched ?? '0');
+    out.push({
+      date: entry.date,
+      isStart: (s.gamesStarted ?? 0) >= 1,
+      ip: outs / 3,
+      outs,
+      battersFaced: s.battersFaced ?? s.plateAppearances ?? 0,
+      k: s.strikeOuts ?? 0,
+      bb: s.baseOnBalls ?? 0,
+      er: s.earnedRuns ?? 0,
+      h: s.hits ?? 0,
+      hr: s.homeRuns ?? 0,
+      w: s.wins ?? 0,
+      sv: s.saves ?? 0,
+      hb: s.hitByPitch ?? 0,
+    });
+  }
+  return out;
+}
+
+/** One batting game's counting line, dated. Singles/TB derived the same
+ *  way `parseSplitLine` derives them. */
+export interface BatterGameLine {
+  date: string;
+  pa: number;
+  ab: number;
+  h: number;
+  singles: number;
+  doubles: number;
+  triples: number;
+  hr: number;
+  r: number;
+  rbi: number;
+  sb: number;
+  bb: number;
+  k: number;
+  hbp: number;
+  tb: number;
+}
+
+export function parseBatterGameLines(gameLog: RawSplit[]): BatterGameLine[] {
+  const out: BatterGameLine[] = [];
+  for (const entry of gameLog) {
+    if (!entry.date) continue;
+    const s = entry.stat;
+    const h = s.hits ?? 0;
+    const doubles = s.doubles ?? 0;
+    const triples = s.triples ?? 0;
+    const hr = s.homeRuns ?? 0;
+    const singles = Math.max(0, h - doubles - triples - hr);
+    out.push({
+      date: entry.date,
+      pa: s.plateAppearances ?? 0,
+      ab: s.atBats ?? 0,
+      h,
+      singles,
+      doubles,
+      triples,
+      hr,
+      r: s.runs ?? 0,
+      rbi: s.rbi ?? 0,
+      sb: s.stolenBases ?? 0,
+      bb: s.baseOnBalls ?? 0,
+      k: s.strikeOuts ?? 0,
+      hbp: s.hitByPitch ?? 0,
+      tb: singles + doubles * 2 + triples * 3 + hr * 4,
+    });
+  }
+  return out;
+}

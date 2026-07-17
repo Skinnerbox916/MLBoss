@@ -25,6 +25,18 @@ export const ENV_SCHEMA: EnvVarMeta[] = [
     example: 'a83f5c3…'
   },
   {
+    key: 'DATABASE_URL',
+    required: true,
+    description: 'Postgres connection string — the durable ledger (users, prefs, forecast snapshots).',
+    example: 'postgresql://mlboss:password@localhost:5432/mlboss'
+  },
+  {
+    key: 'OPERATOR_YAHOO_GUIDS',
+    required: false,
+    description: 'Comma-separated Yahoo GUIDs granted the operator role at login (bootstrap authority for /admin). The users.role column can promote others later.',
+    example: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  },
+  {
     key: 'REDIS_URL',
     required: false,
     description: 'Preferred way to configure Redis. When set, takes precedence over REDIS_HOST/PORT/DB. Either REDIS_URL or REDIS_HOST must be provided.',

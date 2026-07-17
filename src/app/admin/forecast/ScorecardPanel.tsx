@@ -256,7 +256,9 @@ function EngineCard({ card }: { card: EngineScorecard }) {
                   <td className="py-1 pr-4">{m.playerName}</td>
                   <td className="py-1 pr-4">{m.n}</td>
                   {m.biases.map(b => (
-                    <td key={b.stat} className="py-1 pr-4">{fmtSigned(b.bias)}</td>
+                    <td key={b.stat} className={`py-1 pr-4 ${b.significant ? 'text-error-600' : ''}`}>
+                      {fmtSigned(b.bias)}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -299,7 +301,9 @@ function CalibrationTable({ title, buckets }: { title: string; buckets: Calibrat
               <td className="py-1 pr-4">{b.bucket}</td>
               <td className="py-1 pr-4">{b.n}</td>
               <td className="py-1 pr-4">{Math.round(b.predictedMean * 100)}%</td>
-              <td className="py-1 pr-4">{Math.round(b.actualRate * 100)}%</td>
+              <td className={`py-1 pr-4 ${b.significant ? 'text-error-600' : ''}`}>
+                {Math.round(b.actualRate * 100)}%
+              </td>
             </tr>
           ))}
         </tbody>
@@ -319,6 +323,7 @@ function StatTable({ title, stats }: { title: string; stats: StatGrade[] }) {
             <th className="py-1 pr-4 font-normal">Predicted</th>
             <th className="py-1 pr-4 font-normal">Actual</th>
             <th className="py-1 pr-4 font-normal">Bias</th>
+            <th className="py-1 pr-4 font-normal">±95%</th>
             <th className="py-1 pr-4 font-normal">Bias %</th>
             <th className="py-1 pr-4 font-normal">MAE</th>
           </tr>
@@ -336,6 +341,7 @@ function StatTable({ title, stats }: { title: string; stats: StatGrade[] }) {
               <td className={`py-1 pr-4 ${significant ? 'text-error-600' : ''}`}>
                 {fmtSigned(s.bias)}
               </td>
+              <td className="py-1 pr-4">{s.se > 0 ? `±${(1.96 * s.se).toFixed(2)}` : '—'}</td>
               <td className={`py-1 pr-4 ${significant ? 'text-error-600' : ''}`}>
                 {s.biasPct === null ? '—' : `${fmtSigned(Math.round(s.biasPct * 100))}%`}
               </td>

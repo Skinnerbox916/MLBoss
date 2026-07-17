@@ -47,13 +47,15 @@ export interface CalibrationBucket {
   n: number;
   predictedMean: number;
   actualRate: number;
+  /** Realized rate outside the binomial 95% band of the forecast rate. */
+  significant: boolean;
 }
 
 export interface PlayerMiss {
   mlbId: number;
   playerName: string;
   n: number;
-  biases: { stat: string; bias: number }[];
+  biases: { stat: string; bias: number; significant: boolean }[];
 }
 
 export interface RankBucket {
@@ -173,11 +175,15 @@ function calibrate(rows: { p: number; hit: boolean }[]): CalibrationBucket[] {
   for (let i = 0; i < edges.length - 1; i++) {
     const inBucket = rows.filter(r => r.p >= edges[i] && r.p < edges[i + 1]);
     if (inBucket.length === 0) continue;
+    const predictedMean = inBucket.reduce((s, r) => s + r.p, 0) / inBucket.length;
+    const actualRate = inBucket.filter(r => r.hit).length / inBucket.length;
+    const binomialSe = Math.sqrt(Math.max(predictedMean * (1 - predictedMean), 1e-9) / inBucket.length);
     out.push({
       bucket: `${Math.round(edges[i] * 100)}–${Math.min(100, Math.round(edges[i + 1] * 100))}%`,
       n: inBucket.length,
-      predictedMean: round(inBucket.reduce((s, r) => s + r.p, 0) / inBucket.length),
-      actualRate: round(inBucket.filter(r => r.hit).length / inBucket.length),
+      predictedMean: round(predictedMean),
+      actualRate: round(actualRate),
+      significant: Math.abs(predictedMean - actualRate) > 1.96 * binomialSe,
     });
   }
   return out;
@@ -205,13 +211,14 @@ function playerMisses(rows: JoinedRow[], stats: string[], side: Side, minN: numb
       mlbId,
       playerName: rs[0].playerName,
       n: rs.length,
-      biases: stats.map(stat => ({
-        stat,
-        bias: round(
-          rs.reduce((s, r) => s + ((r.predicted[stat] ?? 0) - (lineOf(r, side)[stat] ?? 0)), 0) / rs.length,
-          2,
-        ),
-      })),
+      biases: stats.map(stat => {
+        const g = gradeOne(rs, stat, side);
+        return {
+          stat,
+          bias: round(g.bias, 2),
+          significant: g.se > 0 && Math.abs(g.bias / g.se) >= 2,
+        };
+      }),
     }))
     .sort((a, b) =>
       b.biases.reduce((s, x) => s + Math.abs(x.bias), 0) -
@@ -475,6 +482,23 @@ export async function buildScorecard(
           'home', r => r.context.isHome === true, 'away', r => r.context.isHome === false);
         if (f) findings.push(f);
       }
+
+      // Knob grading: bias split by how hard a modifier was applied. A
+      // significant difference means the knob itself is mis-scaled, not
+      // the underlying talent estimate. Multiplier semantics: >1 boosts
+      // the pitcher (see ContextMultiplier in pitching/forecast.ts).
+      const mult = (r: JoinedRow, key: string): number | undefined =>
+        (r.context.mults as Record<string, number> | undefined)?.[key];
+      const knobSlices: [string, string, string, (r: JoinedRow) => boolean, string, (r: JoinedRow) => boolean][] = [
+        ['er', 'park modifier', 'pitcher-friendly (≥+3%)', r => (mult(r, 'park') ?? 1) >= 1.03,
+          'hitter-friendly (≤−3%)', r => (mult(r, 'park') ?? 1) <= 0.97],
+        ['k', 'opponent modifier', 'weak offenses (≥+3%)', r => (mult(r, 'opp') ?? 1) >= 1.03,
+          'strong offenses (≤−3%)', r => (mult(r, 'opp') ?? 1) <= 0.97],
+      ];
+      for (const [stat, label, aName, aTest, bName, bTest] of knobSlices) {
+        const f = sliceFinding(engine, played, 'pit', stat, label, aName, aTest, bName, bTest);
+        if (f) findings.push(f);
+      }
     }
 
     if (engine === 'batter-day') {
@@ -492,6 +516,12 @@ export async function buildScorecard(
           'pitcher parks (PF≤97)', r => typeof r.context.parkFactor === 'number' && r.context.parkFactor <= 97],
         ['pa', 'lineup spot', 'spots 1–3', r => typeof r.context.spot === 'number' && r.context.spot <= 3,
           'spots 7–9', r => typeof r.context.spot === 'number' && r.context.spot >= 7],
+        // Knob grading: total applied context modifier vs realized TB. A
+        // significant split = modifiers over/under-applied as a class.
+        ['tb', 'applied TB modifier', 'boosted (≥+5%)',
+          r => ((r.context.mods as Record<string, number> | undefined)?.tb ?? 1) >= 1.05,
+          'dampened (≤−5%)',
+          r => ((r.context.mods as Record<string, number> | undefined)?.tb ?? 1) <= 0.95],
       ];
       for (const [stat, label, aName, aTest, bName, bTest] of slices) {
         const f = sliceFinding(engine, played, 'bat', stat, label, aName, aTest, bName, bTest);

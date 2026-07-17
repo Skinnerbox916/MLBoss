@@ -38,6 +38,8 @@ export interface SnapshotRow {
   context: Record<string, unknown>;
 }
 
+const round3 = (n: number) => Number(n.toFixed(3));
+
 /** Today's date in ET — MLB game dates are ET-anchored. */
 export function todayEt(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
@@ -131,8 +133,13 @@ export async function capturePitcherSlate(
           isHome,
           venue: game.venue.name,
           parkKnown: game.park !== null,
-          parkMult: forecast.multipliers.park.multiplier,
           oppPitcherKnown: opposing?.talent != null,
+          // Per-knob attribution: each L2 modifier as applied (>1 boosts
+          // the pitcher). Lets the scorecard grade the knob, not just the
+          // total — "did starts we park-boosted actually allow fewer runs?"
+          mults: Object.fromEntries(
+            Object.entries(forecast.multipliers).map(([k, m]) => [k, round3(m.multiplier)]),
+          ),
         },
       });
     }
@@ -222,9 +229,15 @@ export async function captureBatterSlate(
       pa: day.expectedPA,
       score: day.rating.score,
     };
+    // Per-stat modifier attribution: adjusted / talent-baseline rate ratio
+    // (park + platoon + opp SP + weather + order, combined). >1 = the
+    // matchup context boosted this stat above the player's neutral talent.
+    const mods: Record<string, number> = {};
     for (const [key, statId] of BATTER_STAT_KEYS) {
       const cat = proj.byCategory.get(statId);
       if (cat) predicted[key] = cat.expectedCount;
+      const rated = day.rating.categories.find(c => c.statId === statId);
+      if (rated && rated.baseline > 1e-9) mods[key] = round3(rated.expected / rated.baseline);
     }
     rows.push({
       gameDate,
@@ -245,6 +258,7 @@ export async function captureBatterSlate(
         spThrows: day.spThrows ?? null,
         parkFactor: day.parkFactor ?? null,
         weatherFlag: day.weatherFlag ?? null,
+        mods,
       },
     });
   }

@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { pivotality } from '@/lib/rating/pivotality';
+import { useSyncedPref } from './useSyncedPref';
 import type { MatchupAnalysis } from '@/lib/matchup/analysis';
 
 /**
@@ -15,8 +16,9 @@ import type { MatchupAnalysis } from '@/lib/matchup/analysis';
  *    A winning cat is never auto-conceded — a locked lead stays in-play
  *    (deweighted by the bell), it just isn't worth chasing.
  *  - **Override**: the user can `concede` any cat or `contest` (un-concede) an
- *    auto-conceded one. Overrides persist to localStorage when `persistKey` is
- *    given (roster page), else they're ephemeral (weekly matchup).
+ *    auto-conceded one. Overrides persist server-side per user (synced via
+ *    `useSyncedPref`) when `persistKey` is given, else they're ephemeral
+ *    (weekly matchup).
  *
  *   weight(cat) = conceded ? 0 : pivotality(margin)
  */
@@ -29,35 +31,17 @@ function isConcedeState(v: unknown): v is ConcedeState {
   return v === 'concede' || v === 'contest';
 }
 
-function loadOverrides(persistKey: string | undefined): Record<number, ConcedeState> {
-  if (!persistKey || typeof window === 'undefined') return {};
-  try {
-    const raw = window.localStorage.getItem(persistKey);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const clean: Record<number, ConcedeState> = {};
-    for (const [statId, value] of Object.entries(parsed)) {
-      const id = Number(statId);
-      if (Number.isFinite(id) && isConcedeState(value)) clean[id] = value;
-    }
-    return clean;
-  } catch {
-    return {};
+function cleanOverrides(raw: unknown): Record<number, ConcedeState> {
+  if (!raw || typeof raw !== 'object') return {};
+  const clean: Record<number, ConcedeState> = {};
+  for (const [statId, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = Number(statId);
+    if (Number.isFinite(id) && isConcedeState(value)) clean[id] = value;
   }
+  return clean;
 }
 
-function persistOverrides(persistKey: string | undefined, overrides: Record<number, ConcedeState>) {
-  if (!persistKey || typeof window === 'undefined') return;
-  try {
-    if (Object.keys(overrides).length === 0) {
-      window.localStorage.removeItem(persistKey);
-    } else {
-      window.localStorage.setItem(persistKey, JSON.stringify(overrides));
-    }
-  } catch {
-    // ignore quota / serialization errors — overrides just won't persist
-  }
-}
+const noOverrides = (v: Record<number, ConcedeState>) => Object.keys(v).length === 0;
 
 export interface CategoryWeights {
   /** statId → composite weight (0 = conceded). Pass to the rating engines. */
@@ -79,15 +63,11 @@ export function useCategoryWeights(
   predicate: (statId: number) => boolean,
   persistKey?: string,
 ): CategoryWeights {
-  const [overrides, setOverrides] = useState<Record<number, ConcedeState>>(() => loadOverrides(persistKey));
-
-  useEffect(() => {
-    setOverrides(loadOverrides(persistKey));
-  }, [persistKey]);
-
-  useEffect(() => {
-    persistOverrides(persistKey, overrides);
-  }, [persistKey, overrides]);
+  const [overrides, setOverrides] = useSyncedPref<Record<number, ConcedeState>>(
+    persistKey,
+    cleanOverrides,
+    noOverrides,
+  );
 
   // Margin per stat for this side, plus the auto-conceded set (decided losses).
   const { marginByStatId, autoConceded } = useMemo(() => {
@@ -136,10 +116,10 @@ export function useCategoryWeights(
         return { ...prev, [statId]: currentlyConceded ? 'contest' : 'concede' };
       });
     },
-    [autoConceded],
+    [autoConceded, setOverrides],
   );
 
-  const reset = useCallback(() => setOverrides({}), []);
+  const reset = useCallback(() => setOverrides({}), [setOverrides]);
 
   return {
     categoryWeights,

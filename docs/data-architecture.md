@@ -81,6 +81,16 @@ import { fetchStatSplitsForSeason } from '../source';   // FORBIDDEN
 
 If a model-layer function needs data, the orchestrator passes it in. The model layer never reaches across the seam.
 
+## The three storage legs
+
+| Leg | Store | Holds | Contract |
+|---|---|---|---|
+| **Cache + sessions** | Redis (`cache:*`, `user:*`, `token:*`) | Anything rebuildable from upstream APIs | Tiered TTLs via `withCache` (below); safe to flush by tier |
+| **Observations** | Redis (`obs:*`) | Small witnessed signals that decay to "no signal" | See [Observation stores](#observation-stores) |
+| **Durable ledger** | Postgres (Drizzle, `src/lib/db/`) | What can't be refetched and must accumulate: users + roles, per-user preferences, forecast snapshots + graded actuals | Migrations via `npm run db:generate` / `db:migrate`; schema is user-scoped (multi-tenant) from day one |
+
+Rule of thumb: if losing it means waiting for the world to repeat itself, it's ledger (or an `obs:` key when it's a small decaying signal); if you can refetch it, it's cache. Feature code never talks to `pg` directly — go through the modules in `src/lib/db/` (users, prefs) and `src/lib/ledger/` (forecast verification, see [forecast-verification.md](./forecast-verification.md)).
+
 ## The fetch + cache contract
 
 ### One primitive
@@ -201,7 +211,7 @@ Some Redis data is **observed, not fetched** — recorded from something we witn
 - They are written via `redisUtils` directly from a dedicated store module — the one sanctioned exception to "all Redis writes go through `withCache`/`cacheResult`", because those helpers force the `cache:` prefix.
 - They still carry a TTL when going stale is the desired behavior (decay to "no signal"), chosen by the store, not by the cache tiers.
 
-Current stores: `obs:batter-lineup-spot:{mlbId}` in [src/lib/mlb/lineupSpots.ts](../src/lib/mlb/lineupSpots.ts) — last-observed batting-order slot per batter, 7-day decay, feeds the future-day opportunity multiplier. Before adding a second store, confirm the data truly can't be refetched; "expensive to refetch" is a cache-tier problem, not an observation.
+Current stores: `obs:batter-lineup-spot:{mlbId}` in [src/lib/mlb/lineupSpots.ts](../src/lib/mlb/lineupSpots.ts) — last-observed batting-order slot per batter, 7-day decay, feeds the future-day opportunity multiplier. Before adding a second store, confirm the data truly can't be refetched; "expensive to refetch" is a cache-tier problem, not an observation. Observations that must accumulate forever rather than decay (forecast snapshots) belong in the Postgres ledger instead — see [The three storage legs](#the-three-storage-legs).
 
 ## Identity contract — Yahoo to MLB
 

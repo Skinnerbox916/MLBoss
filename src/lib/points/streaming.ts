@@ -120,6 +120,9 @@ export interface PointsStreamStart {
 export interface PointsPitcherStreamRow {
   /** Yahoo player_key — identity for joins and plan state. */
   playerKey: string;
+  /** MLB Stats API id (from the matched probable) — forecast-ledger join
+   *  key. Undefined when the slate match didn't carry one. */
+  mlbId?: number;
   name: string;
   team: string;
   positions: string[];
@@ -168,6 +171,9 @@ export interface PointsBatterPlugRow {
 export interface PointsBatterDayFacts {
   /** Yahoo player_key — identity for joins and plan state. */
   playerKey: string;
+  /** MLB Stats API id (from the season-stats match) — forecast-ledger
+   *  join key. Undefined when stats matching didn't resolve one. */
+  mlbId?: number;
   name: string;
   team: string;
   /** eligible_positions — drives client-side lineup re-solves. */
@@ -187,6 +193,9 @@ export interface PointsBatterDayFacts {
  *  the points-team relief projection instead. */
 export interface PointsMyPitcherFacts {
   playerKey: string;
+  /** MLB Stats API id (from the matched probable) — forecast-ledger join
+   *  key. Undefined for RPs (no probable start to match). */
+  mlbId?: number;
   name: string;
   team: string;
   positions: string[];
@@ -534,12 +543,21 @@ export async function analyzePointsStreaming(
     };
   };
 
+  // The arm's own MLB id, read off the probable side of its first matched
+  // start — the ledger's join key to actual game logs.
+  const armMlbId = (starts: MatchedStart[]): number | undefined => {
+    const s = starts[0];
+    const pp = s ? (s.isHome ? s.game.homeProbablePitcher : s.game.awayProbablePitcher) : null;
+    return pp && pp.mlbId > 0 ? pp.mlbId : undefined;
+  };
+
   const pitcherStreams: PointsPitcherStreamRow[] = toScore
     .map((m): PointsPitcherStreamRow | null => {
       const priced = priceArmStarts(m.fa.name, m.fa.editorial_team_abbr, m.starts);
       if (!priced) return null;
       return {
         playerKey: m.fa.player_key,
+        mlbId: armMlbId(m.starts),
         name: m.fa.name,
         team: m.fa.editorial_team_abbr,
         positions: m.fa.eligible_positions,
@@ -565,6 +583,7 @@ export async function analyzePointsStreaming(
       : null;
     return {
       playerKey: arm.player_key,
+      mlbId: armMlbId(starts),
       name: arm.name,
       team: arm.editorial_team_abbr,
       positions: arm.eligible_positions,
@@ -668,6 +687,7 @@ export async function analyzePointsStreaming(
       .filter(p => batterStats[key(p.name, p.editorial_team_abbr)])
       .map(p => ({
         playerKey: p.player_key,
+        mlbId: batterStats[key(p.name, p.editorial_team_abbr)]?.mlbId || undefined,
         name: p.name,
         team: p.editorial_team_abbr,
         positions: p.eligible_positions,
@@ -683,6 +703,7 @@ export async function analyzePointsStreaming(
         const synthetic = syntheticFA(fa);
         return {
           playerKey: fa.player_key,
+          mlbId: batterStats[key(fa.name, fa.editorial_team_abbr)]?.mlbId || undefined,
           name: fa.name,
           team: fa.editorial_team_abbr,
           positions: fa.eligible_positions,

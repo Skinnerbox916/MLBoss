@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { YahooOAuth, YahooUserInfo, getSession } from '@/lib/auth';
 import { redis, redisUtils } from '@/lib/redis';
+import { upsertUserOnLogin, roleFromEnv } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -80,11 +81,23 @@ export async function GET(request: NextRequest) {
     // Calculate token expiration timestamp
     const expiresAt = Date.now() + (tokenResponse.expires_in * 1000);
 
+    // Upsert the durable user record and resolve the authz role. Login
+    // must survive a Postgres outage, so fall back to the env-only role
+    // check rather than failing the whole flow.
+    let role: 'operator' | 'user';
+    try {
+      role = await upsertUserOnLogin({ id: userId, email: userEmail, name: userName });
+    } catch (dbError) {
+      console.error('users upsert failed — falling back to env-only role:', dbError);
+      role = roleFromEnv(userId);
+    }
+
     // Prepare user data for session
     const userData = {
       id: userId,
       email: userEmail,
       name: userName,
+      role,
       accessToken: tokenResponse.access_token,
       refreshToken: tokenResponse.refresh_token,
       expiresAt: expiresAt

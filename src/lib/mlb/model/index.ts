@@ -10,12 +10,16 @@ export {
   parsePitchingOverallLine,
   aggregatePitcherRecentForm,
   parsePitcherAppearances,
+  parsePitcherGameLines,
+  parseBatterGameLines,
 } from './playerStats';
 
 export type {
   PitcherSeasonLine,
   PitcherOverallLine,
   PitcherAppearance,
+  PitcherGameLine,
+  BatterGameLine,
 } from './playerStats';
 
 export {

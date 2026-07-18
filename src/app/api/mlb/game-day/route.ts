@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
+import { capturePitcherSlateInBackground, captureBatterSlateInBackground } from '@/lib/ledger/capture';
 
 /**
  * GET /api/mlb/game-day?date=YYYY-MM-DD
@@ -24,6 +25,12 @@ export async function GET(request: Request) {
       ...game,
       park: getParkByVenueId(game.venue.mlbId) ?? null,
     }));
+
+    // Forecast-ledger write-through: freeze the L2 forecast for every
+    // probable and every posted-lineup batter on this slate
+    // (fire-and-forget, first-write-wins).
+    capturePitcherSlateInBackground(date, enriched);
+    captureBatterSlateInBackground(date, enriched);
 
     return NextResponse.json({ date, games: enriched });
   } catch (error) {

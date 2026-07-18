@@ -30,10 +30,14 @@ import {
   parsePitchingLine,
   parsePitchingOverallLine,
   parsePitcherAppearances,
+  parsePitcherGameLines,
+  parseBatterGameLines,
   parseSplitLine,
   type PitcherAppearance,
   type PitcherOverallLine,
   type PitcherSeasonLine,
+  type PitcherGameLine,
+  type BatterGameLine,
 } from './model';
 import { fetchPlayerName, resolveMLBId } from './identity';
 import { fetchStatcastBatters } from './savant';
@@ -784,4 +788,31 @@ async function computePitcherTalentBatch(
   );
 
   return results;
+}
+
+/**
+ * Dated per-appearance pitching lines for one season — forecast-ledger
+ * grading. Underlying gamelog fetch is cached 1h; returns [] on failure
+ * (the grader marks those dates unresolved and retries next run).
+ */
+export async function getPitcherGameLines(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<PitcherGameLine[]> {
+  const raw = await fetchPitcherGameLog(mlbId, season);
+  if (!raw) return [];
+  return parsePitcherGameLines(findGroup(raw, 'gameLog'));
+}
+
+/**
+ * Dated per-game batting lines for one season — forecast-ledger grading.
+ * Same contract as `getPitcherGameLines`.
+ */
+export async function getBatterGameLines(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+): Promise<BatterGameLine[]> {
+  const raw = await fetchHittingGameLog(mlbId, season);
+  if (!raw) return [];
+  return parseBatterGameLines(findGroup(raw, 'gameLog'));
 }

@@ -15,8 +15,15 @@ export async function middleware(request: NextRequest) {
     '/roster',
     '/league',
     '/api/fantasy',
-    '/api/admin/test-stats'
+    '/api/admin',
+    '/api/user'
   ];
+
+  // Operator-only surfaces: being logged in is not enough. Role comes from
+  // the session (stamped at login); middleware can't reach Postgres, so new
+  // admin API routes must also call requireOperator() as the authoritative
+  // in-handler check.
+  const operatorRoutes = ['/admin', '/api/admin'];
   
   // Check if the current path matches any protected route
   const isProtectedRoute = protectedRoutes.some(route => 
@@ -47,6 +54,16 @@ export async function middleware(request: NextRequest) {
       signInUrl.searchParams.set('redirect', pathname);
       
       return NextResponse.redirect(signInUrl);
+    }
+
+    // Operator gate — sessions minted before roles existed have no role
+    // field and are treated as plain users (re-login refreshes the stamp).
+    const isOperatorRoute = operatorRoutes.some(route => pathname.startsWith(route));
+    if (isOperatorRoute && session.user.role !== 'operator') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+      return NextResponse.redirect(new URL('/dashboard', request.url));
     }
 
     // Check if the access token is expired

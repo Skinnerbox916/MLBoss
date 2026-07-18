@@ -13,6 +13,8 @@ Environment variable schema is defined in TypeScript at `src/constants/envSchema
 - `YAHOO_CLIENT_ID` / `YAHOO_CLIENT_SECRET` — Yahoo Developer app credentials
 - Redis: `REDIS_URL` (preferred) or the discrete `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB` fallback. Validation in `src/constants/envSchema.ts` requires one or the other.
 - `SESSION_SECRET` — 64-character cookie encryption key
+- `DATABASE_URL` — Postgres connection string (the durable ledger: users, prefs, forecast snapshots)
+- `OPERATOR_YAHOO_GUIDS` — comma-separated Yahoo GUIDs granted the operator role (unlocks `/admin`) at login
 
 **Generate .env.local template:**
 ```typescript
@@ -118,6 +120,25 @@ docker run -d \
 
 # After the initial setup, if the container is ever stopped:
 docker start mlboss-redis
+
+# 2b. Start Postgres (the durable ledger)
+# One-time setup — persistent container with a data volume. Put the same
+# password into DATABASE_URL in .env.local:
+docker run -d \
+  --name mlboss-postgres \
+  --restart unless-stopped \
+  -e POSTGRES_USER=mlboss \
+  -e POSTGRES_PASSWORD=<generate one> \
+  -e POSTGRES_DB=mlboss \
+  -p 127.0.0.1:5432:5432 \
+  -v mlboss-pgdata:/var/lib/postgresql/data \
+  postgres:17-alpine
+
+# After the initial setup, if the container is ever stopped:
+docker start mlboss-postgres
+
+# Apply schema migrations (also after pulling schema changes):
+npm run db:migrate
 
 # 3. Kill any stale dev servers first
 pkill -f "next-server" 2>/dev/null

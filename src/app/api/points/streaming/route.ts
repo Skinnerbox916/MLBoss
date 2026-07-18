@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { getScoringProfile, getLineupCadence, getEarliestPlayableDate, getWeekBounds, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { analyzePointsStreaming } from '@/lib/points/streaming';
+import { capturePointsInBackground } from '@/lib/ledger/capture';
 
 /**
  * GET /api/points/streaming?teamKey=...&leagueKey=...&scoringType=...[&cadence=daily|weekly]
@@ -61,6 +62,11 @@ export async function GET(request: Request) {
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
       () => analyzePointsStreaming(user.id, leagueKey, teamKey, profile, { cadence, earliestPlayableDate, weekBounds }),
     );
+
+    // Forecast-ledger write-through: freeze the priced starts / batter
+    // day-values + board ranks (fire-and-forget, first-write-wins).
+    capturePointsInBackground(leagueKey, analysis);
+
     return NextResponse.json({ leagueKey, teamKey, scoringType, ...analysis });
   } catch (error) {
     console.error('/api/points/streaming failed:', error);

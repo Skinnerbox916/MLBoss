@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { FiAlertTriangle, FiTrendingUp, FiLayers, FiChevronUp, FiChevronDown, FiTarget, FiShield } from 'react-icons/fi';
 import { usePitcherTalent } from '@/lib/hooks/usePitcherTalent';
 import { getPitcherSeasonRating } from '@/lib/pitching/roster';
@@ -42,11 +42,8 @@ import {
 import { computeOpenSlotCount } from '@/lib/roster/openSlots';
 import RosterMoveCard, { type MoveCardDelta } from '@/components/shared/RosterMoveCard';
 import PositionalDepthTable, { DepthStepper, type DepthTableRow } from '@/components/shared/PositionalDepthTable';
-import {
-  loadPreferredDepth,
-  savePreferredDepth,
-  CATEGORIES_PREFERRED_DEPTH_KEY,
-} from '@/lib/roster/preferredDepth';
+import { CATEGORIES_PREFERRED_DEPTH_KEY } from '@/lib/roster/preferredDepth';
+import { usePreferredDepth } from '@/lib/hooks/usePreferredDepth';
 import RosterFocusPanel from './RosterFocusPanel';
 import { useLeagueForecast } from '@/lib/hooks/useLeagueForecast';
 import {
@@ -720,24 +717,7 @@ export default function RosterManager() {
   const { getPlayerStats: getFAStats } = useFreeAgentStats(availableBatters);
 
   const [tab, setTab] = useState<RosterTab>('batters');
-  const [preferredDepth, setPreferredDepth] = useState<Partial<Record<BatterPosition, number>>>({});
-
-  useEffect(() => {
-    setPreferredDepth(loadPreferredDepth(CATEGORIES_PREFERRED_DEPTH_KEY));
-  }, []);
-
-  const updatePreferredDepth = useCallback((pos: BatterPosition, next: number | null) => {
-    setPreferredDepth(prev => {
-      const updated = { ...prev };
-      if (next === null) {
-        delete updated[pos];
-      } else {
-        updated[pos] = next;
-      }
-      savePreferredDepth(CATEGORIES_PREFERRED_DEPTH_KEY, updated);
-      return updated;
-    });
-  }, []);
+  const { preferredDepth, updatePreferredDepth } = usePreferredDepth(CATEGORIES_PREFERRED_DEPTH_KEY);
 
   // League forecast: per-cat standings projection + per-player value
   // lines (the projection facts). Leverage — how much each cat is worth

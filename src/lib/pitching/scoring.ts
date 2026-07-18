@@ -189,7 +189,7 @@ function buildCredibilityCell(rating: RatingV2, currentIp: number): PitcherCredi
 // Default-cat fallback when consumer doesn't supply scoredCategories
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SCORED_CATS: EnrichedLeagueStatCategory[] = [
+export const DEFAULT_SCORED_CATS: EnrichedLeagueStatCategory[] = [
   { stat_id: 83, name: 'Quality Starts', display_name: 'QS', betterIs: 'higher',
     position_types: ['P'], is_pitcher_stat: true, is_batter_stat: false, sort_order: '1' },
   { stat_id: 42, name: 'Strikeouts', display_name: 'K', betterIs: 'higher',

@@ -14,6 +14,9 @@ npm run build        # Production build
 npm run lint         # ESLint (next lint)
 npm start            # Start production server
 docker start mlboss-redis                # Start Redis (persistent container, auto-starts on boot)
+docker start mlboss-postgres             # Start Postgres (durable ledger — users, prefs, forecast snapshots)
+npm run db:generate  # Drizzle: generate migration from src/lib/db/schema.ts changes
+npm run db:migrate   # Drizzle: apply pending migrations (run after schema changes / fresh clone)
 pkill -f "next-server"                   # Kill stale dev servers before restart
 ```
 
@@ -34,10 +37,14 @@ No test framework is configured.
 ### Authentication & Sessions
 - Custom Yahoo OAuth 2.0 flow: login (`/api/auth/login`) -> callback (`/api/auth/callback/yahoo`) -> logout (`/api/auth/logout`)
 - Sessions use `iron-session` with encrypted cookies (`src/lib/auth/session.ts`)
-- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/lineup`, `/streaming`, `/roster`, `/league`, `/api/fantasy`, `/api/admin/test-stats`
+- Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/lineup`, `/streaming`, `/roster`, `/league`, `/api/fantasy`, `/api/admin`, `/api/user`
+- Roles: `/admin` and `/api/admin` additionally require the `operator` role (stamped into the session at login from the users table + `OPERATOR_YAHOO_GUIDS` env allowlist). New admin handlers must also call `requireOperator()` from `@/lib/auth` — middleware alone is not the authoritative check
 - Token auto-refresh handled by `YahooFantasyAPI` (`src/lib/yahoo-fantasy-api.ts`)
 
 ### Data Layer
+- Three storage legs (rubric in `docs/data-architecture.md#the-three-storage-legs`): Redis cache/sessions (rebuildable), Redis `obs:*` (small decaying observations), Postgres ledger (unrefetchable + accumulating: users, prefs, forecast snapshots)
+- Postgres via Drizzle (`src/lib/db/` — client singleton, schema, users, prefs). Feature code never imports `pg` directly. User-decided state (concede overrides, depth targets) persists through `useSyncedPref` → `/api/user/prefs`, NOT raw localStorage (see `docs/history.md` 2026-07)
+- Forecast verification ledger (`src/lib/ledger/`) snapshots engine predictions and grades them vs MLB actuals — operator-only surface at `/admin/forecast`, never imported by engine code (`docs/forecast-verification.md`)
 - Redis (`src/lib/redis.ts`) used for caching and session backup
 - Three-tier TTL caching: static (24-48h), semi-dynamic (5min-1h), dynamic (30s-1min)
 - All cached fetches go through `withCache` / `withCacheGated` (`src/lib/fantasy/cache.ts`); never write to Redis directly from feature code
@@ -94,7 +101,7 @@ Both the Lineup and Streaming pages share the lineup component library (`src/com
 
 ## Environment Variables
 
-Required: `APP_URL`, `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `SESSION_SECRET`, plus Redis (either `REDIS_URL` or `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`)
+Required: `APP_URL`, `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `SESSION_SECRET`, `DATABASE_URL`, plus Redis (either `REDIS_URL` or `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`). Optional: `OPERATOR_YAHOO_GUIDS` (operator-role allowlist)
 
 Schema and validation: `src/constants/envSchema.ts`
 
@@ -114,7 +121,8 @@ Per-layer / per-concept reference:
 - `docs/roster-strategy.md` — L6 league forecast, forward focus, swap strategy
 - `docs/stat-levels.md` — the four stat levels (raw counting / raw rate / regressed talent / matchup-adjusted)
 - `docs/league-baselines.md` — cross-engine league-mean constants
-- `docs/data-architecture.md` — source/model/compose, cache tiers, identity contract
+- `docs/data-architecture.md` — source/model/compose, three storage legs, cache tiers, identity contract
+- `docs/forecast-verification.md` — forecast ledger + scorecard (operator-only grading of the engines)
 - `docs/streaming-page.md` — streaming-page specifics (Yahoo pagination, FA matching, Game Plan card)
 - `docs/dashboard-components.md` — dashboard card architecture
 - `docs/ui-patterns.md` — shared UI components and display patterns

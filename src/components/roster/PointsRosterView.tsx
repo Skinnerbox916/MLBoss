@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { FiTrendingUp, FiLayers } from 'react-icons/fi';
 import Panel from '@/components/ui/Panel';
 import Badge from '@/components/ui/Badge';
@@ -13,12 +13,8 @@ import SuggestedMovesPanel from '@/components/points/SuggestedMovesPanel';
 import RosterMoveCard from '@/components/shared/RosterMoveCard';
 import PositionalDepthTable, { DepthStepper } from '@/components/shared/PositionalDepthTable';
 import { getDefaultDepth, type BatterPosition } from '@/lib/roster/depth';
-import {
-  loadPreferredDepth,
-  savePreferredDepth,
-  POINTS_PREFERRED_DEPTH_KEY,
-  type PreferredDepthMap,
-} from '@/lib/roster/preferredDepth';
+import { POINTS_PREFERRED_DEPTH_KEY } from '@/lib/roster/preferredDepth';
+import { usePreferredDepth } from '@/lib/hooks/usePreferredDepth';
 import type { PointsPlayerRow } from '@/lib/points/analyzeTeam';
 import type { PointsBatterMove } from '@/lib/points/rosterStrategy';
 import { usePointsRosterStrategy } from '@/lib/hooks/usePointsRosterStrategy';
@@ -51,19 +47,7 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
   // Target-depth overrides — persisted per league mode, sent to the server
   // so the depth chart AND the swap engine honor them (the points analysis
   // runs server-side, unlike the categories page's client-side solve).
-  const [preferredDepth, setPreferredDepth] = useState<PreferredDepthMap>({});
-  useEffect(() => {
-    setPreferredDepth(loadPreferredDepth(POINTS_PREFERRED_DEPTH_KEY));
-  }, []);
-  const updatePreferredDepth = useCallback((pos: BatterPosition, next: number | null) => {
-    setPreferredDepth(prev => {
-      const updated = { ...prev };
-      if (next === null) delete updated[pos];
-      else updated[pos] = next;
-      savePreferredDepth(POINTS_PREFERRED_DEPTH_KEY, updated);
-      return updated;
-    });
-  }, []);
+  const { preferredDepth, updatePreferredDepth } = usePreferredDepth(POINTS_PREFERRED_DEPTH_KEY);
 
   const { data, isLoading, isError } = usePointsTeam(leagueKey, teamKey, scoringType);
   // Strategy (moves / depth / open slots) solves client-side over the

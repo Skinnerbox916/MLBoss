@@ -12,6 +12,7 @@ interface ScorecardResponse {
 const ENGINE_LABEL: Record<string, string> = {
   'pitcher-start': 'Pitcher starts (L2 game forecast, league-free)',
   'batter-day': 'Batter days (L2 forecast × lineup PA, league-free)',
+  'batter-week': 'Batter weeks (roster-page substrate: talent × playing time)',
   'points-pitcher-start': 'Points — pitcher starts',
   'points-batter-day': 'Points — batter days',
 };
@@ -21,6 +22,7 @@ const ENGINE_LABEL: Record<string, string> = {
 const ENGINE_SOURCE: Record<string, string> = {
   'pitcher-start': 'game-day slate traffic (lineup/streaming pages) or Capture button — every probable starter',
   'batter-day': 'game-day slate traffic or Capture button — every batter in a posted MLB lineup',
+  'batter-week': 'opening the roster page (league forecast) — rostered + FA pool vs the next Mon–Sun window',
   'points-pitcher-start': 'opening the points /streaming page — priced FA + rostered starts with board rank',
   'points-batter-day': 'opening the points /streaming page — per-batter day values',
 };

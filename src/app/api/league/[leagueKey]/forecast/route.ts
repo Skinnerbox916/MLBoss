@@ -46,6 +46,7 @@ import {
 import { computeRupm } from '@/lib/league/rupm';
 import { computeTeamEngagements } from '@/lib/league/engagement';
 import type { BatterSeasonStats } from '@/lib/mlb/types';
+import { captureBatterWeekInBackground } from '@/lib/ledger/capture';
 
 /**
  * GET /api/league/[leagueKey]/forecast?teamKey=...
@@ -313,6 +314,11 @@ async function computeAggregateBundle(
     k: RUPM_K,
   });
   const rupm = Array.from(rupmMap.entries());
+
+  // Forecast-ledger write-through: freeze the playing-time-scaled neutral
+  // weekly projections the roster value cards consume (fire-and-forget,
+  // first-write-wins per Mon–Sun window).
+  captureBatterWeekInBackground(leagueKey, scaledRostered, scaledFAs);
 
   return {
     teams,

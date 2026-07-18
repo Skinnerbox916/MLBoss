@@ -1,8 +1,8 @@
-import { and, eq, gte, lte, type SQL } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
 import { getDb, forecastSnapshots, playerGameActuals } from '@/lib/db';
 import { getScoringProfile } from '@/lib/fantasy';
 import { actualBatterPoints, actualPitcherPoints } from './actualPoints';
-import { todayEt } from './capture';
+import { addDaysIso, todayEt } from './capture';
 import type { ForecastEngine } from './capture';
 
 /**
@@ -351,6 +351,34 @@ export async function buildScorecard(
   const engines = [...new Set(rows.map(r => r.engine))] as ForecastEngine[];
   const findings: Finding[] = [];
 
+  // Week-window engines join actuals across their whole Mon–Sun span, not
+  // just the keyed Monday — fetch those actuals once, keyed player:date.
+  const weekRowsAll = rows.filter(r => r.engine === 'batter-week');
+  const weekActuals = new Map<string, { status: 'played' | 'no_game'; batting: Record<string, number> | null }>();
+  if (weekRowsAll.length > 0) {
+    const ids = [...new Set(weekRowsAll.map(r => r.mlbId))];
+    const ds = weekRowsAll.map(r => r.gameDate).sort();
+    const actRows = await db
+      .select({
+        mlbId: playerGameActuals.mlbId,
+        gameDate: playerGameActuals.gameDate,
+        status: playerGameActuals.status,
+        batting: playerGameActuals.batting,
+      })
+      .from(playerGameActuals)
+      .where(and(
+        inArray(playerGameActuals.mlbId, ids),
+        gte(playerGameActuals.gameDate, ds[0]),
+        lte(playerGameActuals.gameDate, addDaysIso(ds[ds.length - 1], 6)),
+      ));
+    for (const a of actRows) {
+      weekActuals.set(`${a.mlbId}:${a.gameDate}`, {
+        status: a.status,
+        batting: a.batting as Record<string, number> | null,
+      });
+    }
+  }
+
   // Points profiles, one per league seen in points snapshots.
   const pointsLeagues = [...new Set(rows.filter(r => r.engine.startsWith('points-')).map(r => r.leagueKey))];
   const weightsByLeague = new Map<string, Record<number, number>>();
@@ -365,31 +393,72 @@ export async function buildScorecard(
   }
 
   const cards = engines.sort().map(engine => {
-    const all = rows.filter(r => r.engine === engine);
-    const future = all.filter(r => r.gameDate >= today);
-    const past = all.filter(r => r.gameDate < today);
-    const pendingActuals = past.filter(r => r.status === null);
-    const resolved = past.filter(r => r.status !== null);
+    let all = rows.filter(r => r.engine === engine);
+    let future: JoinedRow[];
+    let pendingActuals: JoinedRow[];
+    let resolved: JoinedRow[];
+
+    if (engine === 'batter-week') {
+      // One row per (player, window, league): daily route traffic captures
+      // the same window at shrinking leads — keep the closest-to-window
+      // forecast so a player-week is never counted twice.
+      const byIdentity = new Map<string, JoinedRow>();
+      for (const r of all) {
+        const k = `${r.mlbId}:${r.gameDate}:${r.leagueKey}`;
+        const prev = byIdentity.get(k);
+        if (!prev || r.leadDays < prev.leadDays) byIdentity.set(k, r);
+      }
+      all = [...byIdentity.values()];
+      future = [];
+      pendingActuals = [];
+      resolved = [];
+      for (const r of all) {
+        if (addDaysIso(r.gameDate, 6) >= today) { future.push(r); continue; }
+        const days = Array.from({ length: 7 }, (_, d) => weekActuals.get(`${r.mlbId}:${addDaysIso(r.gameDate, d)}`));
+        if (days.some(d => d === undefined)) { pendingActuals.push(r); continue; }
+        const lines = days.flatMap(d => (d!.batting != null ? [d!.batting] : []));
+        const summed: Record<string, number> = {};
+        for (const line of lines) {
+          for (const [key, v] of Object.entries(line)) summed[key] = (summed[key] ?? 0) + v;
+        }
+        resolved.push({
+          ...r,
+          status: lines.length > 0 ? 'played' : 'no_game',
+          batting: lines.length > 0 ? summed : null,
+        });
+      }
+    } else {
+      future = all.filter(r => r.gameDate >= today);
+      const past = all.filter(r => r.gameDate < today);
+      pendingActuals = past.filter(r => r.status === null);
+      resolved = past.filter(r => r.status !== null);
+    }
 
     const side: Side = engine.includes('batter') ? 'bat' : 'pit';
     const kind: 'pitcher-line' | 'batter-line' | 'points' =
       engine === 'pitcher-start' ? 'pitcher-line'
-      : engine === 'batter-day' ? 'batter-line'
+      : engine === 'batter-day' || engine === 'batter-week' ? 'batter-line'
       : 'points';
     const played = resolved.filter(r =>
       side === 'pit' ? r.pitching != null && (r.pitching.gs ?? 0) > 0 : r.batting != null,
     );
     const didNotPlay = resolved.length - played.length;
 
-    // Capture coverage: distinct dates vs the calendar span they cover.
+    // Capture coverage: distinct dates vs the calendar span they cover
+    // (week engines count in Mon–Sun windows, not days).
     const dates = [...new Set(all.map(r => r.gameDate))].sort();
-    const spanDays = dates.length
+    const rawSpanDays = dates.length
       ? Math.round(
           (Date.parse(`${dates[dates.length - 1] < today ? dates[dates.length - 1] : today}T00:00:00Z`) -
             Date.parse(`${dates[0]}T00:00:00Z`)) / 86_400_000,
         ) + 1
       : 0;
-    const coverage = { capturedDays: dates.filter(d => d <= today).length, spanDays: Math.max(spanDays, 0) };
+    const coverage = {
+      capturedDays: dates.filter(d => d <= today).length,
+      spanDays: engine === 'batter-week'
+        ? (dates.length ? Math.floor(Math.max(rawSpanDays - 1, 0) / 7) + 1 : 0)
+        : Math.max(rawSpanDays, 0),
+    };
 
     // Points engines grade one value per row: predicted vs realized points.
     let valueRows: { row: JoinedRow; pred: number; actual: number }[] = [];
@@ -437,13 +506,18 @@ export async function buildScorecard(
 
     // ---- engine-specific views + findings ---------------------------------
 
-    const minN = kind === 'batter-line' ? 300 : kind === 'pitcher-line' ? 50 : 30;
+    const minN =
+      engine === 'batter-week' ? 150 : kind === 'batter-line' ? 300 : kind === 'pitcher-line' ? 50 : 30;
     findings.push(...biasFindings(engine, statGrades, minN));
 
     // Scratch / bench rate — a playing-time forecast miss, not noise.
+    // (For week windows this means zero games all week — IL / demotion —
+    // so the acceptable baseline is higher.)
     const dnpRate = resolved.length ? didNotPlay / resolved.length : 0;
-    const dnpMin = side === 'bat' ? 200 : 50;
-    const [dnpWatch, dnpFlag] = side === 'bat' ? [0.03, 0.05] : [0.1, 0.15];
+    const [dnpMin, dnpWatch, dnpFlag] =
+      engine === 'batter-week' ? [100, 0.08, 0.15]
+      : side === 'bat' ? [200, 0.03, 0.05]
+      : [50, 0.1, 0.15];
     if (resolved.length >= dnpMin && dnpRate >= dnpWatch) {
       findings.push({
         severity: dnpRate >= dnpFlag ? 'flag' : 'watch',
@@ -497,6 +571,19 @@ export async function buildScorecard(
       ];
       for (const [stat, label, aName, aTest, bName, bTest] of knobSlices) {
         const f = sliceFinding(engine, played, 'pit', stat, label, aName, aTest, bName, bTest);
+        if (f) findings.push(f);
+      }
+    }
+
+    if (engine === 'batter-week') {
+      card.worstMisses = playerMisses(played, ['pa', 'tb'], 'bat', 3);
+      // Ownership slice: does the playing-time model treat the FA pool
+      // (Upgrade Targets) the same as rostered bats (Your Batters)? An
+      // asymmetry here directly mis-prices every suggested swap.
+      for (const stat of ['pa', 'tb']) {
+        const f = sliceFinding(engine, played, 'bat', stat, 'ownership',
+          'rostered', r => r.context.owned === true,
+          'free agents', r => r.context.owned === false);
         if (f) findings.push(f);
       }
     }

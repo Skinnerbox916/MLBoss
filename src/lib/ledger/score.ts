@@ -1,7 +1,7 @@
-import { and, eq, isNull, lt } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, lte } from 'drizzle-orm';
 import { getDb, forecastSnapshots, playerGameActuals } from '@/lib/db';
 import { getPitcherGameLines, getBatterGameLines } from '@/lib/mlb/players';
-import { todayEt } from './capture';
+import { addDaysIso, todayEt } from './capture';
 
 /**
  * Actuals materialization — the read side of the grading join.
@@ -62,11 +62,48 @@ export async function scorePendingActuals(maxPlayers = 300): Promise<ScoreRunRes
     .where(and(isNull(playerGameActuals.mlbId), lt(forecastSnapshots.gameDate, todayEt())));
 
   const byPlayer = new Map<number, { sides: Set<Side>; dates: Set<string> }>();
-  for (const p of pending) {
-    const entry = byPlayer.get(p.mlbId) ?? { sides: new Set<Side>(), dates: new Set<string>() };
-    entry.sides.add(sideOf(p.engine));
-    entry.dates.add(p.gameDate);
-    byPlayer.set(p.mlbId, entry);
+  const need = (mlbId: number, side: Side, date: string) => {
+    const entry = byPlayer.get(mlbId) ?? { sides: new Set<Side>(), dates: new Set<string>() };
+    entry.sides.add(side);
+    entry.dates.add(date);
+    byPlayer.set(mlbId, entry);
+  };
+  for (const p of pending) need(p.mlbId, sideOf(p.engine), p.gameDate);
+
+  // Week-window engines claim a Mon–Sun span keyed by its Monday: expand
+  // each COMPLETE window into per-day actuals needs (off days materialize
+  // as no_game rows — a legitimate zero inside a week, not a miss).
+  const weekPending = await db
+    .selectDistinct({ mlbId: forecastSnapshots.mlbId, gameDate: forecastSnapshots.gameDate })
+    .from(forecastSnapshots)
+    .where(and(
+      eq(forecastSnapshots.engine, 'batter-week'),
+      lte(forecastSnapshots.gameDate, addDaysIso(todayEt(), -7)),
+    ));
+  let weekPairs = 0;
+  if (weekPending.length > 0) {
+    const ids = [...new Set(weekPending.map(p => p.mlbId))];
+    const dates = weekPending.map(p => p.gameDate).sort();
+    const have = new Set(
+      (
+        await db
+          .select({ mlbId: playerGameActuals.mlbId, gameDate: playerGameActuals.gameDate })
+          .from(playerGameActuals)
+          .where(and(
+            inArray(playerGameActuals.mlbId, ids),
+            gte(playerGameActuals.gameDate, dates[0]),
+            lte(playerGameActuals.gameDate, addDaysIso(dates[dates.length - 1], 6)),
+          ))
+      ).map(r => `${r.mlbId}:${r.gameDate}`),
+    );
+    for (const p of weekPending) {
+      for (let d = 0; d < 7; d++) {
+        const date = addDaysIso(p.gameDate, d);
+        if (have.has(`${p.mlbId}:${date}`)) continue;
+        need(p.mlbId, 'bat', date);
+        weekPairs++;
+      }
+    }
   }
 
   let playersFetched = 0;
@@ -117,5 +154,5 @@ export async function scorePendingActuals(maxPlayers = 300): Promise<ScoreRunRes
     }
   }
 
-  return { pendingPairs: pending.length, playersFetched, rowsWritten, playersSkipped };
+  return { pendingPairs: pending.length + weekPairs, playersFetched, rowsWritten, playersSkipped };
 }

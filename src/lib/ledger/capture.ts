@@ -4,7 +4,12 @@ import { getPitcherRating } from '@/lib/pitching/rating';
 import { DEFAULT_SCORED_CATS } from '@/lib/pitching/scoring';
 import { getTeamOffense } from '@/lib/mlb/teams';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
-import { projectBatterPlayer, type ActiveBatter, type ProjectionDeps } from '@/lib/projection/batterTeam';
+import {
+  projectBatterPlayer,
+  type ActiveBatter,
+  type ProjectionDeps,
+  type PlayerProjection,
+} from '@/lib/projection/batterTeam';
 import type { EnrichedGame } from '@/lib/mlb/types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { PointsStreamingAnalysis } from '@/lib/points/streaming';
@@ -25,6 +30,7 @@ import { MODEL_VERSION } from './modelVersion';
 export type ForecastEngine =
   | 'pitcher-start'
   | 'batter-day'
+  | 'batter-week'
   | 'points-pitcher-start'
   | 'points-batter-day';
 
@@ -49,6 +55,17 @@ export function todayEt(): string {
 export function leadDaysFor(gameDate: string): number {
   const ms = Date.parse(`${gameDate}T00:00:00Z`) - Date.parse(`${todayEt()}T00:00:00Z`);
   return Math.round(ms / 86_400_000);
+}
+
+export function addDaysIso(date: string, days: number): string {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The Monday starting the current-or-next Mon–Sun window (today, if Monday). */
+export function nextMondayEt(): string {
+  const today = todayEt();
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return addDaysIso(today, (8 - dow) % 7);
 }
 
 export async function insertSnapshots(rows: SnapshotRow[]): Promise<number> {
@@ -263,6 +280,74 @@ export async function captureBatterSlate(
     });
   }
   return insertSnapshots(rows);
+}
+
+// ---------------------------------------------------------------------------
+// Engine: batter-week — the roster page's substrate (talent × typical-week
+// playing time), graded against the next Mon–Sun window
+// ---------------------------------------------------------------------------
+
+/** stat_id → predicted key, for reading weekly counts off a neutral
+ *  PlayerProjection.byCategory. Inverse of BATTER_STAT_KEYS. */
+const STAT_ID_TO_KEY = new Map(BATTER_STAT_KEYS.map(([key, id]) => [id, key]));
+
+/**
+ * Snapshot the neutral-week batter projections the roster page's value
+ * cards are built on (post playing-time scaling — exactly what "Your
+ * Batters" / "Upgrade Targets" consume, before leverage weighting).
+ *
+ * Unlike batter-day, this deliberately ignores the schedule and the
+ * lineup — it claims "a typical week of this player is worth X". Grading
+ * it against the next Mon–Sun window is what verifies the playing-time
+ * half of the roster value (a batter-day snapshot only exists on days
+ * the player was already in a lineup, so it can never see "we thought
+ * he plays 5.5 games a week but he plays 4").
+ */
+export async function captureBatterWeek(
+  leagueKey: string,
+  rostered: PlayerProjection[],
+  freeAgents: PlayerProjection[],
+): Promise<number> {
+  const windowStart = nextMondayEt();
+  const windowEnd = addDaysIso(windowStart, 6);
+  const rows: SnapshotRow[] = [];
+  for (const [projections, owned] of [[rostered, true], [freeAgents, false]] as const) {
+    for (const proj of projections) {
+      if (!proj.mlbId || proj.mlbId <= 0) continue;
+      const predicted: Record<string, number> = {};
+      let weeklyPA = 0;
+      for (const [statId, agg] of proj.byCategory) {
+        const key = STAT_ID_TO_KEY.get(statId);
+        if (!key) continue;
+        predicted[key] = agg.expectedCount;
+        // Counting-cat denominator = playing-time-scaled weekly PA.
+        weeklyPA = Math.max(weeklyPA, agg.expectedDenom);
+      }
+      if (Object.keys(predicted).length === 0 || weeklyPA <= 0) continue;
+      predicted.pa = weeklyPA;
+      rows.push({
+        gameDate: windowStart,
+        engine: 'batter-week',
+        mlbId: proj.mlbId,
+        playerName: proj.name,
+        leagueKey,
+        predicted,
+        context: { owned, teamAbbr: proj.teamAbbr, windowEnd, windowDays: 7 },
+      });
+    }
+  }
+  return insertSnapshots(rows);
+}
+
+export function captureBatterWeekInBackground(
+  leagueKey: string,
+  rostered: PlayerProjection[],
+  freeAgents: PlayerProjection[],
+): void {
+  const windowStart = nextMondayEt();
+  inBackground(`batter-week:${leagueKey}:${windowStart}:${leadDaysFor(windowStart)}`, () =>
+    captureBatterWeek(leagueKey, rostered, freeAgents),
+  );
 }
 
 // ---------------------------------------------------------------------------

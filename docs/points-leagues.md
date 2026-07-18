@@ -2,6 +2,8 @@
 
 The points-league engine layer (`src/lib/points/`) and its surfaces. Points leagues swap the category machinery (L3 ratings, L5 matchup state, leverage) for one currency — expected fantasy points — while reusing the L1 talent substrate and the shared position/volume primitives. Engine registry: [engines.md](./engines.md#points-league-engines).
 
+> **Verified.** Priced starts and batter day-values are graded against realized fantasy points (computed from the league's own scoring weights) by the `points-pitcher-start` and `points-batter-day` engines; the pitcher board additionally grades *rank quality* — did the top-ranked FA picks actually out-produce the pool? These capture only when the points `/streaming` page is loaded, so their scorecards are as deep as your visits. See [forecast-verification.md](./forecast-verification.md).
+
 ## Pipeline
 
 ```

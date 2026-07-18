@@ -4,6 +4,8 @@ The single canonical reference for how MLBoss predicts player performance in a s
 
 This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 rating). For "which categories should I chase?" see [recommendation-system.md](./recommendation-system.md). For aggregation of L3 outputs over time windows see [projection.md](./projection.md).
 
+> **Verified.** These forecasts are graded against actual results — the `pitcher-start` engine snapshots the L2 game forecast per probable, `batter-day` snapshots the per-PA forecast × lineup opportunity. Systematic bias here surfaces as findings on `/admin/forecast`, sliced by the modifier that caused it. Before re-anchoring a constant in this doc, read its scorecard and bump `MODEL_VERSION`. See [forecast-verification.md](./forecast-verification.md).
+
 ## Architecture
 
 ```

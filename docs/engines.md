@@ -4,6 +4,8 @@ A registry of every prediction and suggestion engine in the app. This page is a 
 
 For the principles and anti-patterns that govern this system, see [architecture.md](./architecture.md). For the decision log of patterns we tried and stopped, see [history.md](./history.md).
 
+**These engines are graded.** L1–L4 forecasts are snapshotted before games and scored against actual MLB results by the forecast ledger — pitcher starts, batter days, and the roster page's batter-week substrate, plus both points boards. Before tuning any engine below, read its scorecard at `/admin/forecast`; when you change a calibration constant, bump `MODEL_VERSION` so the before/after stays legible. Full loop and the finding-shape → constants-file map: [forecast-verification.md](./forecast-verification.md). The ledger is a verification layer, not an engine — it never feeds a prediction, so it has no L-number here.
+
 > Detail docs:
 > [`unified-rating-model.md`](./unified-rating-model.md) — L1+L2+L3: talent, forecast, rating engines (both sides), regime probe, calibration anchors.
 > [`projection.md`](./projection.md) — L4: team projection, lineup optimizer, slot-aware streaming.

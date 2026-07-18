@@ -4,6 +4,8 @@
 
 > See [recommendation-system.md](./recommendation-system.md) for `/lineup` (today) and `/streaming` (this week). The three pages cover three time horizons: **day / week / rest-of-season.** See [architecture.md](./architecture.md#1-two-layers-one-bridge) for why they're deliberately separate.
 
+> **Verified (facts, not strategy).** The value substrate behind "Your Batters" / "Upgrade Targets" — talent × playing time — is graded by the `batter-week` engine, including an ownership slice that checks rostered-vs-FA symmetry (an asymmetry there mis-prices every suggested swap). The *strategy* layer on top (leverage, RUPM, concede coalition) is a weighting choice, not a forecast, so it's graded only by proxy through the facts beneath it. See [forecast-verification.md](./forecast-verification.md).
+
 ## Why this page exists
 
 The natural reflex is to look at YTD stat ranks (on `/league`). Those get distorted by:

@@ -4,6 +4,8 @@ Aggregation of per-game rating outputs over a time window. The window is usually
 
 > See [architecture.md](./architecture.md#3-one-per-game-primitive-summed-over-windows) for why this layer is intentionally math-free.
 
+> **Verified.** The aggregated projections are graded against actuals: `batter-day` (per-day projection vs the day's box line) and `batter-week` (the neutral-week roster substrate vs the following Mon–Sun). `batter-week` is the only engine that grades the *playing-time* half — a day snapshot exists only when the player was already in a lineup. See [forecast-verification.md](./forecast-verification.md).
+
 ## The engines
 
 | Engine | File | What it produces | Side |

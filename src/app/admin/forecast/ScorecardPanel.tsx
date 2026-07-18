@@ -27,6 +27,48 @@ const ENGINE_SOURCE: Record<string, string> = {
   'points-batter-day': 'opening the points /streaming page — per-batter day values',
 };
 
+/** One-sentence "what is this engine" for the card-header help. */
+const ENGINE_HELP: Record<string, string> = {
+  'pitcher-start':
+    'Freezes the game forecast (expected IP/K/ER/etc., QS and win odds) for every probable starter before first pitch, then grades it against his actual line.',
+  'batter-day':
+    'Freezes each posted-lineup batter’s projected day — expected PA plus a full stat line — and grades it against his actual box score.',
+  'batter-week':
+    'Freezes the roster page’s value substrate (talent × playing time) as a weekly stat line, graded against the player’s actual Mon–Sun totals. This is the engine that checks the playing-time model.',
+  'points-pitcher-start':
+    'Freezes each priced pitcher start’s expected fantasy points (board rank included), graded against the points his actual line earned under this league’s scoring.',
+  'points-batter-day':
+    'Freezes each batter’s expected fantasy points per day, graded against the points his actual line earned under this league’s scoring.',
+};
+
+const COUNTS_HELP =
+  'The pipeline, left to right: snapshots = predictions frozen so far · future = game hasn’t been played yet · pending = game over, awaiting “Score pending actuals” · graded = scored against real results · DNP = predicted appearance that never happened (scratch / bench / zero-game week) · Nd/Md = days with a capture vs days since the first one.';
+
+const FINDINGS_HELP =
+  'Automatic checks over everything below. Only misses that clear a strict statistical bar surface here — FLAG means real and worth acting on, WATCH means suggestive but needs more data. Silence means the engines look healthy at the current sample size.';
+
+/** Tiny hover/focus tooltip on a "?" glyph. Admin-page local — the
+ *  product surfaces communicate structurally, but a diagnostic page
+ *  earns its orientation text. */
+function Help({ text, align = 'left' }: { text: string; align?: 'left' | 'right' }) {
+  return (
+    <span className="relative inline-flex group align-middle">
+      <span
+        tabIndex={0}
+        aria-label={text}
+        className="flex items-center justify-center w-4 h-4 rounded-full border border-border text-[10px] leading-none text-muted-foreground cursor-help select-none"
+      >
+        ?
+      </span>
+      <span
+        className={`pointer-events-none absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full z-20 mt-1.5 hidden w-80 max-w-[80vw] rounded-lg border border-border bg-surface p-2.5 text-xs font-sans font-normal normal-case tracking-normal text-left text-foreground shadow-lg group-hover:block group-focus-within:block`}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 export default function ScorecardPanel() {
   const [data, setData] = useState<ScorecardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +146,10 @@ export default function ScorecardPanel() {
 function FindingsPanel({ findings, anyGraded }: { findings: Finding[]; anyGraded: boolean }) {
   return (
     <div className="bg-surface rounded-lg border border-border p-5 space-y-2">
-      <Heading as="h3">Findings</Heading>
+      <span className="inline-flex items-center gap-2">
+        <Heading as="h3">Findings</Heading>
+        <Help text={FINDINGS_HELP} />
+      </span>
       {findings.length === 0 && (
         <Text variant="caption">
           {anyGraded
@@ -147,12 +192,20 @@ function EngineCard({ card }: { card: EngineScorecard }) {
   return (
     <div className="bg-surface rounded-lg border border-border p-5 space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <Heading as="h3">{ENGINE_LABEL[card.engine] ?? card.engine}</Heading>
-        <Text variant="caption" className="font-mono">
-          {card.snapshots} snapshots · {card.future} future · {card.pendingActuals} pending ·{' '}
-          {card.graded} graded · {card.didNotPlay} DNP ·{' '}
-          {card.coverage.capturedDays}/{card.coverage.spanDays}d captured
-        </Text>
+        <span className="inline-flex items-center gap-2">
+          <Heading as="h3">{ENGINE_LABEL[card.engine] ?? card.engine}</Heading>
+          {ENGINE_HELP[card.engine] && (
+            <Help text={`${ENGINE_HELP[card.engine]} Captures from ${ENGINE_SOURCE[card.engine]}.`} />
+          )}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Text variant="caption" className="font-mono">
+            {card.snapshots} snapshots · {card.future} future · {card.pendingActuals} pending ·{' '}
+            {card.graded} graded · {card.didNotPlay} DNP ·{' '}
+            {card.coverage.capturedDays}/{card.coverage.spanDays}d captured
+          </Text>
+          <Help text={COUNTS_HELP} align="right" />
+        </span>
       </div>
 
       {card.graded === 0 ? (
@@ -173,7 +226,10 @@ function EngineCard({ card }: { card: EngineScorecard }) {
       </div>
 
       {card.scoreBuckets && card.scoreBuckets.length > 1 && (
-        <Section title="Score buckets → realized outcomes">
+        <Section
+          title="Score buckets → realized outcomes"
+          help="Does the 0–100 score actually rank players? Rows group players by the score we gave them BEFORE their games; the columns show what each group really produced afterward (simple production yardsticks — TB and R+RBI for bats, K/ER/QS rate for arms). Read top to bottom: higher-scored rows should out-produce lower ones. If 70+ doesn't beat <45, the score isn't ranking anything — and a finding will say so."
+        >
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="text-left border-b border-border">
@@ -200,7 +256,10 @@ function EngineCard({ card }: { card: EngineScorecard }) {
       )}
 
       {card.rankBuckets && card.rankBuckets.length > 0 && (
-        <Section title="FA board rank → realized points">
+        <Section
+          title="FA board rank → realized points"
+          help="Grades the advice, not just the numbers: pickups the streaming board ranked 1–3 should realize more points than ones it ranked 11+. Predicted vs Actual per bucket shows whether the board's ordering held up in reality."
+        >
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="text-left border-b border-border">
@@ -225,7 +284,10 @@ function EngineCard({ card }: { card: EngineScorecard }) {
       )}
 
       {card.byLeadDays.length > 1 && (
-        <Section title="By lead days">
+        <Section
+          title="By lead days"
+          help="The same bias grades, split by how many days before the game the forecast was frozen (D−0 = day-of). Closer to game time should be more accurate — probables confirmed, park and weather known. If it isn't, something upstream is stale."
+        >
           <SegmentTable
             rows={card.byLeadDays.map(s => ({ label: `D−${s.leadDays}`, graded: s.graded, stats: s.stats }))}
           />
@@ -233,7 +295,10 @@ function EngineCard({ card }: { card: EngineScorecard }) {
       )}
 
       {card.byModelVersion.length > 1 && (
-        <Section title="By model version">
+        <Section
+          title="By model version"
+          help="Grades segmented by the engine version stamped on each snapshot. The version bumps whenever calibration constants or engine math change, so a tuning change's before/after can be compared instead of blurring into one average."
+        >
           <SegmentTable
             rows={card.byModelVersion.map(s => ({ label: s.modelVersion, graded: s.graded, stats: s.stats }))}
           />
@@ -241,7 +306,10 @@ function EngineCard({ card }: { card: EngineScorecard }) {
       )}
 
       {card.worstMisses && card.worstMisses.length > 0 && (
-        <Section title="Largest per-player misses">
+        <Section
+          title="Largest per-player misses"
+          help="Players the engine keeps missing on in the same direction — candidates for a talent-layer look (role change, rookie priors, coming back from injury). Positive bias = we keep over-forecasting him. Red = that player's miss is statistically real; unmarked rows are small-sample and just candidates."
+        >
           <table className="w-full text-sm font-mono">
             <thead>
               <tr className="text-left border-b border-border">
@@ -274,10 +342,13 @@ function EngineCard({ card }: { card: EngineScorecard }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, help, children }: { title: string; help?: string; children: React.ReactNode }) {
   return (
     <div>
-      <Text variant="caption" className="uppercase tracking-wide">{title}</Text>
+      <span className="inline-flex items-center gap-1.5">
+        <Text variant="caption" className="uppercase tracking-wide">{title}</Text>
+        {help && <Help text={help} />}
+      </span>
       <div className="mt-1 overflow-x-auto">{children}</div>
     </div>
   );
@@ -287,7 +358,10 @@ const fmtSigned = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
 function CalibrationTable({ title, buckets }: { title: string; buckets: CalibrationBucket[] }) {
   return (
-    <Section title={title}>
+    <Section
+      title={title}
+      help="Probability forecasts graded against reality. Each row groups starts by the odds we quoted; Realized is how often it actually happened. A calibrated engine matches its own confidence — starts quoted at 40–60% should land around 50%. Red = the gap is outside the noise band for that row's sample."
+    >
       <table className="w-full text-sm font-mono">
         <thead>
           <tr className="text-left border-b border-border">
@@ -316,18 +390,21 @@ function CalibrationTable({ title, buckets }: { title: string; buckets: Calibrat
 
 function StatTable({ title, stats }: { title: string; stats: StatGrade[] }) {
   return (
-    <Section title={title}>
+    <Section
+      title={title}
+      help="Per stat: what we predicted per game vs what actually happened, averaged over every graded row. Bias is the systematic lean (positive = engine over-forecasts); MAE is the typical size of any single miss, noise included. Red = the lean is bigger than its noise floor — statistically real, worth acting on. Hover the column headers for definitions."
+    >
       <table className="w-full text-sm font-mono">
         <thead>
           <tr className="text-left border-b border-border">
             <th className="py-1 pr-4 font-normal">Stat</th>
-            <th className="py-1 pr-4 font-normal">n</th>
-            <th className="py-1 pr-4 font-normal">Predicted</th>
-            <th className="py-1 pr-4 font-normal">Actual</th>
-            <th className="py-1 pr-4 font-normal">Bias</th>
-            <th className="py-1 pr-4 font-normal">±95%</th>
-            <th className="py-1 pr-4 font-normal">Bias %</th>
-            <th className="py-1 pr-4 font-normal">MAE</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Graded rows behind this line — appearances that actually happened.">n</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Mean forecast per game across the graded rows.">Predicted</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Mean of what actually happened, same rows.">Actual</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Predicted − actual, averaged. Positive = the engine over-forecasts this stat.">Bias</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="95% confidence range on the bias. A bias smaller than this is indistinguishable from noise — wait for more data.">±95%</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Bias as a share of actual production — makes stats of different sizes comparable.">Bias %</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Mean absolute error: the typical size of a single-game miss, noise included. The floor bias is measured against.">MAE</th>
           </tr>
         </thead>
         <tbody>

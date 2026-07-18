@@ -53,6 +53,15 @@ MLBoss uses a custom OAuth 2.0 integration (no NextAuth). Below is a condensed o
 * All sensitive variables must be supplied via environment configuration – never hard-code them.
 * Use HTTPS in development (the Cloudflare tunnel below) so Yahoo will redirect properly.
 
+### Authorization & the operator role
+
+Being logged in ≠ being an operator. There are two roles: `user` (default) and `operator` (unlocks `/admin` and `/api/admin`). The model:
+
+* **Resolution.** On login, the OAuth callback upserts the user and resolves their role: the `OPERATOR_YAHOO_GUIDS` env allowlist is the bootstrap authority (works on an empty database), and the `users.role` column can promote someone later without an env change. Env can grant operator, never revoke a DB-granted one. If Postgres is unreachable at login, role falls back to the env-only check so the operator is never locked out by a DB outage.
+* **Enforcement is two layers, and the handler is authoritative.** `src/middleware.ts` gates `/admin` + `/api/admin` on the role stamped into the session, but its matcher has exclusions and can be misconfigured silently — so every operator-only route handler must *also* call `requireOperator()` from `@/lib/auth` (returns `{ ok }` with 401/403). Never rely on middleware alone.
+* **Role changes need a re-login.** The role is stamped into the session cookie at login (max 7-day life). Granting operator, or revoking it, only takes effect when the user's session refreshes — for revocation before expiry, clear their `user:*` Redis session backup and force a re-login.
+* **Granting operator.** Add the Yahoo GUID to `OPERATOR_YAHOO_GUIDS` (comma-separated) and have them log in again; or set `users.role = 'operator'` directly for a one-off.
+
 ## Local Development
 
 ### Port & Tunnel Requirements

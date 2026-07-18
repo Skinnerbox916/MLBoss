@@ -38,7 +38,7 @@ No test framework is configured.
 - Custom Yahoo OAuth 2.0 flow: login (`/api/auth/login`) -> callback (`/api/auth/callback/yahoo`) -> logout (`/api/auth/logout`)
 - Sessions use `iron-session` with encrypted cookies (`src/lib/auth/session.ts`)
 - Middleware (`src/middleware.ts`) protects routes: `/dashboard`, `/admin`, `/lineup`, `/streaming`, `/roster`, `/league`, `/api/fantasy`, `/api/admin`, `/api/user`
-- Roles: `/admin` and `/api/admin` additionally require the `operator` role (stamped into the session at login from the users table + `OPERATOR_YAHOO_GUIDS` env allowlist). New admin handlers must also call `requireOperator()` from `@/lib/auth` — middleware alone is not the authoritative check
+- Roles: `/admin` and `/api/admin` additionally require the `operator` role (stamped into the session at login from the users table + `OPERATOR_YAHOO_GUIDS` env allowlist). New admin handlers must also call `requireOperator()` from `@/lib/auth` — middleware alone is not the authoritative check. Full model (resolution, enforcement, granting): `docs/setup.md#authorization--the-operator-role`
 - Token auto-refresh handled by `YahooFantasyAPI` (`src/lib/yahoo-fantasy-api.ts`)
 
 ### Data Layer

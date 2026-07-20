@@ -215,6 +215,8 @@ When adding a primary destination: add it to `navigation.ts` and it shows up in 
 
 Every page routes by the active league's scoring mode (`useActiveLeague().mode`) through a per-page router (`RosterModeRouter`, `StreamingModeRouter`, `DashboardModeRouter`, `LeagueModeRouter`; `/lineup` is mode-aware inside one shell). The fork exists because the two modes differ in *decision grammar* (leverage/concede vs. one points currency) — but most UI is NOT mode-specific, and building a scoring-agnostic feature inside one side of the fork is how the two views drift into "two sites in a trenchcoat."
 
+There is a SECOND, orthogonal axis: `useActiveLeague().headToHead` (Yahoo 'head'/'headpoint' vs 'roto'/'point'). Every opponent-referencing element — matchup marquees, opponent scouting, matchup projections — gates on `headToHead`, never on `mode`: a season-points league is points-mode with no weekly opponent.
+
 **Before building any new UI feature, classify it on the mode axis:**
 
 1. **Scoring-agnostic** (standings W/L/T, activity feeds, waivers, injury/stash policy, schedule strips): build ONE component in `src/components/shared/`, mount it from both mode views. It must not import category or points engines directly — take data via props.

@@ -3,6 +3,7 @@ import { useFantasyContext, weekBoundsForLeague, type FantasyLeagueContext } fro
 import { useActiveLeagueKey } from './activeLeagueStore';
 import {
   scoringModeForType,
+  isHeadToHeadType,
   lineupCadenceForDeadline,
   moveTimingForDeadline,
   type ScoringMode,
@@ -20,6 +21,10 @@ export interface ActiveLeague {
   leagueName: string | undefined;
   /** Engine family for the active league — drives which UI a page renders. */
   mode: ScoringMode;
+  /** Weekly H2H matchups vs season-long standing (roto / season points).
+   *  Opponent-referencing UI (matchup marquees, opponent scouting) gates
+   *  on this, not on `mode` — the two axes are orthogonal. */
+  headToHead: boolean;
   /** Daily lineup changes vs lineups locked for the week (Yahoo `weekly_deadline`). */
   lineupCadence: LineupCadence;
   /** When a roster move made now takes effect (immediate / next-day / weekly). */
@@ -61,6 +66,7 @@ export function useActiveLeague(): ActiveLeague {
     scoringType: active?.scoring_type,
     leagueName: active?.league_name,
     mode: scoringModeForType(active?.scoring_type),
+    headToHead: isHeadToHeadType(active?.scoring_type),
     lineupCadence: lineupCadenceForDeadline(active?.weekly_deadline),
     moveTiming: moveTimingForDeadline(active?.weekly_deadline),
     earliestPlayableDate: resolveEarliestPlayableDate({

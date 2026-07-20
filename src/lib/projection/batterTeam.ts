@@ -28,6 +28,7 @@
  */
 
 import { getBatterRating, type BatterRating } from '@/lib/mlb/batterRating';
+import { expectedPAperGame } from '@/lib/mlb/paBySpot';
 import type { Focus } from '@/lib/rating/focus';
 import { resolveMatchup } from '@/lib/mlb/analysis';
 import type { EnrichedGame, BatterSeasonStats } from '@/lib/mlb/types';
@@ -38,12 +39,10 @@ import type { WeekDay } from '@/lib/dashboard/weekRange';
 // Per-PA → per-game volume conversion
 // ---------------------------------------------------------------------------
 
-/**
- * League-average PA per game per batter slot. ~4.1 across MLB; the lineup
- * spot scales this ±8% per the same shape `buildOpportunityMultiplier` uses
- * inside `getBatterRating`.
- */
-const BASELINE_PA_PER_GAME = 4.1;
+// Canonical PA-by-lineup-spot curve lives in mlb/paBySpot.ts (one home for
+// projection volume AND the rating's opportunity multiplier). Re-exported
+// here for the existing import sites (lineup page, points scoring/schedule).
+export { expectedPAperGame };
 
 /**
  * Fraction of plate appearances that result in an at-bat. Walks + HBP + SF
@@ -52,23 +51,6 @@ const BASELINE_PA_PER_GAME = 4.1;
  * a corrected weekly team AVG.
  */
 const AB_PER_PA = 0.91;
-
-/**
- * Expected PA per game for a batter at lineup slot `spot` (1-9).
- * Returns BASELINE_PA_PER_GAME when `spot` is null (no signal — neutral).
- *
- * Mirrors `buildOpportunityMultiplier`'s ±8% linear ramp so the rating's
- * opportunity multiplier and the projection's PA volume agree on what
- * lineup spot means.
- */
-export function expectedPAperGame(spot: number | null): number {
-  if (spot == null || !Number.isFinite(spot) || spot < 1 || spot > 9) {
-    return BASELINE_PA_PER_GAME;
-  }
-  // #1 → +8%, #9 → −8%, linear.
-  const pct = 8 - ((spot - 1) / 8) * 16;
-  return BASELINE_PA_PER_GAME * (1 + pct / 100);
-}
 
 // ---------------------------------------------------------------------------
 // Types

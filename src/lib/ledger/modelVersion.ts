@@ -7,4 +7,4 @@
  * modifiers, engine math. UI-only and data-plumbing changes don't bump.
  * See docs/forecast-verification.md#model-versions.
  */
-export const MODEL_VERSION = '2026.07.17';
+export const MODEL_VERSION = '2026.07.20';

@@ -48,6 +48,21 @@ Concrete:
 
 Both sides emit the same `PerCategoryProjection` row shape (`{ statId, expectedCount, expectedDenom }`) so `composeCorrectedRows` and `useCorrectedMatchupAnalysis` consume both without branching.
 
+## PA by lineup spot
+
+The volume half of every batter number: per-PA rates × expected PA. The canonical curve lives in [src/lib/mlb/paBySpot.ts](../src/lib/mlb/paBySpot.ts) — one home consumed by the projection (`expectedPAperGame`, re-exported from `batterTeam.ts` for legacy import sites) **and** the L3 rating's opportunity multiplier (`paOpportunityRatio`), so the score and the volume can never disagree about what a lineup spot is worth.
+
+**Basis: PA per game *started*, not PA per game.** We forecast players in posted lineups (and cached spots), so the right population is starters at that slot — a number that already includes being lifted mid-game. Slot-level PA-per-game tables that include pinch-hitters and defensive substitutes measure a different (much lower) thing.
+
+| Anchor | Status | Source |
+|---|---|---|
+| Per-spot PA/GS (1st ≈ 4.65 → 9th ≈ 3.77, ~0.11/spot decline) | hard-sourced | [RotoGraphs: Plate Appearances by Lineup Spot](https://fantasy.fangraphs.com/buying-generic-plate-appearances-by-lineup-spot/) (2016 league data; slot shape is era-stable, level drifts ≤ ~0.05 with run environment) |
+| Unknown-order fallback (4.1) | estimated | Below the slot mean (4.16) on purpose: bats with no posted/cached spot skew part-time and bottom-of-order |
+
+**History:** the original implementation was a linear ±8% ramp around 4.1 (spot 1 = 4.43) — anchored right at the bottom of the order but ~0.2 PA low at the top, which surfaced as the forecast ledger's first finding (spots 1–3 under-forecast, 2026-07). Replaced with the sourced table; `MODEL_VERSION` 2026.07.20.
+
+**Standing verification:** the `batter-day` engine grades exactly this constant — the PA row of its scorecard plus the lineup-spot slice finding. Era drift and any residual bottom-order attrition show up there; re-anchor from the ledger's own numbers once a season's worth has accumulated rather than fudging ahead of evidence.
+
 ## Reuse rules
 
 1. **One per-player primitive per side.** All three consumers (team aggregate, opponent aggregate, per-FA week ranking) call the same `projectBatterPlayer` / `projectPitcherPlayer`. Don't write a parallel "but for the streaming board" version — extend the primitive or wrap it.

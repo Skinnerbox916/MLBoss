@@ -33,22 +33,33 @@ flowchart TD
 - `enrichStats()` — add metadata to raw Yahoo stats
 - `getEnrichedLeagueStatCategories()` — league-specific scored categories
 
-## The mode axis: which cards render on which dashboard
+## The dashboard grammar
 
-`DashboardModeRouter` picks the dashboard by the active league's scoring mode; `FantasyProvider` resolves the ACTIVE league's keys (switcher selection, primary fallback), so one card implementation serves both. Classify every card per the mode-axis rule (docs/ui-patterns.md#the-mode-axis-categories--points):
+Both mode dashboards render the same three rows, mode-native content in each — the shape is shared so features can't drift (a new element must declare its row and both columns):
 
-| Card | Mode | Why |
+| Row | Categories | Points |
 |---|---|---|
-| `LineupIssuesCard` | both | Roster status + today's slate — no scoring semantics. |
-| `PlayerUpdatesCard` | both | Roster injury/news — no scoring semantics. |
-| `OpponentStatusCard` | both (H2H) | Opponent injuries + probables off the scoreboard — works for any head-to-head league. |
-| `WaiversCard` | both | Waiver priority + pending claims + FA pool. |
-| `RecentActivityCard` | both | League transactions. |
-| `BossCard` | categories | L7 Boss Brief over category margins. |
-| `SeasonComparisonCard` / `NextWeekCard` | categories | Both are `MatchupProjectionCard` (current/next week) — per-category projections. |
-| `TopWeekMoveTile`, week outlook, `SuggestedMovesPanel`, roster value | points | Native points units (pts/wk, VOR). |
+| **1. Matchup marquee** — "am I winning, what's the lever" | `BossCard` (live category tally, caps, Boss Brief) | `PointsMarquee` (live score, projected finals via `usePointsOpponentWeek`, points brief from `lib/points/brief.ts`) |
+| **2. Top action** — one priced move, routes to /streaming | `TopStreamTile` (slot-aware #1 batter stream via `useTopWeekStream`) | `TopWeekMoveTile` (week-moves board #1) |
+| **3. Reference grid** — the shared cards | `GridLayout` of the both-mode cards + projection cards | `GridLayout` of the both-mode cards |
 
-Both-mode cards are mounted by BOTH `DashboardModeRouter` (categories grid) and `PointsDashboard` (below the points marquee) — adding one means adding it in both places.
+Roster-construction content (suggested moves lists, VOR holds/drops) deliberately does NOT appear on either dashboard — that's /roster's job; row 2 names ONE action and routes.
+
+**Two gating axes** (see docs/ui-patterns.md#the-mode-axis-categories--points): scoring `mode` picks the dashboard; `headToHead` (from `useActiveLeague`, orthogonal — Yahoo 'roto'/'point' leagues have no weekly opponent) gates every opponent-shaped element inside it.
+
+| Card | Mode | H2H-only | Why |
+|---|---|---|---|
+| `LineupIssuesCard` | both | no | Roster status + today's slate — no scoring semantics. |
+| `PlayerUpdatesCard` | both | no | Roster injury/news — no scoring semantics. |
+| `OpponentStatusCard` | both | **yes** | Opponent injuries + probables — needs a weekly opponent. |
+| `WaiversCard` | both | no | Waiver priority + pending claims + FA pool. |
+| `RecentActivityCard` | both | no | League transactions. |
+| `BossCard` | categories | **yes** | L7 Boss Brief over live matchup margins. |
+| `SeasonComparisonCard` / `NextWeekCard` | categories | **yes** | Both are `MatchupProjectionCard` — opponent projections. |
+| `TopStreamTile` / `TopWeekMoveTile` | categories / points | no | Streaming value exists with or without an opponent. |
+| `PointsMarquee` | points | internal | Renders the season variant (projected week + standing) itself when `!headToHead`. |
+
+Both-mode cards are mounted by BOTH `DashboardModeRouter` (categories) and `PointsDashboard` — adding one means adding it in both places.
 
 ## Adding a new card
 

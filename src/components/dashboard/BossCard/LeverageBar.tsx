@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 interface LeverageBarProps {
   wins: number;
@@ -16,6 +16,12 @@ interface LeverageBarProps {
   /** Optional huge per-side numerals shown above the bar. Defaults to W/L counts. */
   myScore?: number;
   oppScore?: number;
+  /** Replaces the W/L/T tally under the bar — the points marquee passes its
+   *  projected-finals line here. Omit for the categories default. */
+  subline?: ReactNode;
+  /** Accessible description override — required when `subline` replaces the
+   *  tally, since the default aria text speaks in category wins/losses. */
+  ariaLabel?: string;
 }
 
 /**
@@ -34,6 +40,8 @@ export default function LeverageBar({
   leverage,
   myScore,
   oppScore,
+  subline,
+  ariaLabel,
 }: LeverageBarProps) {
   const clamped = Math.max(-1, Math.min(1, leverage));
   const fillPct = Math.abs(clamped) * 100;
@@ -76,7 +84,7 @@ export default function LeverageBar({
       <div
         className="relative h-2.5 rounded-full bg-border-muted overflow-hidden"
         role="img"
-        aria-label={`Leverage: ${wins} wins, ${losses} losses, ${ties} ties`}
+        aria-label={ariaLabel ?? `Leverage: ${wins} wins, ${losses} losses, ${ties} ties`}
       >
         {/* Center divider */}
         <div className="absolute inset-y-0 left-1/2 w-px bg-border" />
@@ -100,14 +108,20 @@ export default function LeverageBar({
         )}
       </div>
 
-      {/* Tally below */}
-      <div className="mt-1.5 flex items-center justify-center gap-2 text-caption text-muted-foreground">
-        <span className="text-success font-semibold font-mono font-numeric">{wins}W</span>
-        <span aria-hidden="true">·</span>
-        <span className="text-error font-semibold font-mono font-numeric">{losses}L</span>
-        <span aria-hidden="true">·</span>
-        <span className="font-mono font-numeric">{ties}T</span>
-      </div>
+      {/* Tally below (or the caller's subline — points passes proj finals) */}
+      {subline !== undefined ? (
+        <div className="mt-1.5 flex items-center justify-center gap-2 text-caption text-muted-foreground">
+          {subline}
+        </div>
+      ) : (
+        <div className="mt-1.5 flex items-center justify-center gap-2 text-caption text-muted-foreground">
+          <span className="text-success font-semibold font-mono font-numeric">{wins}W</span>
+          <span aria-hidden="true">·</span>
+          <span className="text-error font-semibold font-mono font-numeric">{losses}L</span>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono font-numeric">{ties}T</span>
+        </div>
+      )}
     </div>
   );
 }

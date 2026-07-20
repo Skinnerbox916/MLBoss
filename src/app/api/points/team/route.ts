@@ -25,6 +25,10 @@ export async function GET(request: Request) {
     const leagueKey = searchParams.get('leagueKey');
     const scoringType = searchParams.get('scoringType') ?? '';
     const week: WeekTarget = searchParams.get('week') === 'next' ? 'next' : 'current';
+    // includeFA=0: roster-only analysis — no FA pool, so no replacement/
+    // moves/boards. The points marquee uses this to price the OPPONENT's
+    // projected remaining points at a fraction of the full pipeline cost.
+    const includeFA = searchParams.get('includeFA') !== '0';
 
     if (!teamKey) return NextResponse.json({ error: 'teamKey is required' }, { status: 400 });
     if (!leagueKey) return NextResponse.json({ error: 'leagueKey is required' }, { status: 400 });
@@ -43,9 +47,9 @@ export async function GET(request: Request) {
     // FA pool shift with transactions; the optimize-week route busts this key
     // after it writes a lineup. Per-user-scoped via the team key.
     const analysis = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}:${weekBounds?.end ?? 'legacy'}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}:${weekBounds?.end ?? 'legacy'}${includeFA ? '' : ':fa0'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
-      () => analyzePointsTeam(user.id, leagueKey, teamKey, profile, { week, weekBounds }),
+      () => analyzePointsTeam(user.id, leagueKey, teamKey, profile, { week, weekBounds, includeFA }),
     );
     return NextResponse.json({ leagueKey, teamKey, scoringType, ...analysis });
   } catch (error) {

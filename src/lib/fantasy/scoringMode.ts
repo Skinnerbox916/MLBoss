@@ -24,6 +24,17 @@ export function scoringModeForType(scoringType: string | undefined | null): Scor
   return scoringType && POINTS_SCORING_TYPES.has(scoringType) ? 'points' : 'categories';
 }
 
+/**
+ * True when the league plays weekly head-to-head matchups ('head',
+ * 'headpoint'). Orthogonal to `scoringModeForType`: roto ('roto') and
+ * season-points ('point') leagues have no weekly opponent, so every
+ * opponent-referencing surface (matchup marquees, opponent scouting,
+ * matchup projections) must gate on this, not on mode.
+ */
+export function isHeadToHeadType(scoringType: string | undefined | null): boolean {
+  return !!scoringType && HEAD_TO_HEAD_SCORING_TYPES.has(scoringType);
+}
+
 export type LineupCadence = 'daily' | 'weekly';
 
 /**

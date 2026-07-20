@@ -233,6 +233,8 @@ The rubric: a real IL stint (IL10/IL15/IL60, legacy DL, or Yahoo's `on_disabled_
 
 The module exports a second, related predicate: `hasUnavailableStatus` = stashable-IL **or NA** — the lineup-side question ("can he be written into an active lineup at all?"). NA players are unavailable but not stash-worthy; DTD/SUSP players remain startable in Yahoo and are excluded from both predicates. `getRowStatus` ([lineup/types.ts](../src/components/lineup/types.ts)) and the lineup optimizer's `isInjured` ([lineup/optimize.ts](../src/lib/lineup/optimize.ts)) build on it.
 
+The ownership-floor policy lives in the same home: `FA_OWNERSHIP_FLOOR` (5%) and `faShouldShow` (floor with IL bypass — a dropped IL stud is exactly the stash play worth surfacing). The categories upgrade table, streaming boards, and the dashboard top-stream hook all import it; don't re-derive a floor locally.
+
 Consumers (all must import from the canonical home, never re-derive — a 2026-07 audit found five hand-rolled copies, two of which silently omitted IL15):
 
 - **Categories roster** ([RosterManager.tsx](../src/components/roster/RosterManager.tsx)) — both tabs split Upgrade/Active panels from Stash Targets panels; the swap-optimizer FA pool and the Streaming Advisor's replacement level exclude stashes.

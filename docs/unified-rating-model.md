@@ -88,7 +88,7 @@ This doc covers the rating side of the stack (L1 talent → L2 forecast → L3 r
 
 **Composite layer.** Only matchup-wide signals that genuinely scale every category proportionally:
 - **Pitcher:** platoon (the SP's weak-handed side stack vs this lineup). Velocity moved out of the composite into the talent-layer regime probe (2026-05) — see [history.md](./history.md#2026-05--velocity-multiplier-moved-to-talent-layer-regime-probe).
-- **Batter:** opportunity (PA count from batting order). Platoon is **not** a composite multiplier — it's applied per-category in the forecast as a population component model (large on K, small on AVG/H, negligible on HR); see the canonical table and [history.md](./history.md#2026-05--per-category-platoon).
+- **Batter:** opportunity (PA count from batting order — the canonical PA/GS curve as a ratio vs the unknown-order baseline; see [projection.md#pa-by-lineup-spot](./projection.md#pa-by-lineup-spot)). Platoon is **not** a composite multiplier — it's applied per-category in the forecast as a population component model (large on K, small on AVG/H, negligible on HR); see the canonical table and [history.md](./history.md#2026-05--per-category-platoon).
 
 **Surface layer.** Park, weather, opposing-lineup quality. Computed and shown in the breakdown UI so the user can see WHY their per-cat numbers landed where they did. **NOT** applied to the composite — already in the per-cat numbers. See [architecture.md](./architecture.md#4-per-category-adjustments-before-composite) for why.
 

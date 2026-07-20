@@ -40,7 +40,7 @@ import {
   getDefaultDepth,
 } from '@/lib/roster/depth';
 import { computeOpenSlotCount } from '@/lib/roster/openSlots';
-import { isStashableIL } from '@/lib/roster/playerPool';
+import { isStashableIL, faShouldShow, FA_OWNERSHIP_FLOOR } from '@/lib/roster/playerPool';
 import RosterMoveCard, { type MoveCardDelta } from '@/components/shared/RosterMoveCard';
 import PositionalDepthTable, { DepthStepper, type DepthTableRow } from '@/components/shared/PositionalDepthTable';
 import { CATEGORIES_PREFERRED_DEPTH_KEY } from '@/lib/roster/preferredDepth';
@@ -108,12 +108,6 @@ function getStatValue(
   const line = 'identity' in input ? input : fromBatterSeasonStats(input);
   return getter(line);
 }
-
-// Healthy free agents below this ownership level are filtered from the
-// upgrade table and swap-optimizer FA pool. The league's collective drop
-// is a stronger signal than any per-PA rate. IL players bypass the floor
-// — a dropped IL'd stud is exactly the stash play we want visible.
-const UPGRADE_TARGET_OWNERSHIP_FLOOR = 5;
 
 // ---------------------------------------------------------------------------
 // Depth Chart
@@ -448,8 +442,7 @@ function UpgradeTargetsTable({
         // is exactly the play we want surfaced regardless of ownership.
         // (isStashableIL matches real IL only — NA / DTD / SUSP are not IL
         // and never reach the stash panel.)
-        if (isStashableIL(p)) return true;
-        return (p.percent_owned ?? 0) >= UPGRADE_TARGET_OWNERSHIP_FLOOR;
+        return faShouldShow(p);
       })
       .map(p => ({
         player: p,
@@ -859,7 +852,7 @@ export default function RosterManager() {
     // start them), but the floor matters for healthy FAs.
     return availableBatters
       .filter(p => !isStashableIL(p))
-      .filter(p => (p.percent_owned ?? 0) >= UPGRADE_TARGET_OWNERSHIP_FLOOR)
+      .filter(p => (p.percent_owned ?? 0) >= FA_OWNERSHIP_FLOOR)
       .filter(p => valueByPlayerKey.has(p.player_key))
       .map(p => ({
         player_key: p.player_key,

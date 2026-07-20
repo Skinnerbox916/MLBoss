@@ -21,21 +21,13 @@ import { useLeagueLimits } from '@/lib/hooks/useLeagueLimits';
 import { getStreamingGridDays, getStreamingWeekTarget, resolveEarliestPlayableDate, weekRangeLabel } from '@/lib/dashboard/weekRange';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
 import { moveTimingForDeadline } from '@/lib/fantasy/scoringMode';
-import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 import StreamingBoard from './StreamingBoard';
 import BatterStreamingBoard from './BatterStreamingBoard';
 import VolumeGap from './VolumeGap';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
-import { isStashableIL } from '@/lib/roster/playerPool';
+import { faShouldShow } from '@/lib/roster/playerPool';
 
 type StreamTab = 'pitchers' | 'batters';
-
-const OWNERSHIP_FLOOR = 5;
-
-function faShouldShow(p: FreeAgentPlayer): boolean {
-  if (isStashableIL(p)) return true;
-  return (p.percent_owned ?? 0) >= OWNERSHIP_FLOOR;
-}
 
 /**
  * Streaming page. Two tabs:

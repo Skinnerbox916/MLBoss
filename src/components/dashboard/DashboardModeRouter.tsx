@@ -5,6 +5,7 @@ import Skeleton from '@/components/ui/Skeleton';
 import GridLayout from '@/components/dashboard/GridLayout';
 import { FantasyProvider } from '@/components/dashboard/FantasyProvider';
 import BossCard from '@/components/dashboard/BossCard';
+import TopStreamTile from '@/components/dashboard/TopStreamTile';
 import {
   SeasonComparisonCard,
   OpponentStatusCard,
@@ -17,15 +18,15 @@ import {
 import PointsDashboard from './PointsDashboard';
 
 /**
- * Picks the dashboard experience by the ACTIVE league's scoring mode. Points →
- * the points week-outlook / moves / value landing; categories → the Boss Card
- * marquee + full card grid. `FantasyProvider` resolves the ACTIVE league, and
- * the scoring-agnostic cards (mode-axis registry in
- * docs/dashboard-components.md) render on both dashboards; the Boss Card and
- * projection cards are category-shaped and stay categories-only.
+ * Picks the dashboard experience by the ACTIVE league's scoring mode; both
+ * modes render the shared three-row grammar (marquee / top action /
+ * reference grid — registry: docs/dashboard-components.md#the-dashboard-grammar).
+ * Opponent-shaped cards (Boss Card, matchup projections, opponent scouting)
+ * additionally gate on `headToHead` — roto and season-points leagues have
+ * no weekly opponent.
  */
 export default function DashboardModeRouter() {
-  const { mode, isLoading, leagueKey } = useActiveLeague();
+  const { mode, headToHead, isLoading, leagueKey } = useActiveLeague();
 
   if (isLoading && !leagueKey) {
     return (
@@ -41,13 +42,14 @@ export default function DashboardModeRouter() {
   return (
     <div className="p-6">
       <FantasyProvider>
-        <BossCard />
+        {headToHead && <BossCard />}
+        <TopStreamTile className="mb-6" />
         <GridLayout>
           <LineupIssuesCard />
           <PlayerUpdatesCard />
-          <OpponentStatusCard />
-          <SeasonComparisonCard />
-          <NextWeekCard />
+          {headToHead && <OpponentStatusCard />}
+          {headToHead && <SeasonComparisonCard />}
+          {headToHead && <NextWeekCard />}
           <WaiversCard />
           <RecentActivityCard />
         </GridLayout>

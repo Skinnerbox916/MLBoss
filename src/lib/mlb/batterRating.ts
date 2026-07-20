@@ -66,6 +66,7 @@ import {
 } from './categoryBaselines';
 import { getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
 import { platoonSummaryFactor, facingHandFrom } from './platoon';
+import { paOpportunityRatio } from './paBySpot';
 import { buildBatterForecast } from './batterForecast';
 import { focusToCategoryWeights, type Focus } from '@/lib/rating/focus';
 
@@ -188,9 +189,10 @@ function buildPlatoonMultiplier(
 }
 
 /**
- * Batting-order → PA opportunity multiplier. Top-of-order bats average
- * ~4.6 PA/game vs #9's ~3.6 — ~±8% of the expected PA count, which is
- * what we reflect here.
+ * Batting-order → PA opportunity multiplier: the canonical PA-by-spot
+ * curve as a ratio vs the unknown-order baseline, so the rating and the
+ * projection volume can never disagree on what a lineup spot is worth.
+ * Curve + sources: docs/projection.md#pa-by-lineup-spot
  */
 function buildOpportunityMultiplier(battingOrder: number | null): RatingMultiplier {
   const known = battingOrder !== null && battingOrder >= 1 && battingOrder <= 9;
@@ -203,9 +205,8 @@ function buildOpportunityMultiplier(battingOrder: number | null): RatingMultipli
       available: false,
     };
   }
-  // #1 → +8%, #9 → −8%, linear between.
-  const pct = 8 - ((battingOrder! - 1) / 8) * 16;
-  const mult = 1 + pct / 100;
+  const mult = paOpportunityRatio(battingOrder!);
+  const pct = Math.round((mult - 1) * 1000) / 10;
   const summary = battingOrder! <= 2 ? 'Top of the order'
                 : battingOrder! <= 5 ? 'Middle of the order'
                 : 'Bottom of the order';

@@ -25,6 +25,7 @@ import { buildGameForecast } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
 import { observedSavesPerAppearance } from '@/lib/pitching/talent';
 import { getBatterRating } from '@/lib/mlb/batterRating';
+import { PA_PER_GAME_NO_SPOT } from '@/lib/mlb/paBySpot';
 import type { Focus } from '@/lib/rating/focus';
 import type { MatchupContext } from '@/lib/mlb/matchupContext';
 import type { BatterSeasonStats } from '@/lib/mlb/types';
@@ -60,9 +61,9 @@ const AB_PER_PA = 0.91;
  */
 const TYPICAL_GAMES_PER_WEEK = 6;
 
-/** Default per-game PA rate when GP is 0 (no games played). Mirrors
- *  `batterTeam.BASELINE_PA_PER_GAME`. */
-const DEFAULT_PA_PER_GAME = 4.1;
+/** Default per-game PA rate when GP is 0 (no games played) — the
+ *  canonical unknown-order baseline (see mlb/paBySpot.ts). */
+const DEFAULT_PA_PER_GAME = PA_PER_GAME_NO_SPOT;
 
 /**
  * Typical full-rotation starts per calendar week for an SP. Every 5

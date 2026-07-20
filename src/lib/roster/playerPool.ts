@@ -42,6 +42,23 @@ export function hasUnavailableStatus(p: PoolPlayerStatus): boolean {
 }
 
 /**
+ * Healthy free agents below this ownership level are filtered from
+ * upgrade/streaming boards and optimizer FA pools — the league's
+ * collective drop is a stronger signal than any per-PA rate.
+ */
+export const FA_OWNERSHIP_FLOOR = 5;
+
+/**
+ * The standard FA display filter: IL players bypass the ownership floor
+ * (a dropped IL stud is exactly the stash play worth surfacing);
+ * everyone else must clear it.
+ */
+export function faShouldShow(p: PoolPlayerStatus & { percent_owned?: number }): boolean {
+  if (isStashableIL(p)) return true;
+  return (p.percent_owned ?? 0) >= FA_OWNERSHIP_FLOOR;
+}
+
+/**
  * Split a free-agent pool into startable adds and IL stashes. Use this
  * (rather than ad-hoc filters) so the two lists stay complementary —
  * every surface that shows an "upgrade" list next to a "stash" list gets

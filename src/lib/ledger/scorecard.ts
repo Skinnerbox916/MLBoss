@@ -4,6 +4,7 @@ import { getScoringProfile } from '@/lib/fantasy';
 import { actualBatterPoints, actualPitcherPoints } from './actualPoints';
 import { addDaysIso, todayEt } from './capture';
 import type { ForecastEngine } from './capture';
+import { liveCohortVersions } from './modelVersion';
 
 /**
  * Scorecard — grade the ledger. All aggregation happens here in app code
@@ -40,6 +41,11 @@ export interface StatGrade {
   /** Standard error of the bias — the noise floor the findings test
    *  against. 0 when n < 2. */
   se: number;
+  /** How many model versions this headline grade pools (live cohort). >1
+   *  means the metric accumulated unbroken across a version bump that
+   *  didn't touch it; 1 after a bump that did. Undefined on segmented
+   *  views (by-version / by-lead-days), where it's meaningless. */
+  versions?: number;
 }
 
 export interface CalibrationBucket {
@@ -494,7 +500,33 @@ export async function buildScorecard(
       return [gradeStat(vs.map(v => ({ pred: v.pred, actual: v.actual })), 'points')];
     };
 
-    const statGrades = sliceGrades(played);
+    // Headline grades read the LIVE COHORT per stat: pool every version that
+    // is model-equivalent to the current build for that metric, drop the
+    // ones a change since then superseded. So an untouched stat pools its
+    // whole history across a bump, while a touched stat resets to post-change
+    // data only. The full split stays visible in `byModelVersion`.
+    const presentVersions = [...new Set(played.map(r => r.modelVersion))];
+    const cohortRows = (stat: string): JoinedRow[] => {
+      const cohort = liveCohortVersions(engine, stat, presentVersions);
+      return played.filter(r => cohort.has(r.modelVersion));
+    };
+    const headlineGrade = (stat: string, gradeFn: (rows: JoinedRow[]) => StatGrade): StatGrade => {
+      const rows = cohortRows(stat);
+      return { ...gradeFn(rows), versions: new Set(rows.map(r => r.modelVersion)).size };
+    };
+
+    let statGrades: StatGrade[];
+    if (kind === 'pitcher-line') {
+      statGrades = PITCHER_STATS.map(s => headlineGrade(s, rows => gradeOne(rows, s, 'pit')));
+    } else if (kind === 'batter-line') {
+      statGrades = BATTER_STATS.map(s => headlineGrade(s, rows => gradeOne(rows, s, 'bat')));
+    } else {
+      statGrades = [headlineGrade('points', rows => {
+        const set = new Set(rows);
+        const vs = valueRows.filter(v => set.has(v.row));
+        return gradeStat(vs.map(v => ({ pred: v.pred, actual: v.actual })), 'points');
+      })];
+    }
 
     const byLeadDays = [...new Set(playedAllLeads.map(r => r.leadDays))].sort((a, b) => a - b).map(ld => {
       const slice = playedAllLeads.filter(r => r.leadDays === ld);

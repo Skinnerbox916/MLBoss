@@ -214,7 +214,7 @@ function EngineCard({ card }: { card: EngineScorecard }) {
         </Text>
       ) : (
       <>
-      <StatTable title="Bias / MAE" stats={card.stats} />
+      <StatTable title="Bias / MAE" stats={card.stats} showPool={card.byModelVersion.length > 1} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {card.qsCalibration && card.qsCalibration.length > 0 && (
@@ -388,17 +388,18 @@ function CalibrationTable({ title, buckets }: { title: string; buckets: Calibrat
   );
 }
 
-function StatTable({ title, stats }: { title: string; stats: StatGrade[] }) {
+function StatTable({ title, stats, showPool }: { title: string; stats: StatGrade[]; showPool?: boolean }) {
   return (
     <Section
       title={title}
-      help="Per stat: what we predicted per game vs what actually happened, averaged over every graded row. Bias is the systematic lean (positive = engine over-forecasts); MAE is the typical size of any single miss, noise included. Red = the lean is bigger than its noise floor — statistically real, worth acting on. Hover the column headers for definitions."
+      help="Per stat: what we predicted per game vs what actually happened, averaged over the LIVE model cohort — every version that's model-equivalent to the current build for that stat. A stat an update didn't touch keeps pooling its whole history; a stat the update changed resets to post-change data only (full split in “By model version” below). Bias is the systematic lean (positive = over-forecast); MAE is the typical single-game miss. Red = lean bigger than its noise floor. Hover column headers for definitions."
     >
       <table className="w-full text-sm font-mono">
         <thead>
           <tr className="text-left border-b border-border">
             <th className="py-1 pr-4 font-normal">Stat</th>
             <th className="py-1 pr-4 font-normal cursor-help" title="Graded rows behind this line — appearances that actually happened.">n</th>
+            {showPool && <th className="py-1 pr-4 font-normal cursor-help" title="Model versions pooled into this line. >1 = the stat accumulated unbroken across a version bump that didn't change it; 1 = an update reset it, so only post-change data counts here.">pool</th>}
             <th className="py-1 pr-4 font-normal cursor-help" title="Mean forecast per game across the graded rows.">Predicted</th>
             <th className="py-1 pr-4 font-normal cursor-help" title="Mean of what actually happened, same rows.">Actual</th>
             <th className="py-1 pr-4 font-normal cursor-help" title="Predicted − actual, averaged. Positive = the engine over-forecasts this stat.">Bias</th>
@@ -415,6 +416,7 @@ function StatTable({ title, stats }: { title: string; stats: StatGrade[] }) {
             <tr key={s.stat} className="border-b border-border/40">
               <td className="py-1 pr-4 uppercase">{s.stat}</td>
               <td className="py-1 pr-4">{s.n}</td>
+              {showPool && <td className="py-1 pr-4">{s.versions ?? 1}v</td>}
               <td className="py-1 pr-4">{s.predictedMean}</td>
               <td className="py-1 pr-4">{s.actualMean}</td>
               <td className={`py-1 pr-4 ${significant ? 'text-error-600' : ''}`}>

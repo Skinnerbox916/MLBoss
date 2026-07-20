@@ -90,9 +90,16 @@ The knob slices work because capture stores **modifier attribution**: pitcher sn
 
 Actual fantasy points for the points engines are computed by `src/lib/ledger/actualPoints.ts` — the grading twin of the `pointsValue.ts` dot-product, same `stat_id` vocabulary as `rateVector.ts` (stat 33 scored per out).
 
-## Model versions
+## Model versions & the change manifest
 
-`MODEL_VERSION` in `src/lib/ledger/modelVersion.ts` is stamped onto every snapshot. **Bump it whenever a change alters what an engine predicts** — calibration constants, league means, prior strengths, new modifiers, engine math. UI and plumbing changes don't bump. This is what lets the scorecard segment before/after a tuning change instead of blurring both into one average; it complements the point-in-time smoke harness (`/api/admin/test-pitcher-eval`) as its longitudinal sibling.
+`MODEL_VERSION` in `src/lib/ledger/modelVersion.ts` is stamped onto every snapshot. **Bump it whenever a change alters what an engine predicts** — calibration constants, league means, prior strengths, new modifiers, engine math (UI and plumbing don't bump) — **and add a `MODEL_CHANGELOG` entry naming what it touched** (which engines, which stat keys; `'*'` = all). It complements the point-in-time smoke harness (`/api/admin/test-pitcher-eval`) as its longitudinal sibling.
+
+**Snapshots are never deleted on a version change.** The old-version data is the control group for the before/after that proves the change helped — deleting it deletes the proof, and snapshots can't be regenerated (they're frozen world-states). Nor are snapshots knob-separable: a single batter-day row bundles PA and every stat at once, so there's no "just the PA knob's data" to flush — that separation only exists at read time. So instead of flushing, the scorecard reads by **live cohort** (`liveCohortVersions`):
+
+- A stat **no change since touched** pools every version into one unbroken, growing sample. A batter-PA tune never touched pitcher K, so pitcher K keeps accumulating straight across the bump.
+- A stat a change **did touch** resets: the headline shows only post-change data (its `pool` count drops to `1v`), while the older versions live on in the **By model version** table as the before-data.
+
+The single global `MODEL_VERSION` string would otherwise over-segment — bumping it for a batter tune would reset the clock on unrelated pitcher stats. The manifest is what prevents that: it tells the scorecard exactly which metrics a bump invalidated, so everything else keeps compounding. The one legitimate deletion is *buggy* data (a capture defect, garbage inputs) — a surgical integrity cleanup, never a routine version bump.
 
 ## Operating it
 

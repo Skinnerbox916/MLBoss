@@ -393,22 +393,26 @@ export async function buildScorecard(
   }
 
   const cards = engines.sort().map(engine => {
-    let all = rows.filter(r => r.engine === engine);
+    const rawAll = rows.filter(r => r.engine === engine);
+
+    // One row per (player, game/window, league): traffic re-captures the
+    // same prediction at shrinking leads, and those rows are near-perfectly
+    // correlated — counting them all would overstate every n and shrink
+    // every noise floor. Grade the closest-to-game forecast; the raw
+    // multi-lead rows feed ONLY the by-lead-days comparison view.
+    const byIdentity = new Map<string, JoinedRow>();
+    for (const r of rawAll) {
+      const k = `${r.mlbId}:${r.gameDate}:${r.leagueKey}`;
+      const prev = byIdentity.get(k);
+      if (!prev || r.leadDays < prev.leadDays) byIdentity.set(k, r);
+    }
+    const all = [...byIdentity.values()];
+
     let future: JoinedRow[];
     let pendingActuals: JoinedRow[];
     let resolved: JoinedRow[];
 
     if (engine === 'batter-week') {
-      // One row per (player, window, league): daily route traffic captures
-      // the same window at shrinking leads — keep the closest-to-window
-      // forecast so a player-week is never counted twice.
-      const byIdentity = new Map<string, JoinedRow>();
-      for (const r of all) {
-        const k = `${r.mlbId}:${r.gameDate}:${r.leagueKey}`;
-        const prev = byIdentity.get(k);
-        if (!prev || r.leadDays < prev.leadDays) byIdentity.set(k, r);
-      }
-      all = [...byIdentity.values()];
       future = [];
       pendingActuals = [];
       resolved = [];
@@ -439,10 +443,19 @@ export async function buildScorecard(
       engine === 'pitcher-start' ? 'pitcher-line'
       : engine === 'batter-day' || engine === 'batter-week' ? 'batter-line'
       : 'points';
-    const played = resolved.filter(r =>
-      side === 'pit' ? r.pitching != null && (r.pitching.gs ?? 0) > 0 : r.batting != null,
-    );
+    const isPlayed = (r: JoinedRow) =>
+      side === 'pit' ? r.pitching != null && (r.pitching.gs ?? 0) > 0 : r.batting != null;
+    const played = resolved.filter(isPlayed);
     const didNotPlay = resolved.length - played.length;
+
+    // All-leads graded rows — exclusively for the by-lead-days view, where
+    // the same appearance at different leads is the comparison, not a dupe.
+    // (batter-week's window synthesis only ran on deduped rows, so it keeps
+    // its post-dedupe view there.)
+    const playedAllLeads = engine === 'batter-week'
+      ? played
+      : rawAll.filter(r => r.gameDate < today && r.status !== null && isPlayed(r));
+    const playedSet = new Set(played);
 
     // Capture coverage: distinct dates vs the calendar span they cover
     // (week engines count in Mon–Sun windows, not days).
@@ -461,9 +474,11 @@ export async function buildScorecard(
     };
 
     // Points engines grade one value per row: predicted vs realized points.
+    // Built over all leads so the by-lead-days view can price its slices;
+    // everything else filters back down to the deduped `played` set.
     let valueRows: { row: JoinedRow; pred: number; actual: number }[] = [];
     if (kind === 'points') {
-      valueRows = played
+      valueRows = playedAllLeads
         .filter(row => weightsByLeague.has(row.leagueKey))
         .map(row => {
           const w = weightsByLeague.get(row.leagueKey)!;
@@ -481,8 +496,8 @@ export async function buildScorecard(
 
     const statGrades = sliceGrades(played);
 
-    const byLeadDays = [...new Set(played.map(r => r.leadDays))].sort((a, b) => a - b).map(ld => {
-      const slice = played.filter(r => r.leadDays === ld);
+    const byLeadDays = [...new Set(playedAllLeads.map(r => r.leadDays))].sort((a, b) => a - b).map(ld => {
+      const slice = playedAllLeads.filter(r => r.leadDays === ld);
       return { leadDays: ld, graded: slice.length, stats: sliceGrades(slice) };
     });
 
@@ -516,6 +531,10 @@ export async function buildScorecard(
     const dnpRate = resolved.length ? didNotPlay / resolved.length : 0;
     const [dnpMin, dnpWatch, dnpFlag] =
       engine === 'batter-week' ? [100, 0.08, 0.15]
+      // points-batter-day predicts by SCHEDULE (team plays), not posted
+      // lineup — routine rest days are expected, ~10-15% is the baseline
+      // for a pool that includes part-timers, not a forecast miss.
+      : engine === 'points-batter-day' ? [300, 0.18, 0.28]
       : side === 'bat' ? [200, 0.03, 0.05]
       : [50, 0.1, 0.15];
     if (resolved.length >= dnpMin && dnpRate >= dnpWatch) {
@@ -540,7 +559,9 @@ export async function buildScorecard(
       for (const [name, buckets] of [['QS', card.qsCalibration], ['W', card.wCalibration]] as const) {
         for (const b of buckets) {
           const gap = b.predictedMean - b.actualRate;
-          if (b.n >= 25 && Math.abs(gap) >= 0.06) {
+          // Gate on the binomial band, not just gap size — a fixed gap
+          // threshold alone fires on small-n buckets that are pure noise.
+          if (b.n >= 25 && b.significant && Math.abs(gap) >= 0.06) {
             findings.push({
               severity: Math.abs(gap) >= 0.1 ? 'flag' : 'watch',
               engine,
@@ -633,7 +654,9 @@ export async function buildScorecard(
     }
 
     if (engine === 'points-pitcher-start') {
-      const ranked = valueRows.filter(v => v.row.context.owned === false && typeof v.row.context.rank === 'number');
+      const ranked = valueRows.filter(v =>
+        playedSet.has(v.row) && v.row.context.owned === false && typeof v.row.context.rank === 'number',
+      );
       const buckets: [string, (r: number) => boolean][] = [
         ['1–3', r => r <= 3],
         ['4–10', r => r > 3 && r <= 10],

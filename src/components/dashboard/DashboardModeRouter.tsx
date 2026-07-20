@@ -18,10 +18,11 @@ import PointsDashboard from './PointsDashboard';
 
 /**
  * Picks the dashboard experience by the ACTIVE league's scoring mode. Points →
- * the points week-outlook / moves / value landing; categories → the existing
- * Boss Card marquee + reference-card grid. The category cards read the
- * primary-league context (FantasyProvider) and are category-shaped, so they
- * only render in categories mode.
+ * the points week-outlook / moves / value landing; categories → the Boss Card
+ * marquee + full card grid. `FantasyProvider` resolves the ACTIVE league, and
+ * the scoring-agnostic cards (mode-axis registry in
+ * docs/dashboard-components.md) render on both dashboards; the Boss Card and
+ * projection cards are category-shaped and stay categories-only.
  */
 export default function DashboardModeRouter() {
   const { mode, isLoading, leagueKey } = useActiveLeague();

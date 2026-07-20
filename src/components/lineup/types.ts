@@ -1,13 +1,12 @@
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
+import { hasUnavailableStatus } from '@/lib/roster/playerPool';
 
 export type LineupMode = 'batting' | 'pitching';
 
 export type RowStatus = 'starter' | 'bench' | 'injured';
 
 export function getRowStatus(player: RosterEntry): RowStatus {
-  if (player.on_disabled_list || player.status === 'IL' || player.status === 'IL10' || player.status === 'IL60' || player.status === 'DL' || player.status === 'NA') {
-    return 'injured';
-  }
+  if (hasUnavailableStatus(player)) return 'injured';
   if (player.selected_position === 'BN') return 'bench';
   if (player.selected_position === 'IL' || player.selected_position === 'IL+' || player.selected_position === 'NA') return 'injured';
   return 'starter';

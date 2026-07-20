@@ -23,6 +23,7 @@ import { getGameDay } from '@/lib/mlb/schedule';
 import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getWeekDays, type WeekBounds, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
+import { isStashableIL } from '@/lib/roster/playerPool';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 import type { EnrichedGame } from '@/lib/mlb/types';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
@@ -165,28 +166,27 @@ export async function analyzePointsTeam(
     faPitchers = pitPool.filter(p => isPitcherPos(p.eligible_positions, p.display_position)).sort(byOwned).slice(0, FA_PITCHER_CAP);
   }
 
-  const isILStatus = (status: string | undefined) =>
-    !!status && (/^IL\d*$/i.test(status) || status.toUpperCase() === 'DL');
   const batterInputs = [
     ...rosterBatters.map(p => ({
       name: p.name, team: p.editorial_team_abbr, playerKey: p.player_key,
       owned: true, injured: getRowStatus(p) === 'injured',
-      onIL: isILStatus(p.status), percentOwned: p.percent_owned,
+      onIL: isStashableIL(p), percentOwned: p.percent_owned,
       positions: p.eligible_positions,
     })),
     ...faBatters.map(p => ({
       name: p.name, team: p.editorial_team_abbr, playerKey: p.player_key,
-      // FA rows: `injured` = on a real IL. Keeps stash candidates visible
-      // on the boards (with the IL badge) while the client-side swap pool
-      // filters them out — you can't start them.
-      owned: false, injured: Boolean(p.on_disabled_list) || isILStatus(p.status),
-      onIL: Boolean(p.on_disabled_list) || isILStatus(p.status), percentOwned: p.percent_owned,
+      // FA rows: `injured` = on a real IL (canonical rubric in
+      // lib/roster/playerPool). Keeps stash candidates visible on the
+      // boards while swap pools and replacement calcs filter them out —
+      // you can't start them.
+      owned: false, injured: isStashableIL(p),
+      onIL: isStashableIL(p), percentOwned: p.percent_owned,
       positions: p.eligible_positions,
     })),
   ];
   const pitcherInputs = [
     ...rosterPitchers.map(p => ({ name: p.name, team: p.editorial_team_abbr, playerKey: p.player_key, owned: true, injured: getRowStatus(p) === 'injured', positions: p.eligible_positions })),
-    ...faPitchers.map(p => ({ name: p.name, team: p.editorial_team_abbr, playerKey: p.player_key, owned: false, injured: false, positions: p.eligible_positions })),
+    ...faPitchers.map(p => ({ name: p.name, team: p.editorial_team_abbr, playerKey: p.player_key, owned: false, injured: isStashableIL(p), positions: p.eligible_positions })),
   ];
 
   const [batterStats, pitcherData] = await Promise.all([
@@ -278,10 +278,13 @@ export async function analyzePointsTeam(
     .filter((x): x is PointsPlayerRow => x !== null)
     .sort((a, b) => b.weeklyPoints - a.weeklyPoints);
 
-  // Replacement + VOR.
+  // Replacement + VOR. "Readily-available replacement" means startable
+  // now — IL FAs are stashes, not replacements, so they stay out of the
+  // pool (an IL stud would otherwise inflate his position's replacement
+  // level and deflate every VOR at that slot).
   const faCands = [
-    ...batters.filter(b => !b.owned).map(b => ({ positions: b.positions, weeklyPoints: b.weeklyPoints })),
-    ...pitchers.filter(p => !p.owned).map(p => ({ positions: p.positions, weeklyPoints: p.weeklyPoints })),
+    ...batters.filter(b => !b.owned && !b.injured).map(b => ({ positions: b.positions, weeklyPoints: b.weeklyPoints })),
+    ...pitchers.filter(p => !p.owned && !p.injured).map(p => ({ positions: p.positions, weeklyPoints: p.weeklyPoints })),
   ];
   const replacement = replacementByPosition(faCands, 3);
   // Annotate every row (rostered AND FA) with VOR — the upgrade board
@@ -315,7 +318,8 @@ export async function analyzePointsTeam(
     .filter(p => p.owned)
     .map(p => ({ name: p.name, team: p.team, kind: 'P' as const, value: p.weeklyPoints, meta: { role: p.role } }));
   const faCandMoves: MoveCandidate[] = pitchers
-    .filter(p => !p.owned)
+    // IL arms can't be added-and-started — never suggest them as swaps.
+    .filter(p => !p.owned && !p.injured)
     .map(p => ({ name: p.name, team: p.team, kind: 'P' as const, value: p.weeklyPoints, meta: { role: p.role } }));
   const pitcherMoves = recommendSwaps(rosterCands, faCandMoves, { minGain: 1, maxPerKind: 6 }).pitchers;
 

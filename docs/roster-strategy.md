@@ -225,6 +225,26 @@ Tunable:
 |---|---|---|
 | `NOTABLE_DELTA` (0.25) | [league/swapStrategy.ts](../src/lib/league/swapStrategy.ts) | Threshold above which a swap "meaningfully" pushes/erodes a cat, in move units — a quarter of a typical move's worth of weekly production in that cat. |
 
+## Active vs stash: the FA pool split
+
+Every surface that shops the free-agent pool answers the same policy question first: **is this player a startable add, or an injured-list stash?** The rubric has exactly one home: [roster/playerPool.ts](../src/lib/roster/playerPool.ts) (`isStashableIL` / `splitFAPool`).
+
+The rubric: a real IL stint (IL10/IL15/IL60, legacy DL, or Yahoo's `on_disabled_list` flag) → stash. NA, SUSP, and DTD are **not** stash statuses — those players stay in the active pool and earn their slot through score/ownership. Rationale: an IL player is coming back after a defined recovery window and is exactly the "dropped stud" a stash panel exists to surface, but he can't be started, streamed, suggested as a swap add, or counted as replacement level *now*.
+
+The module exports a second, related predicate: `hasUnavailableStatus` = stashable-IL **or NA** — the lineup-side question ("can he be written into an active lineup at all?"). NA players are unavailable but not stash-worthy; DTD/SUSP players remain startable in Yahoo and are excluded from both predicates. `getRowStatus` ([lineup/types.ts](../src/components/lineup/types.ts)) and the lineup optimizer's `isInjured` ([lineup/optimize.ts](../src/lib/lineup/optimize.ts)) build on it.
+
+Consumers (all must import from the canonical home, never re-derive — a 2026-07 audit found five hand-rolled copies, two of which silently omitted IL15):
+
+- **Categories roster** ([RosterManager.tsx](../src/components/roster/RosterManager.tsx)) — both tabs split Upgrade/Active panels from Stash Targets panels; the swap-optimizer FA pool and the Streaming Advisor's replacement level exclude stashes.
+- **Categories streaming** ([StreamingManager.tsx](../src/components/streaming/StreamingManager.tsx), [BatterStreamingBoard.tsx](../src/components/streaming/BatterStreamingBoard.tsx)) — ownership-floor bypass and stash badging.
+- **L6 forecast route** ([api/league/[leagueKey]/forecast/route.ts](../src/app/api/league/%5BleagueKey%5D/forecast/route.ts)) — `isOnIL` inputs to `playingTimeFactor` for FA and roster batter lines.
+- **Points roster** — the server ([points/analyzeTeam.ts](../src/lib/points/analyzeTeam.ts)) stamps FA rows' `injured` with the rubric; the view ([PointsRosterView.tsx](../src/components/roster/PointsRosterView.tsx)) splits its boards on that flag, and pitcher move candidates + `replacementByPosition` exclude stashes. Client batter strategy ([points/rosterStrategy.ts](../src/lib/points/rosterStrategy.ts)) filters on the same server flag.
+- **Points week-moves** ([points/streaming.ts](../src/lib/points/streaming.ts)) — batter plugs exclude stashes; pitcher streams are start-gated so IL arms drop out naturally.
+
+Status-badge coloring in row components (StatusBadge, PlayerRow, LineupGrid) is display-only and may use broader sets; decision logic must not copy those.
+
+Rostered players are a different concept — the L6 forecast deliberately **includes** IL players at role-typical volume (see history.md 2026-05); don't apply this split to roster projections.
+
 ## Why this layer doesn't read `analyzeMatchup`
 
 The roster page intentionally diverges from `/lineup` and `/streaming` on focus source:

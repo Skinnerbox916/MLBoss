@@ -8,6 +8,7 @@ import Tabs from '@/components/ui/Tabs';
 import { Heading } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useStandings } from '@/lib/hooks/useStandings';
+import StandingsTable from '@/components/shared/StandingsTable';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { formatStatValue } from '@/lib/formatStat';
 import type { StandingsEntry, StatValue } from '@/lib/yahoo-fantasy-api';
@@ -53,70 +54,6 @@ function rankTeams(
   const ranks = new Map<string, number>();
   withVal.forEach((t, i) => ranks.set(t.teamKey, i + 1));
   return ranks;
-}
-
-// ---------------------------------------------------------------------------
-// Standings Table
-// ---------------------------------------------------------------------------
-
-function StandingsTable({
-  standings,
-  userTeamKey,
-}: {
-  standings: StandingsEntry[];
-  userTeamKey: string | undefined;
-}) {
-  const sorted = useMemo(
-    () => [...standings].sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99)),
-    [standings],
-  );
-
-  return (
-    <Panel title="Standings">
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium w-8">#</th>
-              <th className="text-left px-2 py-1.5 text-muted-foreground font-medium">Team</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-14">W</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-14">L</th>
-              <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-14">T</th>
-              <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-14">Pct</th>
-              <th className="text-right px-2 py-1.5 text-muted-foreground font-medium w-14">GB</th>
-              {sorted[0]?.streak !== undefined && (
-                <th className="text-center px-2 py-1.5 text-muted-foreground font-medium w-14">Strk</th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map(team => {
-              const isUser = team.team_key === userTeamKey;
-              const rowClass = isUser ? 'bg-primary/5' : '';
-              return (
-                <tr key={team.team_key} className={`border-b border-border/50 hover:bg-surface-muted/50 ${rowClass}`}>
-                  <td className="px-2 py-1.5 text-muted-foreground">{team.rank ?? '-'}</td>
-                  <td className="px-2 py-1.5">
-                    <span className={`font-medium ${isUser ? 'text-accent' : 'text-foreground'}`}>
-                      {team.name}
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-center text-foreground">{team.wins ?? '-'}</td>
-                  <td className="px-2 py-1.5 text-center text-foreground">{team.losses ?? '-'}</td>
-                  <td className="px-2 py-1.5 text-center text-foreground">{team.ties ?? '-'}</td>
-                  <td className="px-2 py-1.5 text-right text-foreground">{team.percentage ?? '-'}</td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">{team.points_back ?? '-'}</td>
-                  {sorted[0]?.streak !== undefined && (
-                    <td className="px-2 py-1.5 text-center text-muted-foreground">{team.streak ?? '-'}</td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
-  );
 }
 
 // ---------------------------------------------------------------------------

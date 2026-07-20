@@ -26,16 +26,11 @@ import StreamingBoard from './StreamingBoard';
 import BatterStreamingBoard from './BatterStreamingBoard';
 import VolumeGap from './VolumeGap';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
+import { isStashableIL } from '@/lib/roster/playerPool';
 
 type StreamTab = 'pitchers' | 'batters';
 
 const OWNERSHIP_FLOOR = 5;
-
-function isStashableIL(p: { on_disabled_list?: boolean; status?: string }): boolean {
-  if (p.on_disabled_list) return true;
-  if (!p.status) return false;
-  return /^IL\d*$/i.test(p.status) || p.status.toUpperCase() === 'DL';
-}
 
 function faShouldShow(p: FreeAgentPlayer): boolean {
   if (isStashableIL(p)) return true;

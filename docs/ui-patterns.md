@@ -112,6 +112,10 @@ One suggested roster move (drop → add, or "Add to open slot"): names + positio
 
 The positional-depth table (Pos / Slots / Eligible / Status / Starters / Best Backup) both roster pages use, with `depthStatus` (GAP / ok / deep) derived from eligible count vs min depth. The Target column renders only when the caller passes `renderTarget` (categories' preferred-depth steppers); points omits it.
 
+### StandingsTable (`src/components/shared/StandingsTable.tsx`)
+
+League standings (# / Team / W / L / T / Pct / GB), scoring-agnostic — both `/league` mode views mount it. Columns are data-driven, not mode-flagged: PF/PA appear when the league reports points totals (points leagues), the streak column when Yahoo includes it. User's team row highlights via `userTeamKey`.
+
 ## Shared Utilities (`src/lib/`)
 
 ### Stat Formatting (`src/lib/formatStat.ts`)
@@ -206,6 +210,18 @@ When adding a primary destination: add it to `navigation.ts` and it shows up in 
 - **Don't duplicate tier/verdict color logic.** The pattern is: `success` = good/winning/strong, `error` = bad/losing/weak, `accent` = neutral/notable, `muted` = unknown/inactive.
 - **Don't add a second navigation list** for mobile. Both the desktop sidebar and mobile bottom nav read from `src/components/layout/navigation.ts`. Adding/removing a primary destination = one line in that file.
 - **Don't grow the mobile bottom tab bar past 5 items.** Fold destinations into existing pages or add a "More" sheet — labels stop fitting around 6 items on small phones.
+
+## The Mode Axis (categories × points)
+
+Every page routes by the active league's scoring mode (`useActiveLeague().mode`) through a per-page router (`RosterModeRouter`, `StreamingModeRouter`, `DashboardModeRouter`, `LeagueModeRouter`; `/lineup` is mode-aware inside one shell). The fork exists because the two modes differ in *decision grammar* (leverage/concede vs. one points currency) — but most UI is NOT mode-specific, and building a scoring-agnostic feature inside one side of the fork is how the two views drift into "two sites in a trenchcoat."
+
+**Before building any new UI feature, classify it on the mode axis:**
+
+1. **Scoring-agnostic** (standings W/L/T, activity feeds, waivers, injury/stash policy, schedule strips): build ONE component in `src/components/shared/`, mount it from both mode views. It must not import category or points engines directly — take data via props.
+2. **Same grammar, different units** (depth tables, move cards, player boards): one shared component parameterized by the value/label props — the proven pattern (`RosterMoveCard`, `PositionalDepthTable` serve both modes).
+3. **Mode-specific by nature** (leverage tiles, concede toggles, VOR boards): lives in the mode's own view. Confirm it's genuinely about the scoring grammar, not just "the other mode's view doesn't exist yet."
+
+When you fix a behavior in one mode's view, grep for the sibling view (`Points*` ↔ the categories manager for that page) and the other player side (batter ↔ pitcher) before closing — if the fix applies there, it was misclassified as mode-specific and should move to a shared home.
 
 ## When You Actually Need Something New
 

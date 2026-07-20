@@ -8,6 +8,7 @@ import type { WeekBatterScore } from '@/lib/hooks/useWeekBatterScores';
 import type { FAStreamingValue, SlotAwarePerDay } from '@/lib/projection/slotAware';
 import type { PerDayProjection } from '@/lib/projection/batterTeam';
 import type { WeekDay } from '@/lib/dashboard/weekRange';
+import { isStashableIL } from '@/lib/roster/playerPool';
 
 interface BatterStreamingBoardProps {
   faScores: WeekBatterScore[];
@@ -150,7 +151,7 @@ function BatterRow({
       .slice(0, 3);
   }, [projection.byCategory]);
 
-  const isStashable = player.on_disabled_list || /^IL\d*$/i.test(player.status ?? '');
+  const isStashable = isStashableIL(player);
 
   return (
     <li className="flex items-start gap-3 p-2.5 rounded bg-surface-muted/30 border border-border">

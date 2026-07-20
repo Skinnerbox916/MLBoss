@@ -289,6 +289,13 @@ function escapeXml(value: string): string {
  * Returns an empty array on any unknown shape so callers can rely on the
  * declared `Array<{ size: string; url: string }>` interface.
  */
+/** Parse Yahoo's numeric strings, keeping real zeros ("0" → 0, not undefined). */
+function toOptionalNumber(v: unknown): number | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  return isNaN(n) ? undefined : n;
+}
+
 function normalizeTeamLogos(raw: unknown): Array<{ size: string; url: string }> {
   if (!raw) return [];
   let entries: unknown[] = [];
@@ -1310,12 +1317,14 @@ export class YahooFantasyAPI {
         url: props.url ?? '',
         team_logos: normalizeTeamLogos(props.team_logos),
         rank: standings?.rank ? Number(standings.rank) : undefined,
-        wins: standings?.outcome_totals?.wins ? Number(standings.outcome_totals.wins) : undefined,
-        losses: standings?.outcome_totals?.losses ? Number(standings.outcome_totals.losses) : undefined,
-        ties: standings?.outcome_totals?.ties ? Number(standings.outcome_totals.ties) : undefined,
+        // Truthiness would turn Yahoo's "0" into undefined — a 0-win team
+        // has a real record, so only treat missing/empty as absent.
+        wins: toOptionalNumber(standings?.outcome_totals?.wins),
+        losses: toOptionalNumber(standings?.outcome_totals?.losses),
+        ties: toOptionalNumber(standings?.outcome_totals?.ties),
         percentage: standings?.outcome_totals?.percentage ?? undefined,
-        points_for: standings?.points_for ? Number(standings.points_for) : undefined,
-        points_against: standings?.points_against ? Number(standings.points_against) : undefined,
+        points_for: toOptionalNumber(standings?.points_for),
+        points_against: toOptionalNumber(standings?.points_against),
         points_back: standings?.points_back ?? undefined,
         streak: standings?.streak?.type && standings?.streak?.value
           ? `${standings.streak.type}${standings.streak.value}`

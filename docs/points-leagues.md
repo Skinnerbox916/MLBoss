@@ -68,6 +68,10 @@ The points `/streaming` page's engine (2026-07 rebuild — see history.md). The 
 
 **Surfaces.** `/streaming`: `PointsWeekPlan` (moves-budget pips, opportunity total, day strip with go-live markers) over `PointsMovesBoard` (staging + drop override in the expanded row), with the original stream/plug boards below as the browse pool. Dashboard: `TopWeekMoveTile` renders the top move from the same hook.
 
+## The `/league` page (points mode)
+
+`PointsLeagueView` — the shared scoring-agnostic [`StandingsTable`](../src/components/shared/StandingsTable.tsx) (which adds PF/PA columns when the league reports points totals) under the League Overview header. A points-native rankings section (weekly points for/against trends) is the planned follow-up; the categories `StatRankingsTable` stays categories-only (it ranks by `stat_id`, meaningless under one currency).
+
 ## What this layer does not (yet) model
 
 - **Pitcher position-aware moves/depth** — see above.

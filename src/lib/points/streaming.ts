@@ -51,6 +51,7 @@ import { getGameDay } from '@/lib/mlb/schedule';
 import { getObservedLineupSpots } from '@/lib/mlb/lineupSpots';
 import { getPickupPlayableDays, getWeekDays, type WeekBounds, type WeekDay } from '@/lib/dashboard/weekRange';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
+import { isStashableIL } from '@/lib/roster/playerPool';
 import { normalizeTeamAbbr } from '@/lib/mlb/teamAbbr';
 import { isLikelySamePlayer } from '@/lib/pitching/display';
 import { resolveMatchup } from '@/lib/mlb/analysis';
@@ -318,7 +319,10 @@ export async function analyzePointsStreaming(
   );
 
   const faBatters = faBatPool
-    .filter(p => !isPitcherPos(p.eligible_positions, p.display_position) && !p.on_disabled_list)
+    // Canonical IL rubric (lib/roster/playerPool) — an IL bat can't plug
+    // a future slot, whether Yahoo flags it via on_disabled_list or only
+    // via the status code.
+    .filter(p => !isPitcherPos(p.eligible_positions, p.display_position) && !isStashableIL(p))
     .sort((a, b) => (b.percent_owned ?? 0) - (a.percent_owned ?? 0))
     .slice(0, FA_BATTER_EVAL_CAP);
 

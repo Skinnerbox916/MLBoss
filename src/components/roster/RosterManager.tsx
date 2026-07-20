@@ -40,6 +40,7 @@ import {
   getDefaultDepth,
 } from '@/lib/roster/depth';
 import { computeOpenSlotCount } from '@/lib/roster/openSlots';
+import { isStashableIL } from '@/lib/roster/playerPool';
 import RosterMoveCard, { type MoveCardDelta } from '@/components/shared/RosterMoveCard';
 import PositionalDepthTable, { DepthStepper, type DepthTableRow } from '@/components/shared/PositionalDepthTable';
 import { CATEGORIES_PREFERRED_DEPTH_KEY } from '@/lib/roster/preferredDepth';
@@ -113,21 +114,6 @@ function getStatValue(
 // is a stronger signal than any per-PA rate. IL players bypass the floor
 // — a dropped IL'd stud is exactly the stash play we want visible.
 const UPGRADE_TARGET_OWNERSHIP_FLOOR = 5;
-
-/**
- * True when a free agent is on a real Injured List status (IL10/IL15/IL60,
- * legacy DL) — i.e. a player who's coming back to the active roster after
- * a defined recovery period. NA (Not Active — minor-league assignments,
- * suspensions, opt-outs), DTD (day-to-day, still playing through it), and
- * other status codes are deliberately excluded. Only true IL gets the
- * stash-bypass treatment in the upgrade table; everything else has to
- * earn its slot through ownership and current performance.
- */
-function isStashableIL(p: { on_disabled_list?: boolean; status?: string }): boolean {
-  if (p.on_disabled_list) return true;
-  if (!p.status) return false;
-  return /^IL\d*$/i.test(p.status) || p.status.toUpperCase() === 'DL';
-}
 
 // ---------------------------------------------------------------------------
 // Depth Chart
@@ -455,10 +441,13 @@ function UpgradeTargetsTable({
       .filter(p => {
         // 5% ownership floor: a healthy player with consensus < 5% owned
         // is the league's collective "no" — almost certainly not a real
-        // upgrade target. IL'd players bypass the floor since dropped IL
-        // studs are exactly the stash plays we want surfaced. NA / DTD /
-        // other statuses are NOT IL — minor-league assignments and day-
-        // to-day flags shouldn't get the bypass.
+        // upgrade target. The caller pre-splits the pool: the Upgrade
+        // Targets panel is fed only healthy bats (IL already removed) so
+        // the floor is all that applies here; the Stash Targets panel is
+        // fed only IL bats, which bypass the floor since a dropped IL stud
+        // is exactly the play we want surfaced regardless of ownership.
+        // (isStashableIL matches real IL only — NA / DTD / SUSP are not IL
+        // and never reach the stash panel.)
         if (isStashableIL(p)) return true;
         return (p.percent_owned ?? 0) >= UPGRADE_TARGET_OWNERSHIP_FLOOR;
       })
@@ -869,7 +858,7 @@ export default function RosterManager() {
     // IL players are still excluded from the swap pool itself (you can't
     // start them), but the floor matters for healthy FAs.
     return availableBatters
-      .filter(p => !p.on_disabled_list)
+      .filter(p => !isStashableIL(p))
       .filter(p => (p.percent_owned ?? 0) >= UPGRADE_TARGET_OWNERSHIP_FLOOR)
       .filter(p => valueByPlayerKey.has(p.player_key))
       .map(p => ({
@@ -1049,6 +1038,20 @@ function BattersTab({
   preferredDepth: Partial<Record<BatterPosition, number>>;
   onPreferredDepthChange: (pos: BatterPosition, next: number | null) => void;
 }) {
+  // Split the FA pool the same way the pitchers tab does: IL bats can't be
+  // put in an active lineup, so they don't belong in "Upgrade Targets" — a
+  // dropped IL stud floats to the top on talent alone (the L6 forecast
+  // projects IL players at full role-typical volume) and reads as an
+  // actionable add when it isn't. They get their own Stash Targets panel.
+  const activeBatters = useMemo(
+    () => availableBatters.filter(p => !isStashableIL(p)),
+    [availableBatters],
+  );
+  const stashBatters = useMemo(
+    () => availableBatters.filter(p => isStashableIL(p) && scoreIndexFor(p.player_key) !== null),
+    [availableBatters, scoreIndexFor],
+  );
+
   return (
     <>
       <RosterFocusPanel
@@ -1091,22 +1094,39 @@ function BattersTab({
               />
             </Panel>
 
-            <Panel
-              title="Upgrade Targets"
-              action={
-                <span className="text-caption text-muted-foreground">
-                  {battersLoading ? 'Loading...' : `${availableBatters.length} available`}
-                </span>
-              }
-            >
-              <UpgradeTargetsTable
-                players={availableBatters}
-                displayCategories={displayCategories}
-                catRoleFor={catRoleFor}
-                getStats={getFAStats}
-                scoreIndexFor={scoreIndexFor}
-              />
-            </Panel>
+            <div className="space-y-4">
+              <Panel
+                title="Upgrade Targets"
+                action={
+                  <span className="text-caption text-muted-foreground">
+                    {battersLoading ? 'Loading...' : `${activeBatters.length} available`}
+                  </span>
+                }
+              >
+                <UpgradeTargetsTable
+                  players={activeBatters}
+                  displayCategories={displayCategories}
+                  catRoleFor={catRoleFor}
+                  getStats={getFAStats}
+                  scoreIndexFor={scoreIndexFor}
+                />
+              </Panel>
+
+              {stashBatters.length > 0 && (
+                <Panel
+                  title="Stash Targets (IL)"
+                  action={<span className="text-caption text-muted-foreground">{stashBatters.length} found</span>}
+                >
+                  <UpgradeTargetsTable
+                    players={stashBatters}
+                    displayCategories={displayCategories}
+                    catRoleFor={catRoleFor}
+                    getStats={getFAStats}
+                    scoreIndexFor={scoreIndexFor}
+                  />
+                </Panel>
+              )}
+            </div>
           </div>
         </>
       )}
@@ -1281,8 +1301,11 @@ function StreamingAdvisor({
       .filter((x): x is { player: RosterEntry; rating: PitcherRating } => x !== null && x.rating.score > 0)
       .sort((a, b) => a.rating.score - b.rating.score);
 
+    // Replacement level is "what a healthy streamer produces this week" —
+    // IL arms can't be streamed, so they're out of the pool entirely.
     const scoredFAs = availablePitchers
       .slice(0, 50)
+      .filter(p => !isStashableIL(p))
       .map(p => {
         const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
         if (!entry) return null;
@@ -1392,6 +1415,12 @@ function PitchersTab({
 
   const filteredFAs = useMemo(() => {
     return availablePitchers.slice(0, 50).filter(p => {
+      // IL arms can't be started — they belong in Stash Targets below,
+      // not in an "Active" upgrade list. Same rubric as the batter
+      // upgrade table (isStashableIL): DTD/NA/SUSP still earn their
+      // slot through score.
+      if (isStashableIL(p)) return false;
+
       const entry = talentMap[`${p.name.toLowerCase()}|${p.editorial_team_abbr.toLowerCase()}`];
       if (!entry) return true;
 
@@ -1417,12 +1446,11 @@ function PitchersTab({
       if (!entry) return false;
 
       // Stash targets are:
-      // 1. Specifically on Yahoo IL
+      // 1. On a real Yahoo IL (IL10/IL15/IL60/DL — not DTD/NA/SUSP)
       // 2. Ghosts (0 IP in 2026) with > 15% ownership (Cole/Greene)
-      const isIL = p.status === 'IL';
       const isStash = entry.metadata.isGhost && (p.percent_owned || 0) >= 15;
-      
-      return isIL || isStash;
+
+      return isStashableIL(p) || isStash;
     });
   }, [availablePitchers, talentMap]);
 

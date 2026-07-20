@@ -35,6 +35,7 @@ import {
   estimateFullTimePaceRef,
   estimateFullTimeGpRef,
 } from '@/lib/roster/playingTime';
+import { isStashableIL } from '@/lib/roster/playerPool';
 import type { PlayerCatLine } from '@/lib/league/rosterValue';
 import {
   computeLeagueForecast,
@@ -341,12 +342,6 @@ interface PlayerLineMeta {
   percentOwned?: number;
 }
 
-/** True IL statuses (IL10/IL15/IL60, legacy DL) — same rule the roster
- *  page uses for stash detection. NA/DTD are deliberately excluded. */
-function isILStatus(status: string | undefined): boolean {
-  if (!status) return false;
-  return /^IL\d*$/i.test(status) || status.toUpperCase() === 'DL';
-}
 
 async function projectFreeAgents(args: {
   userId: string;
@@ -380,7 +375,7 @@ async function projectFreeAgents(args: {
     meta.push({
       mlbId: stats.mlbId,
       stats,
-      isOnIL: Boolean(p.on_disabled_list) || isILStatus(p.status),
+      isOnIL: isStashableIL(p),
       percentOwned: p.percent_owned,
     });
   }
@@ -500,7 +495,7 @@ async function projectOneTeam(input: {
       batterMeta.push({
         mlbId: stats.mlbId,
         stats,
-        isOnIL: isILStatus(p.status),
+        isOnIL: isStashableIL(p),
       });
     }
 

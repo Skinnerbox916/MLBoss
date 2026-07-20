@@ -125,11 +125,9 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
                   rows={data.batters.filter(p => p.owned)}
                   kind="B"
                 />
-                <PlayerBoard
-                  title="Upgrade Targets"
-                  rows={data.batters.filter(p => !p.owned).slice(0, 30)}
+                <FreeAgentBoards
+                  rows={data.batters.filter(p => !p.owned)}
                   kind="B"
-                  showOwnership
                 />
               </div>
             </>
@@ -142,11 +140,9 @@ export default function PointsRosterView({ leagueKey, teamKey, scoringType }: Po
                   rows={data.pitchers.filter(p => p.owned)}
                   kind="P"
                 />
-                <PlayerBoard
-                  title="Upgrade Targets"
-                  rows={data.pitchers.filter(p => !p.owned).slice(0, 30)}
+                <FreeAgentBoards
+                  rows={data.pitchers.filter(p => !p.owned)}
                   kind="P"
-                  showOwnership
                 />
               </div>
             </>
@@ -222,6 +218,25 @@ function BatterMovesPanel({ moves, openSlots }: { moves: PointsBatterMove[]; ope
         ))}
       </div>
     </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Free-agent boards — the canonical active/stash split (see
+// lib/roster/playerPool.ts). FA rows carry `injured` = real IL from the
+// server, so the partition here matches the categories page's panels.
+// ---------------------------------------------------------------------------
+
+function FreeAgentBoards({ rows, kind }: { rows: PointsPlayerRow[]; kind: 'B' | 'P' }) {
+  const active = rows.filter(p => !p.injured).slice(0, 30);
+  const stash = rows.filter(p => p.injured).slice(0, 10);
+  return (
+    <div className="space-y-4">
+      <PlayerBoard title="Upgrade Targets" rows={active} kind={kind} showOwnership />
+      {stash.length > 0 && (
+        <PlayerBoard title="Stash Targets (IL)" rows={stash} kind={kind} showOwnership />
+      )}
+    </div>
   );
 }
 

@@ -13,13 +13,23 @@ import { usePointsRosterStrategy } from '@/lib/hooks/usePointsRosterStrategy';
 import SuggestedMovesPanel from '@/components/points/SuggestedMovesPanel';
 import TopWeekMoveTile from '@/components/points/TopWeekMoveTile';
 import type { PointsVORRow } from '@/lib/points/analyzeTeam';
+import GridLayout from '@/components/dashboard/GridLayout';
+import { FantasyProvider } from '@/components/dashboard/FantasyProvider';
+import {
+  LineupIssuesCard,
+  PlayerUpdatesCard,
+  OpponentStatusCard,
+  WaiversCard,
+  RecentActivityCard,
+} from '@/components/dashboard/cards';
 
 /**
  * Points-league dashboard — the reference/overview surface for a points
  * league. Leads with the week outlook (projected points + the lineup gain
  * call-to-action), then the top roster moves, then a roster-value summary
- * (best holds / drop candidates). The category Boss Card + per-category cards
- * don't apply here; this is the points equivalent landing.
+ * (best holds / drop candidates), then the scoring-agnostic reference cards
+ * (mode-axis registry: docs/dashboard-components.md). The category Boss
+ * Card + projection cards don't apply here.
  */
 export default function PointsDashboard() {
   const { leagueKey, teamKey, scoringType, leagueName } = useActiveLeague();
@@ -64,6 +74,18 @@ export default function PointsDashboard() {
           </div>
         </>
       )}
+
+      {/* Scoring-agnostic reference cards — outside the points-analysis
+          gate so they render on their own (cheaper) fetches. */}
+      <FantasyProvider>
+        <GridLayout>
+          <LineupIssuesCard />
+          <PlayerUpdatesCard />
+          <OpponentStatusCard />
+          <WaiversCard />
+          <RecentActivityCard />
+        </GridLayout>
+      </FantasyProvider>
     </div>
   );
 }

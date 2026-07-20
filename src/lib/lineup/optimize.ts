@@ -1,4 +1,5 @@
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
+import { hasUnavailableStatus } from '@/lib/roster/playerPool';
 
 // ---------------------------------------------------------------------------
 // Hungarian algorithm (Kuhn–Munkres) for minimum-cost assignment.
@@ -233,8 +234,7 @@ export function optimizeLineup(
 }
 
 export function isInjured(p: RosterEntry): boolean {
-  if (p.on_disabled_list) return true;
-  if (p.status === 'IL' || p.status === 'IL10' || p.status === 'IL60' || p.status === 'DL' || p.status === 'NA') return true;
+  if (hasUnavailableStatus(p)) return true;
   if (p.selected_position === 'IL' || p.selected_position === 'IL+' || p.selected_position === 'NA') return true;
   return false;
 }

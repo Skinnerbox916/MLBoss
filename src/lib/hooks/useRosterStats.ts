@@ -2,6 +2,7 @@ import useSWR from 'swr';
 import type { RosterEntry } from '@/lib/yahoo-fantasy-api';
 import type { BatterSeasonStats, PlayerStatLine } from '@/lib/mlb/types';
 import { fromBatterSeasonStats } from '@/lib/mlb/adapters';
+import { isPitcher } from '@/lib/pitching/display';
 
 interface RosterStatsResponse {
   stats: Record<string, BatterSeasonStats>;
@@ -19,7 +20,12 @@ function makeKey(name: string, team: string): string {
  * list of player names so identical rosters share the cache entry.
  */
 export function useRosterStats(roster: RosterEntry[]) {
-  const players = roster.map(p => ({ name: p.name, team: p.editorial_team_abbr }));
+  // Hitting stats only — pitchers can never produce a row, and including
+  // them drags the server's coverage gate below its 70% threshold, so the
+  // batch is treated as a failed fetch and never cached.
+  const players = roster
+    .filter(p => !isPitcher(p))
+    .map(p => ({ name: p.name, team: p.editorial_team_abbr }));
 
   const cacheKey = players.length > 0
     ? `roster-stats:${players.map(p => makeKey(p.name, p.team)).sort().join(',')}`

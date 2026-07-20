@@ -1,5 +1,5 @@
 import { mlbFetchSchedule, mlbFetchTeamStats } from './client';
-import { withCacheGated, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
+import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import {
   applyPitcherPlatoon,
   applyPitcherRecentForm,
@@ -432,7 +432,14 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
   ]);
   setLeagueSbAllowedPerIp(staffSplitsResult.leagueSbAllowedPerIp);
 
-  const dateEntry = raw.dates?.[0];
+  // A well-formed response always carries a `dates` array; `dates: []` is
+  // how the schedule API says "no games on this date" (off-days, all-star
+  // break) — a valid, cacheable empty slate. A missing array means the
+  // response is malformed, so throw rather than let it cache as empty.
+  if (!Array.isArray(raw.dates)) {
+    throw new Error(`MLB schedule response for ${date} is malformed (no dates array)`);
+  }
+  const dateEntry = raw.dates[0];
   if (!dateEntry) return [];
 
   const games = dateEntry.games.map(parseGame);
@@ -544,9 +551,11 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
  * `withCache` collapses that to one build per date per TTL.
  *
  * TTL: today/future = 5 min (matches the underlying schedule cache; lineups
- * and probables shift through the day); past dates are immutable → 1 h. Gated
- * so an empty/failed slate isn't pinned. The `setLeagueSbAllowedPerIp` side
- * effect runs OUTSIDE the cache so it stays fresh on hits (the batter SB
+ * and probables shift through the day); past dates are immutable → 1 h.
+ * Failed builds throw (nothing cached, next request retries); an empty slate
+ * is a valid result — no-game dates like the all-star break — and MUST cache,
+ * or every request during the break rebuilds it. The `setLeagueSbAllowedPerIp`
+ * side effect runs OUTSIDE the cache so it stays fresh on hits (the batter SB
  * forecast reads that module global; it's date-independent and
  * `fetchTeamStaffSplits` is 24h-cached, so this is ~free).
  */
@@ -558,11 +567,10 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const ttl = date < todayStr ? CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong : CACHE_CATEGORIES.SEMI_DYNAMIC.ttl;
 
-  return withCacheGated(
+  return withCache(
     `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:game-day-enriched:${date}`,
     ttl,
     () => buildGameDay(date),
-    games => games.length > 0,
   );
 }
 

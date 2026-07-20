@@ -244,14 +244,20 @@ export async function resolveMLBId(
   fullName: string,
   teamAbbr?: string,
 ): Promise<MLBPlayerIdentity | null> {
+  // Yahoo lists two-way players as two separate entries with a parenthetical
+  // suffix — "Shohei Ohtani (Batter)" / "Shohei Ohtani (Pitcher)" — but MLB
+  // search only knows the real name. Strip it; both entries resolve to the
+  // same MLB person (and share one cache entry).
+  const searchName = fullName.replace(/\s*\((?:batter|pitcher)\)\s*$/i, '');
+
   // v2: prior key collapsed same-name players (abbr match was always
   // falsy since currentTeam hydrate omits abbreviation). Bumped to
   // invalidate stale mappings like Yahoo "ATH Muncy" -> LAD Muncy.
-  const cacheKey = `resolve-v2:${fullName.toLowerCase().replace(/\s+/g, '-')}:${(teamAbbr ?? '').toLowerCase()}`;
+  const cacheKey = `resolve-v2:${searchName.toLowerCase().replace(/\s+/g, '-')}:${(teamAbbr ?? '').toLowerCase()}`;
   const teamLabel = teamAbbr ?? '';
 
   try {
-    const encoded = encodeURIComponent(fullName);
+    const encoded = encodeURIComponent(searchName);
     const raw = await mlbFetchIdentity<RawSearchResponse>(
       `/people/search?names=${encoded}&sportIds=1`,
       cacheKey,

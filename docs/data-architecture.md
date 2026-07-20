@@ -178,6 +178,11 @@ Canonical examples (all multi-fanout, all gated):
 - `getAvailablePitchers` in [src/lib/fantasy/players.ts](../src/lib/fantasy/players.ts) — 4-way Yahoo fan-out across SP/RP × FA/W (≥50 merged pitchers)
 - `getPlayerMarketSignals` in [src/lib/fantasy/players.ts](../src/lib/fantasy/players.ts) — per-key market signal fetch (70% coverage gate)
 
+Two rules learned the hard way (2026-07 all-star week, see [history.md](./history.md)):
+
+- **"Empty" is not "failed."** A gate like `result.length > 0` turns a legitimately-empty result (a no-game date, an empty waiver pool) into a permanent cache miss that rebuilds on every request. Make failure paths *throw* (nothing caches, next request retries) and let valid-but-empty results cache. `getGameDay` is the cautionary tale: it used this gate and rebuilt the all-star break's empty slates on every points/lineup/streaming request.
+- **Every input must be able to succeed.** A coverage-ratio gate is only meaningful if 100% coverage is achievable. Sending pitchers into the hitting-only `getRosterSeasonStats` capped coverage at ~50%, so the gate rejected every run and the batch refetched forever. Filter inputs to what the fetcher can actually resolve (the caller owns this — the `{name, team}` input shape carries no position info).
+
 ### Schema versioning
 
 Cache keys carry an inline version segment (`roster-stats-v7`, `savant:pitchers:v2`) so a payload-shape change can be invalidated by bumping a number rather than by clearing Redis. Bump the version segment whenever you:

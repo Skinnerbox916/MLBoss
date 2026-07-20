@@ -8,6 +8,28 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Per-surface IL predicates consolidated into lib/roster/playerPool
+
+The "is this player on a real IL?" question was answered by five hand-rolled copies scattered across surfaces: `isStashableIL` in RosterManager, another in StreamingManager, an inline regex in BatterStreamingBoard, `isILStatus` in the forecast route, and `isILStatus` in points/analyzeTeam — plus two hand-enumerated status lists (`getRowStatus` in lineup/types, `isInjured` in lineup/optimize) that had **both silently drifted to omit IL15**, the most common pitcher stint. Downstream, points FA pitchers had `injured` hardcoded `false`, so the points pitcher board couldn't badge IL arms and `recommendSwaps` could suggest adding an IL60 pitcher. This is why IL fixes played whack-a-mole across pitchers/batters/points/categories (owner surfaced it 2026-07-20: IL60 arms topping the categories Active Upgrades list).
+
+**Replaced with:** [lib/roster/playerPool.ts](../src/lib/roster/playerPool.ts) — `isStashableIL` (real IL/DL stint incl. legacy DL10/DL60), `hasUnavailableStatus` (adds NA for the "can he start at all?" lineup question), `splitFAPool`. All decision-making surfaces import from there; every FA surface now splits Active/Upgrade panels from Stash Targets panels. Rubric + consumer registry: [roster-strategy.md#active-vs-stash-the-fa-pool-split](./roster-strategy.md#active-vs-stash-the-fa-pool-split).
+
+Don't reintroduce:
+
+- **A local IL status check in any component, route, or engine.** Import from playerPool. If the rubric seems wrong for your surface, fix it at the home or add a named predicate there — a local variant is how IL15 got dropped twice.
+- **Hand-enumerated status lists** (`status === 'IL' || status === 'IL10' || ...`). Yahoo's stint codes change (DL→IL in 2019, IL15 added later); the anchored regex in playerPool is the only place allowed to know the shape.
+
+## 2026-07 — getGameDay's `length > 0` cache gate retired; empty slates are valid results
+
+`getGameDay` used `withCacheGated(..., games => games.length > 0)` so "an empty/failed slate isn't pinned." During the all-star break (week 17 = Jul 13–26, two no-game days) that gate made the *correct* empty slate uncacheable — every points/lineup/streaming request rebuilt Jul 13/15 from scratch, all week, on every page view. Combined with full rosters (pitchers included) being POSTed into `getRosterSeasonStats` — whose 70% coverage gate then structurally rejected every run (pitchers can't produce hitting lines) — cold `/api/points/team` builds on prod exceeded Cloudflare's ~100s proxy ceiling and every points tab showed "Couldn't load points analysis" (2026-07-20).
+
+**Replaced with:** plain `withCache`; `buildGameDay` now throws when the schedule response is malformed (no `dates` array) so failures still don't cache, while `dates: []` (a real no-game date) caches normally. `useRosterStats` filters pitchers before POSTing. Rules generalized in [data-architecture.md#quality-gate](./data-architecture.md#quality-gate).
+
+Don't reintroduce:
+
+- **A non-emptiness predicate as a cache gate.** If a fetcher can legitimately return empty, gate on *failure* (throw) not on *shape*. Re-adding `games.length > 0` re-breaks every off-day and the next all-star break.
+- **Unfiltered rosters into batter-shaped batch fetchers.** `getRosterSeasonStats` is hitting-only; its coverage denominator counts every input, so inputs that can never resolve poison the gate.
+
 ## 2026-07 — localStorage strategy prefs replaced by the server-side pref store; single-user framing retired
 
 Concede/contest overrides (`useCategoryWeights`, `useRosterCategoryWeights`) and target-depth steppers (`loadPreferredDepth`/`savePreferredDepth`) used to persist in browser localStorage. That was fine for one user on one machine, but it meant phone and desktop carried *different strategy states* and clearing browser data silently wiped mid-week concede calls. Same day, the owner retired the "single-user app" design assumption entirely (target: usable by 15–100 users), which added Postgres as the durable third storage leg (users + roles, prefs, forecast ledger — see [data-architecture.md#the-three-storage-legs](./data-architecture.md#the-three-storage-legs)).

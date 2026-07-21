@@ -605,7 +605,7 @@ export async function buildScorecard(
       }
 
       for (const stat of ['k', 'er']) {
-        const f = sliceFinding(engine, played, 'pit', stat, 'home/away',
+        const f = sliceFinding(engine, cohortRows(stat), 'pit', stat, 'home/away',
           'home', r => r.context.isHome === true, 'away', r => r.context.isHome === false);
         if (f) findings.push(f);
       }
@@ -623,7 +623,7 @@ export async function buildScorecard(
           'strong offenses (≤−3%)', r => (mult(r, 'opp') ?? 1) <= 0.97],
       ];
       for (const [stat, label, aName, aTest, bName, bTest] of knobSlices) {
-        const f = sliceFinding(engine, played, 'pit', stat, label, aName, aTest, bName, bTest);
+        const f = sliceFinding(engine, cohortRows(stat), 'pit', stat, label, aName, aTest, bName, bTest);
         if (f) findings.push(f);
       }
     }
@@ -634,7 +634,7 @@ export async function buildScorecard(
       // (Upgrade Targets) the same as rostered bats (Your Batters)? An
       // asymmetry here directly mis-prices every suggested swap.
       for (const stat of ['pa', 'tb']) {
-        const f = sliceFinding(engine, played, 'bat', stat, 'ownership',
+        const f = sliceFinding(engine, cohortRows(stat), 'bat', stat, 'ownership',
           'rostered', r => r.context.owned === true,
           'free agents', r => r.context.owned === false);
         if (f) findings.push(f);
@@ -663,8 +663,11 @@ export async function buildScorecard(
           'dampened (≤−5%)',
           r => ((r.context.mods as Record<string, number> | undefined)?.tb ?? 1) <= 0.95],
       ];
+      // Slices read the LIVE COHORT per stat, same as the headline grades:
+      // a stat a version bump touched (e.g. the PA re-anchor) must not mix
+      // pre/post-change rows, or a corrected bias keeps re-flagging for weeks.
       for (const [stat, label, aName, aTest, bName, bTest] of slices) {
-        const f = sliceFinding(engine, played, 'bat', stat, label, aName, aTest, bName, bTest);
+        const f = sliceFinding(engine, cohortRows(stat), 'bat', stat, label, aName, aTest, bName, bTest);
         if (f) findings.push(f);
       }
     }

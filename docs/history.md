@@ -8,6 +8,18 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Slot-aware streaming guarded against a missing baseline (the "+166 top move")
+
+The dashboard's categories "Top move this week" tile briefly recommended a fringe OF at +166 — ~5× the engine's intended 0–50 scale, with the FA assigned to slots (OF) the roster normally fills. Root cause was never a pricing bug: on healthy inputs the same engine priced that FA at ~26. The board inflates only when the my-roster baseline goes missing while FA scores are present — then `computeSlotAwareStreaming` prices every FA as "fills an open slot at full daily score" instead of "upgrade margin over my weakest starter." Three unguarded paths produced that state: (1) `/api/projection/batter-team` cached its assembled payload with plain `withCache`, so a partial stats/roster run (whose *inner* gates correctly refused to cache) still got assembled and pinned for the full TTL; (2) `useSlotAwareStreaming` guarded `!myProjection` but not `myRoster.length === 0` (roster fetch still loading/failed — common under Yahoo rate-limit pressure while everything else is Redis-warm); (3) `TopStreamTile` rendered whatever was computed mid-hydration, ignoring `isLoading`.
+
+**Replaced with:** coverage gates on both projection routes (`withCacheGated` on the *resolution* stage — resolved players / roster count ≥ 70% — NOT on `contributorCount`, which late-week runs legitimately drop to near zero); an empty-roster/empty-bridge guard plus a trusted-days filter in `useSlotAwareStreaming` (a day where FAs score but the entire roster is blank is degraded data, not a schedule); and an `isLoading` gate on the tile.
+
+Don't reintroduce:
+
+- **An ungated `withCache` around an assembly that composes multi-fanout fetchers.** Inner gates protect inner caches only; the composed payload must gate its own write or it launders degraded runs into a pinned "healthy-looking" result.
+- **`contributorCount` (games/starts-in-window) as a coverage denominator.** It conflates "no game scheduled" with "data missing." Gate on the resolution stage (stats matched, identity resolved), which is schedule-independent and 100% achievable.
+- **Slot-aware solves without a baseline-presence guard.** "No baseline scores" must read as *loading/degraded*, never as "every slot is open."
+
 ## 2026-07 — Points week-projection unified into projectRosterWeek
 
 `analyzePointsTeam.weekProjectedPoints` (the dashboard marquee's per-team projection) computed the batting week total by summing each player's full-week volume, capped at the league's batting-slot count (top-K by week points). That was a position-blind, off-day-blind approximation — AND it initially summed the *entire* roster including bench bats (a 16-bat roster over-projected ~37% vs Yahoo's own number) and IL players (the volume resolver credits a full week to a player whose team plays but who can't). Meanwhile [analyzePointsStreaming](../src/lib/points/streaming.ts) already solved the exact thing — optimal batting lineup per day, summed, cadence-aware — one file away, for its coverage strip. The top-K cap was patched in under time pressure (validated within ~1% vs Yahoo) but was a second implementation of an answered question.

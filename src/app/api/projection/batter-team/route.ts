@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getTeamRosterByDate, getWeekBounds, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getTeamRosterByDate, getWeekBounds, withCacheGated, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getRosterSeasonStats } from '@/lib/mlb/players';
@@ -68,7 +68,14 @@ export async function GET(request: Request) {
     // Real matchup-week bounds (Yahoo game_weeks) — the window is 7 days
     // normally, up to 14 in the combined all-star week.
     const weekBounds = await getWeekBounds(user.id, leagueKey);
-    const payload = await withCache(
+    // Coverage-gated (docs/data-architecture.md#quality-gate): the inner
+    // stats fetch is gated for ITS cache, but a partial run still returns a
+    // degraded record — assembling that into perPlayer and pinning it here
+    // is how the 2026-07-21 dashboard incident served an empty streaming
+    // baseline for a full TTL. `rosterBatterCount` is the gate denominator;
+    // the legitimate empties (no remaining days, no active batters) pass at
+    // 0/0.
+    const payload = await withCacheGated(
       `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:proj-batter-team:${teamKey}:${targetWeek}:${weekBounds?.end ?? 'legacy'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
       async () => {
@@ -78,7 +85,7 @@ export async function GET(request: Request) {
         const weekEnd = days[days.length - 1]?.date;
         const daysElapsed = days.filter(d => !d.isRemaining).length;
 
-        const empty = { teamKey, weekStart, weekEnd, daysElapsed, byCategory: {}, perPlayer: [], contributorCount: 0 };
+        const empty = { teamKey, weekStart, weekEnd, daysElapsed, byCategory: {}, perPlayer: [], contributorCount: 0, rosterBatterCount: 0 };
         if (remaining.length === 0) return empty;
 
         // Roster as of the LAST remaining day — captures pickups effective for
@@ -167,8 +174,17 @@ export async function GET(request: Request) {
           };
         });
 
-        return { teamKey, weekStart, weekEnd, daysElapsed, byCategory: byCategoryRecord, perPlayer, contributorCount: projection.contributorCount };
+        return {
+          teamKey, weekStart, weekEnd, daysElapsed,
+          byCategory: byCategoryRecord, perPlayer,
+          contributorCount: projection.contributorCount,
+          rosterBatterCount: activeRoster.length,
+        };
       },
+      // Gate on the stats-RESOLUTION stage (perPlayer.length = batters the
+      // stats fetch matched), NOT contributorCount — contributors need a
+      // game in the window, which late-week runs legitimately lack.
+      p => p.perPlayer.length >= Math.ceil(p.rosterBatterCount * 0.7),
     );
 
     return NextResponse.json(payload);

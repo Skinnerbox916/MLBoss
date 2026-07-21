@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { getTeamRosterByDate, getWeekBounds, withCache, CACHE_CATEGORIES } from '@/lib/fantasy';
+import { getTeamRosterByDate, getWeekBounds, withCacheGated, CACHE_CATEGORIES } from '@/lib/fantasy';
 import { getGameDay } from '@/lib/mlb/schedule';
 import { getParkByVenueId } from '@/lib/mlb/parks';
 import { getEnrichedLeagueStatCategories } from '@/lib/fantasy/stats';
@@ -66,9 +66,11 @@ export async function GET(request: Request) {
     // normally, up to 14 in the combined all-star week.
     const weekBounds = await getWeekBounds(user.id, leagueKey);
     // Cache the assembled projection (see sibling batter-team route). Fanned
-    // out by useCorrectedMatchupAnalysis (my+opp); 5-min TTL; single-flight in
-    // withCache collapses concurrent my/opp calls.
-    const payload = await withCache(
+    // out by useCorrectedMatchupAnalysis (my+opp); 5-min TTL; single-flight
+    // collapses concurrent my/opp calls. Coverage-gated like the batter
+    // sibling (docs/data-architecture.md#quality-gate) so a partial
+    // talent/stats run isn't pinned for the full TTL.
+    const payload = await withCacheGated(
       `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:proj-pitcher-team:${teamKey}:${targetWeek}:${weekBounds?.end ?? 'legacy'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
       async () => {
@@ -82,6 +84,7 @@ export async function GET(request: Request) {
       teamKey, weekStart, weekEnd, daysElapsed,
       byCategory: {}, perPlayer: [], perReliever: [],
       weeklySpIp: 0, weeklyRpIp: 0, weeklyIp: 0, contributorCount: 0,
+      rosterPitcherCount: 0, resolvedPitcherCount: 0,
     };
     if (remaining.length === 0) return empty;
 
@@ -232,8 +235,13 @@ export async function GET(request: Request) {
       weeklyRpIp: projection.weeklyRpIp,
       weeklyIp: projection.weeklyIp,
       contributorCount: projection.contributorCount,
+      rosterPitcherCount: activeRoster.length,
+      resolvedPitcherCount: activePitchers.filter(p => p.mlbId > 0).length,
     };
       },
+      // Gate on the identity/talent-RESOLUTION stage, NOT contributorCount —
+      // an SP between starts legitimately contributes 0 in a short window.
+      p => p.resolvedPitcherCount >= Math.ceil(p.rosterPitcherCount * 0.7),
     );
 
     return NextResponse.json(payload);

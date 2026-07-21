@@ -52,8 +52,8 @@ export function useTopWeekStream(): { top: TopWeekStream | null; isLoading: bool
   const { categoryWeights } = useCategoryWeights(analysis, batterPredicate);
 
   const { batters, isLoading: faLoading } = useAvailableBatters(leagueKey, true);
-  const { roster } = useRoster(teamKey);
-  const { positions } = useRosterPositions(leagueKey);
+  const { roster, isLoading: rosterLoading } = useRoster(teamKey);
+  const { positions, isLoading: positionsLoading } = useRosterPositions(leagueKey);
 
   const filteredFAs = useMemo(() => batters.filter(faShouldShow), [batters]);
 
@@ -79,5 +79,7 @@ export function useTopWeekStream(): { top: TopWeekStream | null; isLoading: bool
     return best;
   }, [scored, slotAware]);
 
-  return { top, isLoading: faLoading || scoresLoading };
+  // Roster/positions loading counts: without them the slot-aware baseline
+  // is empty and any computed board would be the full-score-sum degenerate.
+  return { top, isLoading: faLoading || scoresLoading || rosterLoading || positionsLoading };
 }

@@ -37,6 +37,10 @@ export function useSlotAwareStreaming(
     const empty: SlotAwareResult = { byPlayerKey: new Map(), dailyBaselines: [] };
     if (!myProjection || days.length === 0) return empty;
     if (leaguePositions.length === 0) return empty;
+    // No roster yet (still loading, or the fetch failed) — without a
+    // baseline every FA prices as "fills an open slot at full score" and
+    // the board inflates ~5×. Same contract as the `!myProjection` guard.
+    if (myRoster.length === 0) return empty;
 
     const slots = parseStartingSlots(leaguePositions);
 
@@ -95,8 +99,28 @@ export function useSlotAwareStreaming(
       });
     }
 
+    // The projection↔roster bridge produced nothing — treat as loading, not
+    // as an empty lineup (see the myRoster guard above).
+    if (myRosterInput.length === 0) return empty;
+
+    // Trust a window day only if at least one rostered bat has a score on
+    // it OR no FA does either. A day where FAs score but the entire roster
+    // is blank is a degraded projection payload (partial stats/slate run
+    // pinned upstream), not a real schedule — pricing FAs against a missing
+    // baseline turns every upgrade margin into a full-score windfall
+    // (2026-07-21 "top move +166" dashboard incident).
+    const rosterScoredDates = new Set<string>();
+    for (const p of myRosterInput) {
+      for (const date of p.perDayScore.keys()) rosterScoredDates.add(date);
+    }
+    const trustedDays = days.filter(
+      day =>
+        rosterScoredDates.has(day.date) ||
+        !faInput.some(f => f.perDayScore.has(day.date)),
+    );
+
     return computeSlotAwareStreaming({
-      days,
+      days: trustedDays,
       myRoster: myRosterInput,
       faPool: faInput,
       slots,

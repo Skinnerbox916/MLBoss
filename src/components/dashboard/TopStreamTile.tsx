@@ -18,9 +18,11 @@ import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
  */
 export default function TopStreamTile({ className }: { className?: string }) {
   const { leagueKey, teamKey } = useActiveLeague();
-  const { top } = useTopWeekStream();
+  const { top, isLoading } = useTopWeekStream();
   const { data: budget } = useMovesBudget(leagueKey, teamKey);
-  if (!top) return null;
+  // Never render a mid-hydration board — a partially-loaded input set
+  // prices FAs against a missing baseline (inflated values, wrong #1).
+  if (isLoading || !top) return null;
 
   const playDays = top.perDay.filter(d => d.delta > 0);
 

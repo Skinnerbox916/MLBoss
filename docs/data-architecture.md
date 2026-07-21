@@ -177,6 +177,7 @@ Canonical examples (all multi-fanout, all gated):
 - `getRosterSeasonStats` in [src/lib/mlb/players.ts](../src/lib/mlb/players.ts) — per-player stats fetch (70% coverage gate)
 - `getAvailablePitchers` in [src/lib/fantasy/players.ts](../src/lib/fantasy/players.ts) — 4-way Yahoo fan-out across SP/RP × FA/W (≥50 merged pitchers)
 - `getPlayerMarketSignals` in [src/lib/fantasy/players.ts](../src/lib/fantasy/players.ts) — per-key market signal fetch (70% coverage gate)
+- `/api/projection/batter-team` and `/api/projection/pitcher-team` routes — the *assembled* payload gates on the resolution stage (resolved players / active roster ≥ 70%). An outer assembly must gate its own cache write even when its inner fetchers are gated: the inner gate only refuses to cache the inner result — the degraded value still flows to the caller, and an ungated outer `withCache` pins it (see history.md "+166 top move", 2026-07)
 
 Two rules learned the hard way (2026-07 all-star week, see [history.md](./history.md)):
 

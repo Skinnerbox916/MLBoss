@@ -998,6 +998,22 @@ export class YahooFantasyAPI {
   }
 
   /**
+   * Get a league's `scoring_type` from its metadata ('head' | 'roto' |
+   * 'headpoint' | 'point'). The authoritative source when a caller doesn't
+   * already hold the value from league discovery (e.g. the forecast
+   * scorecard, which only has league keys from ledger rows).
+   */
+  async getLeagueScoringType(leagueKey: string): Promise<string> {
+    const endpoint = `/league/${leagueKey}`;
+    const response = await this.request<YahooAPIResponse<any>>(endpoint);
+    const scoringType = response.fantasy_content?.league?.[0]?.scoring_type;
+    if (typeof scoringType !== 'string' || !scoringType) {
+      throw new Error(`scoring_type not found in league metadata for ${leagueKey}`);
+    }
+    return scoringType;
+  }
+
+  /**
    * Get league settings including stat categories
    * @param leagueKey - The league key (e.g., "458.l.123456")
    * @returns League settings with stat categories

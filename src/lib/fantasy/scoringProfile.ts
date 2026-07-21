@@ -46,7 +46,12 @@ export interface ScoringProfile {
  * map. For categories leagues, returns a no-op profile.
  *
  * Cache key is league-scoped (not user-scoped) — every member of a league
- * sees the same scoring rules, so multiple users share one entry.
+ * sees the same scoring rules, so multiple users share one entry. Because
+ * the key is league-scoped, the cached value must never depend on the
+ * caller's `scoringType` hint alone: a caller without the value (the
+ * forecast scorecard passes '') must not be able to pin a wrong-mode
+ * profile for the whole static TTL. When the hint is empty we resolve the
+ * real scoring_type from Yahoo league metadata before deciding.
  */
 export async function getScoringProfile(
   userId: string,
@@ -57,14 +62,19 @@ export async function getScoringProfile(
     `${CACHE_CATEGORIES.STATIC.prefix}:scoring-profile:${leagueKey}`,
     CACHE_CATEGORIES.STATIC.ttl,
     async () => {
-      const isPoints = POINTS_SCORING_TYPES.has(scoringType);
-      const headToHead = HEAD_TO_HEAD_SCORING_TYPES.has(scoringType);
+      let resolvedType = scoringType;
+      if (!resolvedType) {
+        const api = new YahooFantasyAPI(userId);
+        resolvedType = await api.getLeagueScoringType(leagueKey);
+      }
+      const isPoints = POINTS_SCORING_TYPES.has(resolvedType);
+      const headToHead = HEAD_TO_HEAD_SCORING_TYPES.has(resolvedType);
 
       if (!isPoints) {
         return {
           mode: 'categories' as const,
           leagueKey,
-          scoringType,
+          scoringType: resolvedType,
           headToHead,
           weights: {},
           scoredStatIds: [],
@@ -86,7 +96,7 @@ export async function getScoringProfile(
       return {
         mode: 'points' as const,
         leagueKey,
-        scoringType,
+        scoringType: resolvedType,
         headToHead,
         weights,
         scoredStatIds,

@@ -41,6 +41,7 @@ This index is the single authoritative table of contents for all Markdown docs i
 ### In-flight migrations and proposals
 
 - **[pivotality-migration.md](./pivotality-migration.md)** — Retiring chase/hold/punt as the weight driver; replacing with continuous `pivotality(distance)` + concede/contest. Phases 1-5 shipped for the matchup pages; the L6 roster half of Phase 6 shipped 2026-07 with the roster-value rebuild (leverage-weighted player values — see [roster-strategy.md](./roster-strategy.md) and history.md). Remaining: the L5-side `Focus`-union cleanup sweep (rating-engine bridge, `analyzeMatchup` suggestFocus, streaming-board props, bossBrief reads).
+- **[dfs-backtester.md](./dfs-backtester.md)** — Proposal (not built): an operator-only backtester that replays the ledger's frozen predictions against actuals to measure whether the projection edge clears DFS cash-game rake — the go/no-go proof before any daily-fantasy build. Reuses the forecast ledger; net-new = DFS scoring template, salary forward-capture, knapsack optimizer, cash-line sim.
 
 ---
 

@@ -9,6 +9,8 @@ import {
 import { datesThroughEndOfWeek, fetchRoster, fetchGames, saveLineup } from './optimizeWeek';
 
 const RESERVE_POSITIONS = new Set(['BN', 'IL', 'IL+', 'NA']);
+/** Active pitching lineup slots — everything else a pitcher can hold is reserve. */
+const PITCHING_SLOTS = new Set(['SP', 'RP', 'P']);
 
 export interface OptimizePitcherWeekDeps {
   teamKey: string;
@@ -36,7 +38,7 @@ export interface OptimizePitcherWeekResult {
  * Uses the same matching logic as TodayPitchers: normalize team abbr,
  * then check if pitcher name matches the probable starter.
  */
-function matchProbablePitchers(roster: RosterEntry[], games: MLBGame[]): Set<string> {
+export function matchProbablePitchers(roster: RosterEntry[], games: MLBGame[]): Set<string> {
   const starters = new Set<string>();
 
   const pitchers = roster.filter(isPitcher);
@@ -63,6 +65,85 @@ function matchProbablePitchers(roster: RosterEntry[], games: MLBGame[]): Set<str
 }
 
 /**
+ * Given a roster, the set of pitchers with a confirmed probable start, and the
+ * league's slot template, return the slot overrides (`player_key -> position`)
+ * that get every benched probable starter into an active slot it's *eligible*
+ * for. For each benched starter, in order of preference:
+ *
+ *   1. an OPEN pitching slot (league capacity the roster hasn't filled) — the
+ *      starter is activated and nobody is benched; then
+ *   2. a slot held by an active NON-starter — swap them: starter in, non-starter
+ *      to the bench.
+ *
+ * Probable starters already in an active slot are never moved and their slots
+ * are never contested — the only players eligible to be benched are active
+ * non-starters (each usable once). A benched starter with no open or eligible
+ * non-starter slot stays benched: the only alternative would bench another
+ * starter, which is net-negative. Returns an empty map when nothing changes.
+ *
+ * NOTE: slots are matched by eligibility, NOT by position *name*. A roster can
+ * carry several slots of the same name (e.g. multiple generic `P` slots); a
+ * starter already holding one must not block a benched starter from taking a
+ * *different* slot of that name (open, or held by a non-starter).
+ */
+export function computePitcherStartOverrides(
+  roster: RosterEntry[],
+  probableStarterKeys: Set<string>,
+  rosterPositions: RosterPositionSlot[],
+): Map<string, string> {
+  const overrides = new Map<string, string>();
+  const isProbableStarter = (p: RosterEntry) => probableStarterKeys.has(p.player_key);
+
+  // Benched probable starters need an active slot.
+  const benchedStarters = roster.filter(
+    p => isPitcher(p) && RESERVE_POSITIONS.has(p.selected_position) && isProbableStarter(p),
+  );
+  if (benchedStarters.length === 0) return overrides;
+
+  // Open pitching-slot capacity per position: league slot counts minus the
+  // pitchers already occupying each active slot. A positive value is an empty
+  // slot a benched starter can drop straight into.
+  const openByPos = new Map<string, number>();
+  for (const slot of rosterPositions) {
+    if (PITCHING_SLOTS.has(slot.position)) openByPos.set(slot.position, slot.count);
+  }
+  for (const p of roster) {
+    if (isPitcher(p) && openByPos.has(p.selected_position)) {
+      openByPos.set(p.selected_position, (openByPos.get(p.selected_position) ?? 0) - 1);
+    }
+  }
+
+  // Active non-starters are the only players we may BENCH to make room —
+  // active probable starters stay put, so their slots are off-limits.
+  const swapPool = roster.filter(
+    p => isPitcher(p) && !RESERVE_POSITIONS.has(p.selected_position) && !isProbableStarter(p),
+  );
+
+  for (const benchedStarter of benchedStarters) {
+    const eligible = benchedStarter.eligible_positions ?? [];
+
+    // 1. Prefer an open slot — activates the starter without benching anyone.
+    const openPos = eligible.find(pos => (openByPos.get(pos) ?? 0) > 0);
+    if (openPos) {
+      overrides.set(benchedStarter.player_key, openPos);
+      openByPos.set(openPos, (openByPos.get(openPos) ?? 0) - 1);
+      continue;
+    }
+
+    // 2. Otherwise swap with the first active non-starter in a slot this
+    //    starter can legally fill.
+    const idx = swapPool.findIndex(p => eligible.includes(p.selected_position));
+    if (idx < 0) continue; // no open or eligible slot — leave benched
+    const swapTarget = swapPool[idx];
+    overrides.set(benchedStarter.player_key, swapTarget.selected_position);
+    overrides.set(swapTarget.player_key, 'BN');
+    swapPool.splice(idx, 1); // used — don't reuse this slot for another starter
+  }
+
+  return overrides;
+}
+
+/**
  * Optimize pitchers for a single day: ensure probable starters are active,
  * by swapping them with non-starters if needed. This keeps all slots filled.
  */
@@ -75,65 +156,10 @@ async function optimizeOnePitcherDay(
     fetchGames(date),
   ]);
 
-  // Find which rostered pitchers have confirmed probable starts today
+  // Find which rostered pitchers have confirmed probable starts today, then
+  // compute the slot moves that activate every benched starter.
   const probableStarterKeys = matchProbablePitchers(roster, games);
-
-  // Build override map: pitcher_key -> desired position
-  const overrides = new Map<string, string>();
-
-  const usedSlots = new Map<string, string>(); // slot name -> pitcher_key
-
-  // Pitchers currently in active slots (not BN/IL)
-  const activePitchers = roster.filter(
-    p => isPitcher(p) && !RESERVE_POSITIONS.has(p.selected_position),
-  );
-
-  // Track which pitchers are probable starters
-  const isProbableStarter = (p: RosterEntry) => probableStarterKeys.has(p.player_key);
-
-  // First pass: place probable starters that are already active
-  for (const pitcher of activePitchers) {
-    if (isProbableStarter(pitcher)) {
-      // Already in an active slot, keep them there
-      usedSlots.set(pitcher.selected_position, pitcher.player_key);
-    }
-  }
-
-  // Collect benched probable starters and active non-starters
-  const benchedStarters = roster.filter(
-    p => isPitcher(p) && RESERVE_POSITIONS.has(p.selected_position) && isProbableStarter(p),
-  );
-  const activeNonStarters = activePitchers.filter(p => !isProbableStarter(p));
-
-  // Second pass: swap benched starters with active non-starters
-  for (const benchedStarter of benchedStarters) {
-    const eligible = benchedStarter.eligible_positions ?? [];
-
-    // Find an active non-starter to swap with
-    let swapTarget = activeNonStarters.find(
-      p =>
-        eligible.includes(p.selected_position) &&
-        !usedSlots.has(p.selected_position),
-    );
-
-    // If no exact position match, try to find any non-starter we can move to bench
-    if (!swapTarget) {
-      swapTarget = activeNonStarters.find(
-        p => !usedSlots.has(p.selected_position),
-      );
-    }
-
-    if (swapTarget) {
-      // Swap: starter goes to the non-starter's slot, non-starter goes to bench
-      const starterSlot = swapTarget.selected_position;
-      overrides.set(benchedStarter.player_key, starterSlot);
-      overrides.set(swapTarget.player_key, 'BN');
-      usedSlots.set(starterSlot, benchedStarter.player_key);
-      // Remove swapTarget from available pool so we don't swap with it again
-      const idx = activeNonStarters.indexOf(swapTarget);
-      if (idx >= 0) activeNonStarters.splice(idx, 1);
-    }
-  }
+  const overrides = computePitcherStartOverrides(roster, probableStarterKeys, deps.rosterPositions);
 
   if (overrides.size === 0) {
     return { date, saved: false, changeCount: 0 };

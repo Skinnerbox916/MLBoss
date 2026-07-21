@@ -21,7 +21,7 @@ import CategoryRail from './CategoryRail';
 import WeekProgress from './WeekProgress';
 import BossBrief from './BossBrief';
 
-function formatRecord(wins?: number, losses?: number, ties?: number): string | undefined {
+export function formatRecord(wins?: number, losses?: number, ties?: number): string | undefined {
   if (wins === undefined && losses === undefined) return undefined;
   const w = wins ?? 0;
   const l = losses ?? 0;

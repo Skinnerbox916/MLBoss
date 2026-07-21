@@ -72,6 +72,10 @@ The points `/streaming` page's engine (2026-07 rebuild — see history.md). The 
 
 `PointsLeagueView` — the shared scoring-agnostic [`StandingsTable`](../src/components/shared/StandingsTable.tsx) (which adds PF/PA columns when the league reports points totals) under the League Overview header. A points-native rankings section (weekly points for/against trends) is the planned follow-up; the categories `StatRankingsTable` stays categories-only (it ranks by `stat_id`, meaningless under one currency).
 
+## Week projection engine
+
+`weekProjectedPoints` (dashboard marquee) and the /streaming coverage strip share ONE engine: [projectRosterWeek](../src/lib/points/rosterWeek.ts). It solves the optimal batting lineup per remaining day and sums (daily cadence), or solves once for the locked week (weekly cadence) — position-aware, off-day-aware, injured benched. Pitchers are summed separately (priced by actual probable starts). The per-player day score is injected, so callers price a batter-day in context. Don't re-approximate this with a roster sum — see [engines.md](./engines.md#points-league-engines) and history.md.
+
 ## What this layer does not (yet) model
 
 - **Pitcher position-aware moves/depth** — see above.

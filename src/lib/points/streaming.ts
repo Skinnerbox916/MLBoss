@@ -74,6 +74,7 @@ import {
   type PointsLineupResult,
   type RosterPositionSlot,
 } from './lineupOptimizer';
+import { projectRosterWeek } from './rosterWeek';
 
 /** FA pitchers with a probable start we bother scoring (talent fetch is the cost). */
 const FA_PITCHER_SCORE_CAP = 40;
@@ -399,67 +400,39 @@ export async function analyzePointsStreaming(
     }
   }
 
-  // Week-sum scorer (weekly cadence): a bat's value for the locked week is
-  // the sum of his matchup-adjusted day values — schedule density AND the
-  // series contexts (a 3-game Coors set) are part of the player.
+  // Per-day coverage + the base lineup(s) the batter marginals compare
+  // against, from the shared roster-week engine. `weekPointsFor` mirrors
+  // the engine's internal weekly scorer — kept here because the batter-plug
+  // re-solves below feed it directly to `optimizePointsLineup`.
   const weekPointsFor = (pl: RosterEntry): number => {
     let sum = 0;
     for (const day of days) sum += dayPointsFor(day)(pl);
     return sum;
   };
 
-  const rosterByKey = new Map(futureRoster.map(p => [key(p.name, p.editorial_team_abbr), p]));
+  const projection = projectRosterWeek({
+    roster: futureRoster,
+    rosterPositions: rosterPositions as RosterPositionSlot[],
+    days,
+    dayScore: (pl, day) => dayPointsFor(day)(pl),
+    cadence,
+  });
+  const baseWeek = projection.weekSolve;
+  const dayAnalyses = projection.days
+    .filter((d): d is typeof d & { daySolve: PointsLineupResult } => d.daySolve !== null)
+    .map(d => ({ day: d.day, base: d.daySolve }));
 
-  // Per-day coverage + the base lineup(s) the batter marginals compare against.
-  let summaries: PointsStreamingDay[];
-  let dayAnalyses: Array<{ day: WeekDay; base: PointsLineupResult }> = [];
-  let baseWeek: PointsLineupResult | null = null;
-
-  if (cadence === 'weekly') {
-    // One solve for the whole locked week, then read each day off it.
-    baseWeek = optimizePointsLineup(futureRoster, rosterPositions as RosterPositionSlot[], weekPointsFor);
-    const startedRows = baseWeek.lineup.filter(r => r.started && r.dayPoints > 0);
-    summaries = days.map(day => {
-      const playing = startedRows.filter(r => {
-        const entry = rosterByKey.get(key(r.name, r.team));
-        return entry ? dayPointsFor(day)(entry) > 0 : false;
-      });
-      const optimalPoints = playing.reduce((s, r) => {
-        const entry = rosterByKey.get(key(r.name, r.team));
-        return s + (entry ? dayPointsFor(day)(entry) : 0);
-      }, 0);
-      return {
-        date: day.date,
-        dayLabel: day.dayLabel,
-        dayName: day.dayName,
-        battingSlots,
-        covered: playing.length,
-        open: battingSlots - playing.length,
-        openPositions: openPositionsAfter(playing),
-        myStarts: myStartsByDate.get(day.date) ?? 0,
-        optimalPoints: round1(optimalPoints),
-      } satisfies PointsStreamingDay;
-    });
-  } else {
-    dayAnalyses = days.map(day => ({
-      day,
-      base: optimizePointsLineup(futureRoster, rosterPositions as RosterPositionSlot[], dayPointsFor(day)),
-    }));
-    summaries = dayAnalyses.map(({ day, base }) => {
-      const coveredRows = base.lineup.filter(r => r.started && r.dayPoints > 0);
-      return {
-        date: day.date,
-        dayLabel: day.dayLabel,
-        dayName: day.dayName,
-        battingSlots,
-        covered: coveredRows.length,
-        open: battingSlots - coveredRows.length,
-        openPositions: openPositionsAfter(coveredRows),
-        myStarts: myStartsByDate.get(day.date) ?? 0,
-        optimalPoints: base.optimalPoints,
-      } satisfies PointsStreamingDay;
-    });
-  }
+  const summaries: PointsStreamingDay[] = projection.days.map(d => ({
+    date: d.day.date,
+    dayLabel: d.day.dayLabel,
+    dayName: d.day.dayName,
+    battingSlots,
+    covered: d.startedRows.length,
+    open: battingSlots - d.startedRows.length,
+    openPositions: openPositionsAfter(d.startedRows),
+    myStarts: myStartsByDate.get(d.day.date) ?? 0,
+    optimalPoints: d.optimalPoints,
+  }));
 
   // ---------------------------------------------------------------------
   // Pitcher streams: FA arms with probable starts in the window.

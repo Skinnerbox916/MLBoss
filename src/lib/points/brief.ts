@@ -26,7 +26,12 @@ export interface PointsBriefOutput {
   cta?: { phrase: string; href: string };
 }
 
-const fmt = (n: number) => Math.abs(n) >= 100 ? Math.round(n).toString() : Math.abs(n).toFixed(1).replace(/\.0$/, '');
+/** Magnitude formatter — every caller phrases the sign in words ("up",
+ *  "down", "short by"), so the number itself is always unsigned. */
+const fmt = (n: number) => {
+  const abs = Math.abs(n);
+  return abs >= 100 ? Math.round(abs).toString() : abs.toFixed(1).replace(/\.0$/, '');
+};
 
 export function getPointsBrief(i: PointsBriefInput): PointsBriefOutput | null {
   const live = i.myLive - i.oppLive;

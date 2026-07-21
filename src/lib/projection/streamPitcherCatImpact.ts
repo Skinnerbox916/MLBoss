@@ -61,12 +61,20 @@ const REF_BR = 1.28 * LEAGUE_IP_PER_START;       // ~1.28 WHIP → ~6.9 baserunn
 const LEAGUE_ER_PER_IP = 4.10 / 9;
 const LEAGUE_BR_PER_IP = 1.28;
 
-const COUNTING_REF: Record<number, number> = {
+/**
+ * One league-average SP start's expected output per pitcher counting cat,
+ * keyed by stat_id. Doubles as this engine's unit normalizer AND the
+ * per-stream yield the L5 stream-capacity adjustment uses to decide
+ * whether a deficit is reachable via streaming (see
+ * `analyzeMatchup`'s `streamCapacity` opt). One home — don't copy.
+ */
+export const LEAGUE_AVG_START_OUTPUT: Record<number, number> = {
   [STAT_K]: REF_K,
   [STAT_W]: REF_W,
   [STAT_QS]: REF_QS,
   [STAT_IP]: REF_IP,
 };
+const COUNTING_REF = LEAGUE_AVG_START_OUTPUT;
 const RATIO_REF_NUM: Record<number, number> = {
   [STAT_ERA]: REF_ER,
   [STAT_WHIP]: REF_BR,

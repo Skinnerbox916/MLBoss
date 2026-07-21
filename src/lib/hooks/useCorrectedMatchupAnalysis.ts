@@ -12,6 +12,8 @@ import { composeCorrectedRows } from '@/lib/matchup/correctedRows';
 import { isRatioCat } from '@/lib/league/forecast';
 import { getMatchupWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { useLeagueWeekBounds } from './useFantasyContext';
+import { useMovesBudget } from './useMovesBudget';
+import { LEAGUE_AVG_START_OUTPUT } from '@/lib/projection/streamPitcherCatImpact';
 import type { ProjectedCategory } from './useBatterTeamProjection';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { MatchupData } from '@/lib/yahoo-fantasy-api';
@@ -162,6 +164,10 @@ export function useCorrectedMatchupAnalysis(
   const { projection: myPitcherProjection, isLoading: myPitchProjLoading } = usePitcherTeamProjection(teamKey, leagueKey, projOpts);
   const { projection: oppPitcherProjection, isLoading: oppPitchProjLoading } = usePitcherTeamProjection(opponentTeamKey, leagueKey, projOpts);
 
+  // Moves budget → stream capacity for the corrected margins. Doesn't gate
+  // loading: a missing budget just means no capacity softening this render.
+  const { data: movesBudget } = useMovesBudget(leagueKey, teamKey);
+
   const result = useMemo<CorrectedMatchupAnalysis>(() => {
     const aggregateLoading =
       scoreLoading || nextScoreLoading || catsLoading ||
@@ -225,7 +231,16 @@ export function useCorrectedMatchupAnalysis(
       });
       // daysElapsed = 0 → rate-stat margins get heavily soft-pedaled
       // (correct — pure-projection ERA shouldn't read as "locked").
-      const analysis = analyzeMatchup(correctedRows, { daysElapsed: 0, mode: 'corrected' });
+      // Next week's moves budget resets, so capacity uses the full weekly
+      // cap (fall back to `left` when the league doesn't report one).
+      const pivotStreams = Math.min(movesBudget?.cap ?? movesBudget?.left ?? 0, 7);
+      const pivotCapacity: Record<number, number> = {};
+      if (pivotStreams > 0) {
+        for (const [statIdStr, perStart] of Object.entries(LEAGUE_AVG_START_OUTPUT)) {
+          pivotCapacity[Number(statIdStr)] = pivotStreams * perStart;
+        }
+      }
+      const analysis = analyzeMatchup(correctedRows, { daysElapsed: 0, mode: 'corrected', streamCapacity: pivotCapacity });
       return {
         analysis,
         isCorrected: true,
@@ -276,7 +291,19 @@ export function useCorrectedMatchupAnalysis(
       weekLengthDays,
       mode: 'blend',
     });
-    const correctedAnalysis = analyzeMatchup(correctedRows, { daysElapsed, weekLengthDays, mode: 'corrected' });
+    // Stream capacity: what the remaining moves budget could still add to
+    // the pitcher counting cats (one stream feeds all of them), capped by
+    // remaining days. Upper bound by design — a reachability gate for the
+    // auto-concede rule, not a forecast. See AnalyzeOpts.streamCapacity.
+    const remainingDays = Math.max(0, weekLengthDays - finished);
+    const streams = Math.min(movesBudget?.left ?? 0, remainingDays);
+    const streamCapacity: Record<number, number> = {};
+    if (streams > 0) {
+      for (const [statIdStr, perStart] of Object.entries(LEAGUE_AVG_START_OUTPUT)) {
+        streamCapacity[Number(statIdStr)] = streams * perStart;
+      }
+    }
+    const correctedAnalysis = analyzeMatchup(correctedRows, { daysElapsed, weekLengthDays, mode: 'corrected', streamCapacity });
     const analysis = withSwing(correctedAnalysis, rawAnalysis);
 
     return {
@@ -295,7 +322,7 @@ export function useCorrectedMatchupAnalysis(
     myProjection, oppProjection, myPitcherProjection, oppPitcherProjection,
     scoreLoading, nextScoreLoading, catsLoading,
     myProjLoading, oppProjLoading, myPitchProjLoading, oppPitchProjLoading,
-    opponentTeamKey, opponentName,
+    opponentTeamKey, opponentName, movesBudget,
   ]);
 
   return result;

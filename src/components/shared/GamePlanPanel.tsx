@@ -546,6 +546,12 @@ function getReason(row: AnalyzedMatchupRow): string {
   if (m >= LOCKED) return 'locked win';
   if (m <= -LOCKED) return 'out of reach';
 
+  // Deficit softened by remaining stream capacity (streamCapacity in
+  // analyzeMatchup): the roster alone doesn't close this — streams do.
+  // Takes precedence over the swing-based phrasings, which would read
+  // the capacity lift as projection movement.
+  if (row.streamAssisted && m <= 0) return 'in reach via streams';
+
   if (raw === undefined || swing === undefined) {
     if (m > 0.3) return 'comfortable lead';
     if (m > 0) return 'narrow lead';

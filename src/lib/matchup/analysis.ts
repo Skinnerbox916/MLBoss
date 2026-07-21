@@ -108,6 +108,10 @@ export interface AnalyzedMatchupRow extends MatchupRow {
    *  When the analysis is corrected with projections, this is the
    *  projected end-of-week margin; otherwise it's the matchup-to-date margin. */
   margin: number;
+  /** True when `streamCapacity` softened this row's deficit — the raw
+   *  projected gap reads worse, but remaining streams can close it.
+   *  Drives the "in reach via streams" tile status. */
+  streamAssisted?: boolean;
   /** Priority weight in [0, 1]. 1 = toss-up, 0 = locked. */
   priority: number;
   /** Mapped onto the existing chase/neutral/punt vocabulary. */
@@ -206,24 +210,39 @@ function computeMargin(
   row: MatchupRow,
   weekProgress: number,
   mode: AnalyzeMode,
-): number {
-  if (!rowHasComparablePair(row)) return 0;
+  streamCapacity?: Record<number, number>,
+): { margin: number; streamAssisted: boolean } {
+  if (!rowHasComparablePair(row)) return { margin: 0, streamAssisted: false };
   const my = parseFloat(row.myVal);
   const opp = parseFloat(row.oppVal);
-  if (!Number.isFinite(my) || !Number.isFinite(opp)) return 0;
+  if (!Number.isFinite(my) || !Number.isFinite(opp)) return { margin: 0, streamAssisted: false };
 
   const dir = row.betterIs === 'lower' ? -1 : 1;
   const rateScale = RATE_SCALE[row.name];
 
   if (rateScale !== undefined) {
     const confidence = 0.15 + 0.85 * weekProgress;
-    return clamp(((my - opp) * dir / rateScale) * confidence, -1, 1);
+    return {
+      margin: clamp(((my - opp) * dir / rateScale) * confidence, -1, 1),
+      streamAssisted: false,
+    };
   }
 
   if (mode === 'corrected') {
     const countScale = CORRECTED_COUNTING_SCALE[row.statId];
     if (countScale !== undefined) {
-      return clamp(((my - opp) * dir) / countScale, -1, 1);
+      let gap = (my - opp) * dir;
+      let streamAssisted = false;
+      // Stream-capacity softening for losing counting rows (see
+      // AnalyzeOpts.streamCapacity): the deficit is measured net of what
+      // the user's remaining moves could add, capped at even.
+      const capacity = streamCapacity?.[row.statId];
+      if (capacity !== undefined && capacity > 0 && gap < 0) {
+        const softened = Math.min(0, gap + capacity);
+        streamAssisted = softened !== gap;
+        gap = softened;
+      }
+      return { margin: clamp(gap / countScale, -1, 1), streamAssisted };
     }
     // Unknown counting cat — fall through to the raw model rather than
     // returning 0. Better to under-call punt than to silently hide a row.
@@ -231,7 +250,10 @@ function computeMargin(
 
   // Counting stat, raw matchup-to-date: scale gap by expected remaining production.
   const expectedRemaining = ((my + opp) / weekProgress) * (1 - weekProgress);
-  return clamp(((my - opp) * dir) / Math.max(expectedRemaining, 1), -1, 1);
+  return {
+    margin: clamp(((my - opp) * dir) / Math.max(expectedRemaining, 1), -1, 1),
+    streamAssisted: false,
+  };
 }
 
 export type AnalyzeMode = 'raw' | 'corrected';
@@ -258,6 +280,23 @@ export interface AnalyzeOpts {
    * other caller analyzes matchup-to-date-only inputs.
    */
   mode?: AnalyzeMode;
+  /**
+   * statId → units the USER could still add via streaming this week
+   * (remaining moves × league-average per-start yield — pitcher counting
+   * cats only; see `LEAGUE_AVG_START_OUTPUT`). Applied in `'corrected'`
+   * mode to LOSING counting rows only: the gap is softened by the
+   * realizable stream volume, capped at even (reachability, never a
+   * projected lead). Without this, a stream-closable deficit reads
+   * "out of reach", auto-concedes, zeroes its pivotality weight — and the
+   * streaming board stops valuing the very cats streaming would win (the
+   * 2026-07-21 circular-concession report). One stream adds to K/W/QS/IP
+   * simultaneously, so the same capacity applies per-cat without
+   * double-counting. Deliberately asymmetric (no opponent-side threat
+   * model — that needs their moves budget + engagement) and deliberately
+   * absent for ratio cats (added volume can't reliably fix an ERA/WHIP
+   * gap) and batter cats (batter adds displace, so net gain is small).
+   */
+  streamCapacity?: Record<number, number>;
 }
 
 /**
@@ -266,16 +305,20 @@ export interface AnalyzeOpts {
  */
 export function analyzeMatchup(
   rows: MatchupRow[],
-  { daysElapsed, weekLengthDays = 7, mode = 'raw' }: AnalyzeOpts,
+  { daysElapsed, weekLengthDays = 7, mode = 'raw', streamCapacity }: AnalyzeOpts,
 ): MatchupAnalysis {
   const weekProgress = clamp(daysElapsed / Math.max(weekLengthDays, 1), 0.1, 1);
 
   const decorated: AnalyzedMatchupRow[] = rows.map(row => {
     const hasSignal = hasMatchupSignal(row);
-    const margin = hasSignal ? computeMargin(row, weekProgress, mode) : 0;
+    const computed = hasSignal
+      ? computeMargin(row, weekProgress, mode, streamCapacity)
+      : { margin: 0, streamAssisted: false };
+    const { margin, streamAssisted } = computed;
     return {
       ...row,
       margin,
+      streamAssisted,
       priority: hasSignal ? 1 - Math.abs(margin) : 1,
       suggestedFocus: suggestFocus(margin, hasSignal),
     };

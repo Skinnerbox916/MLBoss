@@ -107,6 +107,19 @@ export interface PitcherProjectionDeps {
    *  focus-derived weighting in the per-start score. See
    *  docs/pivotality-migration.md. */
   categoryWeights?: Record<number, number>;
+  /**
+   * TBD-slot claim registry — presence enables inferred starts. MLB
+   * probables thin out past D+3, so a rostered starter's late-window turn
+   * often exists as a game with an UNPOSTED probable slot; counting only
+   * posted probables biases rest-of-week volume low exactly where the
+   * corrected margins need it (the 2026-07-21 "Gerrit Cole's Sunday start
+   * = 0 IP" miss). When set, a starter with ZERO matched probables claims
+   * his team's first unposted slot in the window (at most one per arm; the
+   * shared set stops two rostered arms from claiming the same slot).
+   * `projectPitcherTeam` passes a fresh set per run; the FA scoring path
+   * omits it — streaming only prices CONFIRMED starts.
+   */
+  tbdClaims?: Set<string>;
 }
 
 export interface PerStartProjection {
@@ -128,6 +141,11 @@ export interface PerStartProjection {
   /** Per-start fantasy-cat rating from `getPitcherRating`. Null on
    *  off-days or when the probable's talent is missing. */
   rating: PitcherRating | null;
+  /** True when this start was inferred from an unposted probable slot
+   *  rather than a posted probable (see `PitcherProjectionDeps.tbdClaims`).
+   *  Real game context, uncertain identity — display surfaces may want to
+   *  soften it. */
+  inferred?: boolean;
   // ----- UI-only refs (omit when serializing to JSON) -----
   /** Reference to the underlying game. Populated by the engine for
    *  in-process consumers (FA week scoring, breakdown panels). The
@@ -250,31 +268,19 @@ export function projectPitcherPlayer(
   let weeklyIP = 0;
   let expectedStarts = 0;
 
-  for (const day of deps.days) {
-    const games = deps.gamesByDate.get(day.date) ?? [];
-    const teamGames = games.filter(g =>
-      normalizeTeamAbbr(g.homeTeam.abbreviation) === normalizeTeamAbbr(player.teamAbbr) ||
-      normalizeTeamAbbr(g.awayTeam.abbreviation) === normalizeTeamAbbr(player.teamAbbr),
-    );
-    const doubleHeader = teamGames.length >= 2;
-
-    const match = findStart(player, games);
-    const talent = match?.pp.talent ?? null;
-    if (!match || !talent) {
-      // Off-day, opponent-side game, or talent not stamped (rookie call-up
-      // we couldn't resolve). Either way: no contribution.
-      perStart.push({
-        date: day.date,
-        dayLabel: day.dayLabel,
-        hasStart: false,
-        doubleHeader,
-        expectedIP: 0,
-        rating: null,
-      });
-      continue;
-    }
-
-    const { game, pp, isHome } = match;
+  // Score one start (matched or inferred), roll it into the accumulators,
+  // and return the perStart row. Shared by the posted-probable path and
+  // the TBD-slot inference pass so the two can never drift.
+  const scoreStart = (args: {
+    day: WeekDay;
+    game: EnrichedGame;
+    isHome: boolean;
+    talent: PitcherTalent;
+    pp?: ProbablePitcher;
+    doubleHeader: boolean;
+    inferred?: boolean;
+  }): PerStartProjection => {
+    const { day, game, isHome, talent, pp, doubleHeader, inferred } = args;
     const opponentTeam = isHome ? game.awayTeam : game.homeTeam;
     const opposingOffense = deps.teamOffense?.get(opponentTeam.mlbId) ?? null;
     const opposingProbable = isHome ? game.awayProbablePitcher : game.homeProbablePitcher;
@@ -334,7 +340,7 @@ export function projectPitcherPlayer(
       }
     }
 
-    perStart.push({
+    return {
       date: day.date,
       dayLabel: day.dayLabel,
       hasStart: true,
@@ -346,9 +352,83 @@ export function projectPitcherPlayer(
       weatherFlag: rating.weather.available ? rating.weather.display : undefined,
       expectedIP: forecast.expectedPerGame.ip,
       rating,
+      inferred,
       gameRef: game,
       ppRef: pp,
-    });
+    };
+  };
+
+  for (const day of deps.days) {
+    const games = deps.gamesByDate.get(day.date) ?? [];
+    const teamGames = games.filter(g =>
+      normalizeTeamAbbr(g.homeTeam.abbreviation) === normalizeTeamAbbr(player.teamAbbr) ||
+      normalizeTeamAbbr(g.awayTeam.abbreviation) === normalizeTeamAbbr(player.teamAbbr),
+    );
+    const doubleHeader = teamGames.length >= 2;
+
+    const match = findStart(player, games);
+    const talent = match?.pp.talent ?? null;
+    if (!match || !talent) {
+      // Off-day, opponent-side game, or talent not stamped (rookie call-up
+      // we couldn't resolve). Either way: no contribution.
+      perStart.push({
+        date: day.date,
+        dayLabel: day.dayLabel,
+        hasStart: false,
+        doubleHeader,
+        expectedIP: 0,
+        rating: null,
+      });
+      continue;
+    }
+
+    perStart.push(scoreStart({
+      day,
+      game: match.game,
+      isHome: match.isHome,
+      talent,
+      pp: match.pp,
+      doubleHeader,
+    }));
+  }
+
+  // TBD-slot inference (see `PitcherProjectionDeps.tbdClaims`): a rostered
+  // starter with ZERO posted probables claims his team's first game whose
+  // probable slot on his side is unposted — real game context, uncertain
+  // identity, one per arm. Skips relievers/inactive arms and arms without
+  // resolved talent (nothing to forecast from).
+  if (deps.tbdClaims && expectedStarts === 0 && player.talent?.role === 'starter') {
+    const teamAbbr = normalizeTeamAbbr(player.teamAbbr);
+    outer: for (const day of deps.days) {
+      const games = deps.gamesByDate.get(day.date) ?? [];
+      for (const game of games) {
+        const isHome = normalizeTeamAbbr(game.homeTeam.abbreviation) === teamAbbr;
+        const isAway = normalizeTeamAbbr(game.awayTeam.abbreviation) === teamAbbr;
+        if (!isHome && !isAway) continue;
+        const sidePP = isHome ? game.homeProbablePitcher : game.awayProbablePitcher;
+        if (sidePP) continue; // posted — belongs to whoever it names
+        const claimKey = `${day.date}|${game.awayTeam.abbreviation}@${game.homeTeam.abbreviation}|${isHome ? 'H' : 'A'}`;
+        if (deps.tbdClaims.has(claimKey)) continue;
+        deps.tbdClaims.add(claimKey);
+
+        const doubleHeader = games.filter(g =>
+          normalizeTeamAbbr(g.homeTeam.abbreviation) === teamAbbr ||
+          normalizeTeamAbbr(g.awayTeam.abbreviation) === teamAbbr,
+        ).length >= 2;
+        const row = scoreStart({
+          day,
+          game,
+          isHome,
+          talent: player.talent,
+          doubleHeader,
+          inferred: true,
+        });
+        const idx = perStart.findIndex(s => s.date === day.date);
+        if (idx >= 0) perStart[idx] = row;
+        else perStart.push(row);
+        break outer;
+      }
+    }
   }
 
   return {
@@ -464,6 +544,11 @@ export function projectPitcherTeam(
   const perReliever: RelieverPlayerProjection[] = [];
   const teamByCat = new Map<number, PerCategoryProjection>();
 
+  // Roster projections infer TBD-slot starts (see tbdClaims docblock);
+  // one shared registry per run so two rostered arms from the same MLB
+  // team can't both claim one unposted slot.
+  const teamDeps: PitcherProjectionDeps = { ...deps, tbdClaims: deps.tbdClaims ?? new Set<string>() };
+
   const rollIntoTeam = (catMap: Map<number, PerCategoryProjection>) => {
     for (const [statId, cat] of catMap) {
       const prior = teamByCat.get(statId);
@@ -478,11 +563,11 @@ export function projectPitcherTeam(
 
   for (const pitcher of activePitchers) {
     if (pitcher.talent?.role === 'reliever') {
-      const proj = projectRelieverPlayer(pitcher, deps);
+      const proj = projectRelieverPlayer(pitcher, teamDeps);
       perReliever.push(proj);
       rollIntoTeam(proj.byCategory);
     } else {
-      const proj = projectPitcherPlayer(pitcher, deps);
+      const proj = projectPitcherPlayer(pitcher, teamDeps);
       perPitcher.push(proj);
       rollIntoTeam(proj.byCategory);
     }

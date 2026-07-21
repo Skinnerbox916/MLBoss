@@ -8,6 +8,21 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Stream-aware concessions + TBD-slot start inference
+
+Two compounding biases made the pitcher Game Plan concede 5 of 7 cats mid-week while the Boss Brief simultaneously said "stream 3 to catch up":
+
+1. **Posted-probables-only volume.** `projectPitcherTeam` counted only MLB-posted probable starts; probables thin out past D+3, so a roster's late-window turns (Gerrit Cole's Sunday, existing only as a game with an unposted probable slot) projected as 0 IP. The user's rest-of-week volume read ~10 IP low, every pitcher counting margin read worse than reality.
+2. **Concessions blind to the streaming lever.** Corrected margins measured the gap of the *current roster* projection; a deficit 3 streams could close read `≤ −0.7` → auto-conceded → pivotality weight 0 → the streaming board (which weights by pivotality) stopped valuing K/IP/W/QS entirely. Circular: the projection assumes you won't stream, so the board tells you streaming is pointless.
+
+**Replaced with:** (1) TBD-slot inference — a rostered starter with zero matched probables claims his team's first *unposted* probable slot (real game context, `inferred: true`, one per arm, shared claim registry so two arms can't take one slot; FA scoring path unchanged — streaming still prices only confirmed starts). (2) `streamCapacity` in `analyzeMatchup`: losing pitcher counting margins are computed net of `min(movesLeft, remainingDays) × LEAGUE_AVG_START_OUTPUT`, capped at even; softened rows carry `streamAssisted` and read "in reach via streams" on the tile. Verified live 2026-07-21: 5 conceded pitcher cats → 1 (ERA, correctly — volume can't fix a ratio).
+
+Don't reintroduce:
+
+- **"Out of reach" judged from the current-roster projection alone** for cats the user holds a lever on. Reachability for pitcher counting cats includes stream capacity, or the concede loop becomes self-fulfilling.
+- **Posted-probables-only rest-of-week pitcher volume** in the team projection. The unposted-slot inference is deliberate; deleting it as "impure" re-biases late-window margins low. (FA streaming boards are the opposite by design: only confirmed starts are stream-priced.)
+- **Capacity on ratio cats or batter cats.** ERA/WHIP gaps aren't volume-closable; batter adds displace existing bats. Extending capacity there needs a real model, not the same constant.
+
 ## 2026-07 — Streaming boards repriced from abstract rating sums to native category impact
 
 Both categories streaming boards ranked and displayed an abstract **rating sum** — the batter board a slot-aware starter-score total ("+115"), the pitcher board a sum of per-start 0-100 ratings — and their category chips showed **fit sub-scores** (batter) or **gross production** (batter chips), not what the add does to the *categories you're contesting*. So a board could celebrate a big-TB bat or a high-rating arm while the Game Plan card two inches above showed the cat it helped already locked and the one you're bleeding (SB) untouched.

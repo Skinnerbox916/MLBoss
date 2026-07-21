@@ -205,6 +205,7 @@ export async function GET(request: Request) {
           expectedIP: s.expectedIP,
           score: s.rating?.score ?? null,
           tier: s.rating?.tier ?? null,
+          inferred: s.inferred ?? false,
         })),
       };
     });

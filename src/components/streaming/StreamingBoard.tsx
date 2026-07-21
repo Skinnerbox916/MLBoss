@@ -7,13 +7,15 @@ import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
 import { Heading } from '@/components/typography';
+import { formatStatDelta } from '@/lib/formatStat';
+import { STREAM_STAT_LABEL, DeltaChip } from './streamCats';
 import type { TeamOffense } from '@/lib/mlb/teams';
 import { tierFromScore } from '@/lib/pitching/rating';
-import { tierLabel } from '@/lib/pitching/scoring';
-import { categoryFit, categoryFitClasses, tierColor } from '@/lib/pitching/display';
+import { tierColor } from '@/lib/pitching/display';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { Focus } from '@/lib/rating/focus';
 import type { WeekPitcherScore } from '@/lib/hooks/useWeekPitcherScores';
+import type { StreamPitcherCatImpact } from '@/lib/projection/streamPitcherCatImpact';
 import type { PerStartProjection } from '@/lib/projection/pitcherTeam';
 import type { WeekDay } from '@/lib/dashboard/weekRange';
 
@@ -21,16 +23,22 @@ import type { WeekDay } from '@/lib/dashboard/weekRange';
 // Types
 // ---------------------------------------------------------------------------
 
+const EMPTY_IMPACT: StreamPitcherCatImpact = { impact: 0, deltas: [] };
+
 interface StreamCandidate {
   score: WeekPitcherScore;
   /** Probable starts in the pickup window (filtered to hasStart === true). */
   starts: PerStartProjection[];
+  /** Category-impact pricing of this arm's start(s). */
+  impact: StreamPitcherCatImpact;
 }
 
 type ViewMode = 'week' | 'byday';
 
 interface StreamingBoardProps {
   weekScores: WeekPitcherScore[];
+  /** statId → category-impact pricing, keyed by player_key. */
+  impactByPlayer: Map<string, StreamPitcherCatImpact>;
   /** Pickup-playable window — used by the by-day grouping. */
   days: WeekDay[];
   teamOffense: Record<number, TeamOffense>;
@@ -42,75 +50,63 @@ interface StreamingBoardProps {
   helper?: string;
 }
 
+/**
+ * Tier bands for the pitcher category-impact scalar (weighted, unit-
+ * normalized net deltas — see streamPitcherCatImpact.ts). The scalar is
+ * per-START normalized (one start ≈ one league-average start's output per
+ * cat), so a single contested start lands near the count of contested
+ * counting cats: with ~4 counting cats live, single starts cluster ~3-4
+ * and a two-start week clears ~5. Bands calibrated 2026-07-21 against the
+ * live distribution (n=45: max 4.4, median 3.2, p25 2.86). NOTE: because
+ * the scalar scales with how many cats are contested, the bands read
+ * "generous" in a heavily-contested week and "harsh" in a mostly-locked
+ * one — which is the intended signal (locked pitcher cats → streaming
+ * barely moves the needle). This scale is independent of the batter
+ * board's (per-week normalized) — tiers are per-board by design.
+ */
+type ImpactTier = 'great' | 'good' | 'neutral' | 'poor';
+function impactTier(impact: number): ImpactTier {
+  if (impact >= 4.0) return 'great';
+  if (impact >= 3.0) return 'good';
+  if (impact >= 2.0) return 'neutral';
+  return 'poor';
+}
+const TIER_LABEL: Record<ImpactTier, string> = {
+  great: 'GREAT',
+  good: 'GOOD',
+  neutral: 'OK',
+  poor: 'MARGINAL',
+};
+const TIER_TONE: Record<ImpactTier, string> = {
+  great: 'text-success',
+  good: 'text-success',
+  neutral: 'text-foreground',
+  poor: 'text-muted-foreground',
+};
+
+/** Chips ignore contributions this small — normalization noise. */
+const MIN_CHIP_CONTRIBUTION = 0.02;
+
 // ---------------------------------------------------------------------------
-// Build candidates from week scores
+// Build candidates from week scores — ranked by contested-category impact
 // ---------------------------------------------------------------------------
 
-function buildCandidates(weekScores: WeekPitcherScore[]): StreamCandidate[] {
+function buildCandidates(
+  weekScores: WeekPitcherScore[],
+  impactByPlayer: Map<string, StreamPitcherCatImpact>,
+): StreamCandidate[] {
   const out: StreamCandidate[] = [];
   for (const score of weekScores) {
     const starts = score.projection.perStart.filter(s => s.hasStart && s.rating);
     if (starts.length === 0) continue;
-    out.push({ score, starts });
+    out.push({
+      score,
+      starts,
+      impact: impactByPlayer.get(score.player.player_key) ?? EMPTY_IMPACT,
+    });
   }
-  out.sort((a, b) => b.score.projection.weeklyScore - a.score.projection.weeklyScore);
+  out.sort((a, b) => b.impact.impact - a.impact.impact);
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// Verdict label
-// ---------------------------------------------------------------------------
-
-interface Verdict {
-  label: string;
-  tone: 'success' | 'accent' | 'error';
-}
-
-/** Map a per-start score (0-100) to the same Strong/Fair/Avoid verdict
- *  used in week view. The week-view divides weeklyScore by start count
- *  before classifying — this is the per-start band directly. */
-function perStartVerdict(score: number): Verdict {
-  if (score >= 70) return { label: 'Strong', tone: 'success' };
-  if (score >= 50) return { label: 'Fair', tone: 'accent' };
-  return { label: 'Avoid', tone: 'error' };
-}
-
-// ---------------------------------------------------------------------------
-// Aggregated category strip — averages per-cat fit across the row's starts
-// ---------------------------------------------------------------------------
-
-function aggregateCategoryFit(starts: PerStartProjection[]): Array<{
-  statId: number;
-  label: string;
-  avgSubScore: number;
-  weight: number;
-}> {
-  if (starts.length === 0) return [];
-  const acc = new Map<number, { label: string; sumSub: number; sumWeight: number; n: number }>();
-  for (const s of starts) {
-    if (!s.rating) continue;
-    for (const cat of s.rating.categories) {
-      const prior = acc.get(cat.statId);
-      if (prior) {
-        prior.sumSub += cat.normalized;
-        prior.sumWeight += cat.weight;
-        prior.n += 1;
-      } else {
-        acc.set(cat.statId, {
-          label: cat.label,
-          sumSub: cat.normalized,
-          sumWeight: cat.weight,
-          n: 1,
-        });
-      }
-    }
-  }
-  return Array.from(acc.entries()).map(([statId, v]) => ({
-    statId,
-    label: v.label,
-    avgSubScore: v.n > 0 ? v.sumSub / v.n : 0,
-    weight: v.n > 0 ? v.sumWeight / v.n : 0,
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -170,40 +166,49 @@ function DayPills({
   );
 }
 
-function CategoryStrip({ starts }: { starts: PerStartProjection[] }) {
-  const cats = useMemo(() => aggregateCategoryFit(starts), [starts]);
-  if (cats.length === 0) return null;
+/** Net category-delta chips for the add's start(s), contested first
+ *  (deltas arrive |contribution|-sorted). Same grammar as the batter board. */
+function ImpactChips({
+  impact,
+  categoryWeights,
+  showAll = false,
+}: {
+  impact: StreamPitcherCatImpact;
+  categoryWeights?: Record<number, number>;
+  showAll?: boolean;
+}) {
+  const chips = showAll
+    ? impact.deltas
+    : impact.deltas.filter(d => Math.abs(d.contribution) >= MIN_CHIP_CONTRIBUTION).slice(0, 3);
+  if (chips.length === 0) return null;
   return (
-    <div className="inline-flex items-center gap-1 flex-wrap">
-      {cats.map(cat => {
-        const fit = categoryFit(cat.avgSubScore, cat.weight);
-        const score = Math.round(cat.avgSubScore * 100);
-        return (
-          <span
-            key={cat.statId}
-            className={`inline-flex items-center px-1.5 py-0.5 rounded border text-caption font-semibold ${categoryFitClasses(fit)}`}
-            title={fit === 'punted'
-              ? `${cat.label} punted`
-              : `${cat.label} avg ${score}/100 across ${starts.length} start${starts.length === 1 ? '' : 's'}`}
-          >
-            {cat.label}
-          </span>
-        );
-      })}
+    <div className="flex flex-wrap items-center gap-1">
+      {chips.map(d => (
+        <DeltaChip
+          key={d.statId}
+          delta={d}
+          dimmed={showAll && (categoryWeights?.[d.statId] ?? 1) <= 0}
+        />
+      ))}
     </div>
   );
 }
 
-function VerdictStack({ score, label, tone }: { score: number; label: string; tone: Verdict['tone'] }) {
-  const toneClass =
-    tone === 'success' ? 'text-success' :
-    tone === 'error' ? 'text-error' :
-    'text-accent';
+/** Headline value cell — top contested category delta + impact tier,
+ *  mirroring the batter board's ScoreCell. */
+function ImpactStack({ impact }: { impact: StreamPitcherCatImpact }) {
+  const tier = impactTier(impact.impact);
+  const tone = TIER_TONE[tier];
+  const headline = impact.deltas.find(d => d.good) ?? impact.deltas[0];
   return (
     <div className="text-right leading-tight">
-      <div className={`text-lg font-bold tabular-nums ${toneClass}`}>{Math.round(score)}</div>
-      <div className={`text-caption font-semibold uppercase tracking-wide ${toneClass}`}>
-        {label}
+      <div className={`text-sm font-bold tabular-nums ${tone}`}>
+        {headline
+          ? `${STREAM_STAT_LABEL[headline.statId] ?? ''} ${formatStatDelta(headline.delta, STREAM_STAT_LABEL[headline.statId] ?? '')}`
+          : '—'}
+      </div>
+      <div className={`text-caption font-semibold uppercase tracking-wide ${tone}`}>
+        {TIER_LABEL[tier]}
       </div>
     </div>
   );
@@ -236,26 +241,16 @@ function Row({
   const startCount = c.starts.length;
   const activeStart = activeDate ? c.starts.find(s => s.date === activeDate) : undefined;
 
-  // Score + verdict + tier — by-day view uses the active day's per-start
-  // score; week view uses the per-start average for tier color but
-  // displays the summed weekly score.
-  const weeklyScore = c.score.projection.weeklyScore;
-  const headlineScore =
-    activeStart?.rating?.score ?? (startCount > 0 ? weeklyScore / startCount : 0);
-  const displayScore = activeStart?.rating?.score ?? weeklyScore;
-  const verdict = perStartVerdict(headlineScore);
-  const rowTint =
-    headlineScore >= 70 ? 'bg-success/5'
-    : headlineScore < 50 ? 'bg-error/5'
-    : '';
+  const rowTint = impactTier(c.impact.impact) === 'great' ? 'bg-success/5' : '';
 
-  // The pitcher's throwing hand and tier come from the headline start
-  // (highest-scoring start when in week view; the active day's start
-  // when in by-day view).
+  // The pitcher's throwing hand comes from the headline start (highest-
+  // scoring in week view; the active day's start in by-day view). By-day
+  // also surfaces that start's matchup rating as a scouting signal.
   const refStart = activeStart ?? c.starts.reduce((best, s) =>
     (s.rating?.score ?? 0) > (best.rating?.score ?? 0) ? s : best,
     c.starts[0],
   );
+  const activeScore = activeStart?.rating?.score;
 
   return (
     <div className={`rounded-lg overflow-hidden ${rowTint}`}>
@@ -292,12 +287,15 @@ function Row({
                 ({refStart.ppRef.throws}HP)
               </span>
             )}
-            <span className={`text-caption font-bold ${tierColor(tierFromScore(headlineScore))}`}>
-              {tierLabel(tierFromScore(headlineScore))}
-            </span>
             <span className="text-[11px] text-muted-foreground">
               {c.score.player.editorial_team_abbr} · {c.score.player.display_position}
             </span>
+            {/* By-day scouting: how good is THIS start's matchup (0-100). */}
+            {activeDate && activeScore !== undefined && (
+              <span className={`text-caption font-bold ${tierColor(tierFromScore(activeScore))}`}>
+                {Math.round(activeScore)}
+              </span>
+            )}
             {startCount >= 2 && !activeDate && (
               <Badge color="success">{startCount} starts</Badge>
             )}
@@ -307,11 +305,11 @@ function Row({
           </div>
 
           <DayPills starts={c.starts} activeDate={activeDate} />
-          <CategoryStrip starts={c.starts} />
+          <ImpactChips impact={c.impact} />
         </div>
 
         <div className="shrink-0 flex items-start gap-2 mt-0.5">
-          <VerdictStack score={displayScore} label={verdict.label} tone={verdict.tone} />
+          <ImpactStack impact={c.impact} />
           <Icon
             icon={FiChevronDown}
             size={16}
@@ -322,6 +320,12 @@ function Row({
 
       {isExpanded && (
         <div className="space-y-1.5 px-2 pb-2">
+          {/* Full net-category effect of the add (contested + conceded). */}
+          {c.impact.deltas.length > 0 && (
+            <div className="px-1 pt-1">
+              <ImpactChips impact={c.impact} categoryWeights={categoryWeights} showAll />
+            </div>
+          )}
           {c.starts.map(start => {
             if (!start.gameRef || !start.ppRef) return null;
             const ctx = {
@@ -400,6 +404,7 @@ function ViewModeToggle({
 
 export default function StreamingBoard({
   weekScores,
+  impactByPlayer,
   days,
   teamOffense,
   loading,
@@ -408,7 +413,7 @@ export default function StreamingBoard({
   categoryWeights,
   helper,
 }: StreamingBoardProps) {
-  const candidates = useMemo(() => buildCandidates(weekScores), [weekScores]);
+  const candidates = useMemo(() => buildCandidates(weekScores, impactByPlayer), [weekScores, impactByPlayer]);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('week');
 

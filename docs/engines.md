@@ -81,6 +81,7 @@ Sum L3 outputs over a window. No new math.
 - Pitcher week optimizer (`optimizePitcherWeek`) — [src/lib/lineup/optimizePitcherWeek.ts](../src/lib/lineup/optimizePitcherWeek.ts)
 - Slot-aware streaming (`streamingValue` per FA) — [src/lib/projection/slotAware.ts](../src/lib/projection/slotAware.ts)
 - Stream category impact (`computeStreamCatImpact` — net cat deltas vs displaced starters + weighted scalar; prices/ranks the batter streaming board) — [src/lib/projection/streamCatImpact.ts](../src/lib/projection/streamCatImpact.ts)
+- Stream pitcher category impact (`computeStreamPitcherCatImpact` — net K/W/QS/IP added + ERA/WHIP shift vs the team's projected week, pivotality-weighted; prices/ranks the pitcher streaming board) — [src/lib/projection/streamPitcherCatImpact.ts](../src/lib/projection/streamPitcherCatImpact.ts)
 - Roster depth solver (`assignStarters`) — [src/lib/roster/depth.ts](../src/lib/roster/depth.ts)
 
 ## L5 — Matchup state  →  see [recommendation-system.md](./recommendation-system.md)

@@ -154,6 +154,8 @@ Pitcher today version: `src/components/lineup/TodayPitchers.tsx` + `src/componen
 Pitcher streaming version: `src/components/streaming/StreamingBoard.tsx` + `src/components/shared/ScoreBreakdownPanel.tsx`
 Batter streaming version: `src/components/streaming/BatterStreamingBoard.tsx` (expands to the swap story — day-by-day displaced starter + full net category-delta strip)
 
+Both categories streaming boards (batter + pitcher) price an add in native category units and render it through the shared `src/components/streaming/streamCats.tsx` (`DeltaChip` + `STREAM_STAT_LABEL`) — one chip vocabulary, sign-aware color (help green / hurt red, with ERA/WHIP's lower-is-better handled by the engine's `good` flag). Don't add a second stat-label map or chip; extend `streamCats.tsx`.
+
 ### Stat Comparison (head-to-head)
 Two patterns exist for showing your stats vs opponent — pick by layout context:
 

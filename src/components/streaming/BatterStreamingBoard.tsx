@@ -7,6 +7,7 @@ import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
 import { formatStatDelta } from '@/lib/formatStat';
 import { isStashableIL } from '@/lib/roster/playerPool';
+import { STREAM_STAT_LABEL, DeltaChip } from './streamCats';
 import type { WeekBatterScore } from '@/lib/hooks/useWeekBatterScores';
 import type { StreamValue } from '@/lib/hooks/useSlotAwareStreaming';
 import type { CatDelta } from '@/lib/projection/streamCatImpact';
@@ -51,18 +52,6 @@ const TIER_TONE: Record<ImpactTier, string> = {
   good: 'text-success',
   neutral: 'text-foreground',
   poor: 'text-muted-foreground',
-};
-
-const STAT_LABEL: Record<number, string> = {
-  3: 'AVG',
-  7: 'R',
-  8: 'H',
-  12: 'HR',
-  13: 'RBI',
-  16: 'SB',
-  18: 'BB',
-  21: 'K',
-  23: 'TB',
 };
 
 /** Chips ignore contributions this small — decomposition noise. */
@@ -241,7 +230,7 @@ function BatterRow({
         <div className="shrink-0 flex items-start gap-2 mt-0.5">
           <div className="text-right leading-tight">
             <div className={`text-sm font-bold tabular-nums ${tone}`}>
-              {headline ? `${STAT_LABEL[headline.statId] ?? ''} ${formatStatDelta(headline.delta, STAT_LABEL[headline.statId] ?? '')}` : '—'}
+              {headline ? `${STREAM_STAT_LABEL[headline.statId] ?? ''} ${formatStatDelta(headline.delta, STREAM_STAT_LABEL[headline.statId] ?? '')}` : '—'}
             </div>
             <div className={`text-caption font-semibold uppercase tracking-wide ${tone}`}>
               {TIER_LABEL[tier]}
@@ -339,24 +328,6 @@ function BatterDayPills({
 }
 
 // ---------------------------------------------------------------------------
-// Net category-delta chip — real units, sign-aware coloring (K: fewer = good).
-// ---------------------------------------------------------------------------
-
-function DeltaChip({ delta }: { delta: CatDelta }) {
-  const label = STAT_LABEL[delta.statId] ?? `#${delta.statId}`;
-  const value = formatStatDelta(delta.delta, label);
-  const toneClass = delta.good
-    ? 'border-success/40 text-success'
-    : 'border-error/40 text-error';
-  return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-caption font-medium ${toneClass}`}>
-      <span className="font-semibold">{label}</span>
-      <span className="tabular-nums">{value}</span>
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Expanded panel — the full swap story: who he replaces day by day, and the
 // net effect on every scored category (contested cats carry the color;
 // conceded cats render dimmed).
@@ -407,9 +378,7 @@ function ExpandedSwapDetail({
           {entry.catDeltas.map(c => {
             const conceded = (categoryWeights[c.statId] ?? 1) <= 0;
             return (
-              <span key={c.statId} className={conceded ? 'opacity-40' : ''}>
-                <DeltaChip delta={c} />
-              </span>
+              <DeltaChip key={c.statId} delta={c} dimmed={conceded} />
             );
           })}
         </div>

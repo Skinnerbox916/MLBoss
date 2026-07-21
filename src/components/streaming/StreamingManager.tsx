@@ -16,6 +16,7 @@ import { useScoreboard } from '@/lib/hooks/useScoreboard';
 import { useCategoryWeights } from '@/lib/hooks/useCategoryWeights';
 import { useWeekBatterScores } from '@/lib/hooks/useWeekBatterScores';
 import { useWeekPitcherScores } from '@/lib/hooks/useWeekPitcherScores';
+import { usePitcherStreamImpact } from '@/lib/hooks/usePitcherStreamImpact';
 import { useSlotAwareStreaming } from '@/lib/hooks/useSlotAwareStreaming';
 import { useLeagueLimits } from '@/lib/hooks/useLeagueLimits';
 import { getStreamingGridDays, getStreamingWeekTarget, resolveEarliestPlayableDate, weekRangeLabel } from '@/lib/dashboard/weekRange';
@@ -158,6 +159,16 @@ export default function StreamingManager() {
   const { scored: pitcherWeekScores, days: pitcherPickupDays, isLoading: pitcherScoresLoading } =
     useWeekPitcherScores(pitcherFAs, scoredPitcherCategories, teamOffense, pitcherCategoryWeights, earliestPlayableDate, weekBounds);
 
+  // Price each arm's start(s) in category units against my projected week
+  // (net K/W/QS/IP + ERA/WHIP shift, pivotality-weighted) — the board's
+  // ranking + native-unit chips. Mirrors the batter board's impact half.
+  const pitcherImpact = usePitcherStreamImpact(
+    pitcherWeekScores,
+    myPitcherProjection,
+    scoredPitcherCategories,
+    pitcherCategoryWeights,
+  );
+
   // ----- Batter tab inputs ---------------------------------------------
   const { batters: batterFAs, isLoading: batterFaLoading } = useAvailableBatters(leagueKey, true);
   const { roster: myRoster } = useRoster(teamKey);
@@ -288,6 +299,7 @@ export default function StreamingManager() {
 
           <StreamingBoard
             weekScores={pitcherWeekScores}
+            impactByPlayer={pitcherImpact}
             days={pitcherPickupDays}
             teamOffense={teamOffense}
             loading={ctxLoading || pitcherFaLoading || pitcherScoresLoading}

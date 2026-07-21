@@ -8,6 +8,18 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Streaming boards repriced from abstract rating sums to native category impact
+
+Both categories streaming boards ranked and displayed an abstract **rating sum** — the batter board a slot-aware starter-score total ("+115"), the pitcher board a sum of per-start 0-100 ratings — and their category chips showed **fit sub-scores** (batter) or **gross production** (batter chips), not what the add does to the *categories you're contesting*. So a board could celebrate a big-TB bat or a high-rating arm while the Game Plan card two inches above showed the cat it helped already locked and the one you're bleeding (SB) untouched.
+
+**Replaced with:** per-category NET impact in the league's own units. Batters: [streamCatImpact.ts](../src/lib/projection/streamCatImpact.ts) (net-over-displaced-starter, playShare-scaled). Pitchers: [streamPitcherCatImpact.ts](../src/lib/projection/streamPitcherCatImpact.ts) (pure-addition K/W/QS/IP + ERA/WHIP shift vs the team's projected week). Both rank by `Σ pivotalityWeight × contribution` with RAW (un-renormalized) weights so locked cats contribute ~0, and render native `formatStatDelta` chips through the shared [streamCats.tsx](../src/components/streaming/streamCats.tsx). Per-start pitcher rating survives only as the by-day scouting signal.
+
+Don't reintroduce:
+
+- **An abstract rating-sum headline or fit-badge chip on a value surface.** Owner direction (2026-07-21): value an add by its production over the current option, in category units, and make the ranking agree with the Game Plan. See [[feedback_native_units_net_of_incumbent]].
+- **A rating-sum sort for the streaming boards.** Rank by contested-category impact. The per-start / per-day rating is a *quality* signal (scouting one start), not the week-value ranking.
+- **Bumping `MODEL_VERSION` for these reworks.** They change consumption/display, not any captured prediction — see forecast-verification.md.
+
 ## 2026-07 — Slot-aware streaming guarded against a missing baseline (the "+166 top move")
 
 The dashboard's categories "Top move this week" tile briefly recommended a fringe OF at +166 — ~5× the engine's intended 0–50 scale, with the FA assigned to slots (OF) the roster normally fills. Root cause was never a pricing bug: on healthy inputs the same engine priced that FA at ~26. The board inflates only when the my-roster baseline goes missing while FA scores are present — then `computeSlotAwareStreaming` prices every FA as "fills an open slot at full daily score" instead of "upgrade margin over my weakest starter." Three unguarded paths produced that state: (1) `/api/projection/batter-team` cached its assembled payload with plain `withCache`, so a partial stats/roster run (whose *inner* gates correctly refused to cache) still got assembled and pinned for the full TTL; (2) `useSlotAwareStreaming` guarded `!myProjection` but not `myRoster.length === 0` (roster fetch still loading/failed — common under Yahoo rate-limit pressure while everything else is Redis-warm); (3) `TopStreamTile` rendered whatever was computed mid-hydration, ignoring `isLoading`.

@@ -161,6 +161,9 @@ export async function GET(request: Request) {
           name: p.name,
           teamAbbr: p.editorial_team_abbr,
           talent,
+          // Overall-line saves/games feed the reliever SV projection.
+          seasonSaves: overallLines.current?.saves ?? 0,
+          seasonGames: overallLines.current?.gamesPitched ?? 0,
         };
       }),
     );

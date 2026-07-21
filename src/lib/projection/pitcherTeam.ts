@@ -29,6 +29,7 @@
 
 import { buildGameForecast, buildReliefWeekForecast } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
+import { observedSavesPerAppearance } from '@/lib/pitching/talent';
 import { isLikelySamePlayer, normalizeTeamAbbr } from '@/lib/pitching/display';
 import type { Focus } from '@/lib/rating/focus';
 import type { EnrichedGame, ProbablePitcher } from '@/lib/mlb/types';
@@ -51,13 +52,18 @@ const STAT_ID_K = 42;
 const STAT_ID_W = 28;
 const STAT_ID_QS = 83;
 const STAT_ID_IP = 50;
+const STAT_ID_SV = 32;
 const STAT_ID_ERA = 26;
 const STAT_ID_WHIP = 27;
 
 /** Counting cats — `expectedCount` is summed across starts; `expectedDenom`
- *  records the start count for callers that want a per-start rate. */
+ *  records the start count for callers that want a per-start rate. SV is a
+ *  RELIEVER-only projection (see `projectRelieverPlayer`): it's projectable
+ *  so `composeCorrectedRows` applies it, but no starter contributes to it
+ *  (SV isn't in `PITCHER_NORM`, so it never appears in a starter's rating
+ *  categories). */
 const COUNTING_PITCHER_STAT_IDS = new Set<number>([
-  STAT_ID_K, STAT_ID_W, STAT_ID_QS, STAT_ID_IP,
+  STAT_ID_K, STAT_ID_W, STAT_ID_QS, STAT_ID_IP, STAT_ID_SV,
 ]);
 
 /** Ratio cats — `expectedCount` is the numerator (ER for ERA, BB+H for
@@ -84,6 +90,12 @@ export interface ActivePitcher {
    *  appear on probable-pitcher lists, so the only way to project
    *  them is via talent passed in directly. */
   talent?: PitcherTalent | null;
+  /** Current-season saves + games (overall line), for the reliever SV
+   *  projection (`observedSavesPerAppearance`). Only relievers need them;
+   *  a team with no save-getters projects 0 SV, which is exactly what
+   *  makes SV read "out of reach" for a roster that can't get saves. */
+  seasonSaves?: number;
+  seasonGames?: number;
 }
 
 export interface PitcherProjectionDeps {
@@ -509,6 +521,21 @@ export function projectRelieverPlayer(
     expectedCount: f.expectedWhipNumerator,
     expectedDenom: f.expectedIp,
   });
+
+  // SV from observed save pace (saves / games ≥ closer threshold, else 0)
+  // scaled to the window's appearances. This is the only reliever cat the
+  // matchup pipeline now reads: it lets a team with a closer project real
+  // saves, and — the point of the fix — a team with NO save-getters
+  // projects 0, so its SV margin reads "out of reach" instead of a phantom
+  // 0=0 tossup. Shared pace helper with the L6 neutral-week SV projection.
+  const svPerApp = observedSavesPerAppearance(pitcher.seasonSaves ?? 0, pitcher.seasonGames ?? 0);
+  if (svPerApp > 0) {
+    byCategory.set(STAT_ID_SV, {
+      statId: STAT_ID_SV,
+      expectedCount: svPerApp * f.expectedAppearances,
+      expectedDenom: f.expectedAppearances,
+    });
+  }
 
   return {
     mlbId: pitcher.mlbId,

@@ -235,7 +235,11 @@ function computeMargin(
       let streamAssisted = false;
       // Stream-capacity softening for losing counting rows (see
       // AnalyzeOpts.streamCapacity): the deficit is measured net of what
-      // the user's remaining moves could add, capped at even.
+      // the user's remaining moves could add, capped at even. SV carries
+      // no capacity entry (SP streams can't make saves), so a save deficit
+      // is never softened — it auto-concedes on its own margin when the
+      // opponent's projected saves are large enough, and stays chase-able
+      // when they aren't (user concedes manually in that case).
       const capacity = streamCapacity?.[row.statId];
       if (capacity !== undefined && capacity > 0 && gap < 0) {
         const softened = Math.min(0, gap + capacity);

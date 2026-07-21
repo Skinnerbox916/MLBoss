@@ -222,6 +222,11 @@ interface RowProps {
   candidate: StreamCandidate;
   rank: number;
   isExpanded: boolean;
+  /** Identity the PARENT keys expansion on. Must match what its
+   *  `isExpanded` check compares against — bare player_key in week view,
+   *  `${date}-${player_key}` in by-day. The button toggles THIS, not a
+   *  self-derived key (the by-day mismatch that silently broke expansion). */
+  expandKey: string;
   onToggleExpand: (key: string) => void;
   teamOffense: Record<number, TeamOffense>;
   scoredPitcherCategories?: EnrichedLeagueStatCategory[];
@@ -234,7 +239,7 @@ interface RowProps {
 }
 
 function Row({
-  candidate, rank, isExpanded, onToggleExpand,
+  candidate, rank, isExpanded, expandKey, onToggleExpand,
   teamOffense, scoredPitcherCategories, focusMap, categoryWeights, activeDate,
 }: RowProps) {
   const c = candidate;
@@ -256,7 +261,7 @@ function Row({
     <div className={`rounded-lg overflow-hidden ${rowTint}`}>
       <button
         type="button"
-        onClick={() => onToggleExpand(c.score.player.player_key)}
+        onClick={() => onToggleExpand(expandKey)}
         className="w-full flex items-start gap-3 px-3 py-2 text-left hover:bg-surface-muted/40 transition-colors"
       >
         <div className="w-5 text-center text-xs font-bold text-muted-foreground mt-2.5 shrink-0">
@@ -486,6 +491,7 @@ export default function StreamingBoard({
               candidate={c}
               rank={i + 1}
               isExpanded={expandedKey === c.score.player.player_key}
+              expandKey={c.score.player.player_key}
               onToggleExpand={toggleExpand}
               teamOffense={teamOffense}
               scoredPitcherCategories={scoredPitcherCategories}
@@ -510,6 +516,7 @@ export default function StreamingBoard({
                     candidate={c}
                     rank={i + 1}
                     isExpanded={expandedKey === `${day.date}-${c.score.player.player_key}`}
+                    expandKey={`${day.date}-${c.score.player.player_key}`}
                     onToggleExpand={k => setExpandedKey(prev => (prev === k ? null : k))}
                     teamOffense={teamOffense}
                     scoredPitcherCategories={scoredPitcherCategories}

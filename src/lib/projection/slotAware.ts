@@ -16,9 +16,12 @@
  * handles it via backtracking.
  *
  * Mechanism: per remaining day, run `assignStarters` once on my active
- * roster (baseline) and once per FA-with-game (with-FA), take the delta,
- * and sum across days. The streaming value is the resulting total. Per-
- * day breakdowns are returned alongside so the UI can show "starts at 2B"
+ * roster (baseline) and once per FA-with-game (with-FA), take the delta
+ * scaled by the FA's playing-time share (a team game day is only a player
+ * game day `playShare` of the time — the Ryan Jeffers lesson: a 42-GP
+ * catcher priced as a 5-start week, see docs/history.md 2026-07), and sum
+ * across days. The streaming value is the resulting total. Per-day
+ * breakdowns are returned alongside so the UI can show "starts at 2B"
  * vs "benched" cells.
  */
 
@@ -84,6 +87,11 @@ export interface SlotAwareInput {
     name: string;
     eligibleBatterPositions: BatterPosition[];
     perDayScore: Map<string, number>;
+    /** Playing-time share in (0, 1] (`playingTimeFactor`) — P(in the
+     *  lineup) on a team game day. Every day's delta is scaled by it:
+     *  a part-time catcher's "great Sunday matchup" only pays off if he
+     *  plays Sunday. Default 1 (everyday player). */
+    playShare?: number;
   }>;
   /** League batter slots. */
   slots: StartingSlots;
@@ -238,6 +246,7 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
   for (const fa of faPool) {
     const perDay: SlotAwarePerDay[] = [];
     let total = 0;
+    const playShare = fa.playShare ?? 1;
 
     for (const day of days) {
       const baseline = baselineByDate.get(day.date)!;
@@ -270,17 +279,20 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
         }
       }
 
+      // Floor at zero — assignStarters' optimum is monotonic in the
+      // candidate pool (adding a player can never reduce the total), so a
+      // negative delta would only come from numerical drift. Then scale by
+      // the FA's playing-time share: the with-FA solve assumes he's in the
+      // lineup, which for a part-timer only happens `playShare` of days.
+      const expectedDelta = Math.max(0, delta) * playShare;
       perDay.push({
         date: day.date,
         dayLabel: day.dayLabel,
-        // Floor at zero — assignStarters' optimum is monotonic in the
-        // candidate pool (adding a player can never reduce the total),
-        // so a negative delta would only come from numerical drift.
-        delta: Math.max(0, delta),
+        delta: expectedDelta,
         assignedSlot,
         hasGame: true,
       });
-      total += Math.max(0, delta);
+      total += expectedDelta;
     }
 
     byPlayerKey.set(fa.player_key, { streamingValue: total, perDay });

@@ -87,7 +87,9 @@ The team-projection engine answers "what should my team total be?" The slot-awar
 
 On a heavy day where 9 of my batters all play, an FA in my lineup means benching one of mine — his contribution is the upgrade margin over the worst current starter that day, or zero if he can't beat any of them. On a light day where only 4 of mine have games, 5 starting slots sit open and any FA fills one for free at full daily score.
 
-**Mechanism:** per remaining day, run `assignStarters` once on my active roster (baseline) and once per FA-with-game (with-FA), take the delta, and sum across days. The result is the streaming value. Multi-position eligibility is handled automatically because `assignStarters` already backtracks across position assignments.
+**Mechanism:** per remaining day, run `assignStarters` once on my active roster (baseline) and once per FA-with-game (with-FA), take the delta, scale it by the FA's playing-time share, and sum across days. The result is the streaming value. Multi-position eligibility is handled automatically because `assignStarters` already backtracks across position assignments.
+
+**Playing-time share (2026-07):** a team game day is only a *player* game day some of the time — a 42-GP catcher was topping the board priced as a five-start week. Each day's delta is multiplied by `playingTimeFactor` (the canonical role-share model in [roster/playingTime.ts](../src/lib/roster/playingTime.ts), same as the roster page), computed in `useWeekBatterScores` with pace refs estimated over the FA pool. Known trade-off: the share is a season aggregate, so a recently-promoted everyday player (the classic streamer) is under-credited until his season PA catches up; a recent-lineup-history share (extending the `obs:batter-lineup-spot` store to keep appearance dates) is the follow-up if that bites.
 
 Returns per-day breakdowns alongside the total so the UI can show "starts at 2B" vs "benched" cells.
 

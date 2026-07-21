@@ -16,6 +16,12 @@ import {
   type ProjectionDeps,
   type PlayerProjection,
 } from '@/lib/projection/batterTeam';
+import {
+  playingTimeFactor,
+  estimateFullTimePaceRef,
+  estimateFullTimeGpRef,
+} from '@/lib/roster/playingTime';
+import { isStashableIL } from '@/lib/roster/playerPool';
 import type { BatterSeasonStats } from '@/lib/mlb/types';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
@@ -23,6 +29,10 @@ import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 export interface WeekBatterScore {
   player: FreeAgentPlayer;
   projection: PlayerProjection;
+  /** Playing-time share (0, 1] — P(in the lineup) on a team game day, from
+   *  the canonical role-share model (`playingTimeFactor`, same as the
+   *  roster page). The slot-aware engine scales each day's delta by it. */
+  playShare: number;
 }
 
 interface UseWeekBatterScoresResult {
@@ -134,6 +144,14 @@ export function useWeekBatterScores(
       categoryWeights,
     };
 
+    // Full-time pace refs estimated over the FA pool's own stats. Slightly
+    // low vs a league-wide pool (rostered regulars would raise the p90), so
+    // shares skew a touch generous — fine for ranking; the 2× part-timer
+    // over-credit is what matters (see slotAware.ts docblock).
+    const poolStats = Object.values(statsMap);
+    const fullTimePaceRef = estimateFullTimePaceRef(poolStats);
+    const fullTimeGpRef = estimateFullTimeGpRef(poolStats);
+
     const out: WeekBatterScore[] = [];
     for (const fa of faPool) {
       const stats = getPlayerStats(fa.name, fa.editorial_team_abbr);
@@ -144,10 +162,16 @@ export function useWeekBatterScores(
         teamAbbr: fa.editorial_team_abbr,
       };
       const projection = projectBatterPlayer(active, deps);
-      out.push({ player: fa, projection });
+      const playShare = playingTimeFactor(stats, {
+        fullTimePaceRef,
+        fullTimeGpRef,
+        isOnIL: isStashableIL(fa),
+        percentOwned: fa.percent_owned,
+      });
+      out.push({ player: fa, projection, playShare });
     }
     return out;
-  }, [faPool, scoredCategories, playableDays, statsByMlbId, gamesByDate, lineupSpots, categoryWeights, getPlayerStats]);
+  }, [faPool, scoredCategories, playableDays, statsByMlbId, statsMap, gamesByDate, lineupSpots, categoryWeights, getPlayerStats]);
 
   const isLoading =
     statsLoading ||

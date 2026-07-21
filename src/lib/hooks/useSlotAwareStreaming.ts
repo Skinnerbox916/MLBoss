@@ -96,6 +96,7 @@ export function useSlotAwareStreaming(
         name: s.player.name,
         eligibleBatterPositions: eligiblePositions,
         perDayScore,
+        playShare: s.playShare,
       });
     }
 

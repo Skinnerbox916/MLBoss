@@ -44,6 +44,10 @@ export interface SlotAwarePerDay {
   /** True when the FA had a game scheduled this day. False = off-day —
    *  visually distinct from "had a game but benched". */
   hasGame: boolean;
+  /** Roster players who were starters in the baseline but lose their
+   *  start in the with-FA lineup (assignment-set diff — usually one key,
+   *  empty on open-slot days). Feeds the net category-impact engine. */
+  displacedKeys: string[];
 }
 
 export interface FAStreamingValue {
@@ -214,8 +218,8 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
   const { days, myRoster, faPool, slots } = input;
 
   const dailyBaselines: DailyBaseline[] = [];
-  // Cache the daily baseline rosters + totals so the per-FA loop reuses them.
-  const baselineByDate = new Map<string, { roster: ScoredPlayer[]; total: number }>();
+  // Cache the daily baseline rosters + solves so the per-FA loop reuses them.
+  const baselineByDate = new Map<string, { roster: ScoredPlayer[]; total: number; keys: Set<string> }>();
 
   const totalSlots = totalStartingSlots(slots);
 
@@ -223,7 +227,7 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
     const baselineRoster = buildDailyRoster(myRoster, day.date);
     const baselineResult = assignStarters(baselineRoster, slots);
     const baselineTotal = baselineResult.totalStarterScore;
-    baselineByDate.set(day.date, { roster: baselineRoster, total: baselineTotal });
+    baselineByDate.set(day.date, { roster: baselineRoster, total: baselineTotal, keys: baselineResult.assignedKeys });
 
     // Count how many slots the baseline filled (positional + UTIL).
     let filled = 0;
@@ -258,6 +262,7 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
           delta: 0,
           assignedSlot: null,
           hasGame: false,
+          displacedKeys: [],
         });
         continue;
       }
@@ -279,6 +284,13 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
         }
       }
 
+      // Who lost their start to make room (empty on open-slot days). A
+      // rating-neutral swap can still be a big category trade, so this is
+      // recorded whenever the FA starts, not only when delta > 0.
+      const displacedKeys = assignedSlot
+        ? [...baseline.keys].filter(k2 => !withFA.assignedKeys.has(k2))
+        : [];
+
       // Floor at zero — assignStarters' optimum is monotonic in the
       // candidate pool (adding a player can never reduce the total), so a
       // negative delta would only come from numerical drift. Then scale by
@@ -291,6 +303,7 @@ export function computeSlotAwareStreaming(input: SlotAwareInput): SlotAwareResul
         delta: expectedDelta,
         assignedSlot,
         hasGame: true,
+        displacedKeys,
       });
       total += expectedDelta;
     }

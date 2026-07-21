@@ -8,6 +8,7 @@ import { Text } from '@/components/typography';
 import { useTopWeekStream } from '@/lib/hooks/useTopWeekStream';
 import { useMovesBudget } from '@/lib/hooks/useMovesBudget';
 import { useActiveLeague } from '@/lib/hooks/useActiveLeague';
+import { formatStatDelta } from '@/lib/formatStat';
 
 /**
  * Categories dashboard tile: the streaming board's #1 batter pickup,
@@ -24,7 +25,10 @@ export default function TopStreamTile({ className }: { className?: string }) {
   // prices FAs against a missing baseline (inflated values, wrong #1).
   if (isLoading || !top) return null;
 
-  const playDays = top.perDay.filter(d => d.delta > 0);
+  const playDays = top.perDay.filter(d => d.assignedSlot);
+  // The biggest category story of the add — same grammar as the streaming
+  // board's headline chip.
+  const headline = top.catDeltas.find(c => c.good) ?? top.catDeltas[0];
 
   return (
     <Panel
@@ -56,13 +60,27 @@ export default function TopStreamTile({ className }: { className?: string }) {
             ))}
           </div>
         </div>
-        <span
-          className="font-mono tabular-nums font-bold text-sm text-success shrink-0"
-          title="Slot-aware streaming value — starter-score gain over your current roster across the pickup window"
-        >
-          +{top.streamingValue.toFixed(1)}
-        </span>
+        {headline && (
+          <span
+            className="font-mono tabular-nums font-bold text-sm text-success shrink-0"
+            title="Net category impact vs the starter he replaces, across the pickup window"
+          >
+            {STAT_LABEL[headline.statId] ?? ''} {formatStatDelta(headline.delta, STAT_LABEL[headline.statId] ?? '')}
+          </span>
+        )}
       </Link>
     </Panel>
   );
 }
+
+const STAT_LABEL: Record<number, string> = {
+  3: 'AVG',
+  7: 'R',
+  8: 'H',
+  12: 'HR',
+  13: 'RBI',
+  16: 'SB',
+  18: 'BB',
+  21: 'K',
+  23: 'TB',
+};

@@ -91,13 +91,15 @@ On a heavy day where 9 of my batters all play, an FA in my lineup means benching
 
 **Playing-time share (2026-07):** a team game day is only a *player* game day some of the time — a 42-GP catcher was topping the board priced as a five-start week. Each day's delta is multiplied by `playingTimeFactor` (the canonical role-share model in [roster/playingTime.ts](../src/lib/roster/playingTime.ts), same as the roster page), computed in `useWeekBatterScores` with pace refs estimated over the FA pool. Known trade-off: the share is a season aggregate, so a recently-promoted everyday player (the classic streamer) is under-credited until his season PA catches up; a recent-lineup-history share (extending the `obs:batter-lineup-spot` store to keep appearance dates) is the follow-up if that bites.
 
-Returns per-day breakdowns alongside the total so the UI can show "starts at 2B" vs "benched" cells.
+Returns per-day breakdowns alongside the total so the UI can show "starts at 2B" vs "benched" cells, plus each day's displaced-starter keys (assignment-set diff) for the category-impact engine.
+
+**Category impact (2026-07):** the starter-score sum is engine-internal — the batter board's user-facing value is [streamCatImpact.ts](../src/lib/projection/streamCatImpact.ts): the NET change to each scored category (FA's production on the days he starts minus the displaced starter's, playShare-scaled), and one ranking scalar `Σ pivotalityWeight × netΔ / leagueStarterWeek`. Weights are raw (not renormalized), so an add that only boosts locked cats ranks near zero — the board agrees with the Game Plan card above it. Displayed in real category units via `formatStatDelta` chips; the abstract "+115"-style number is retired (owner direction, 2026-07-21: "it should be rated on his production over the current option on the roster" in category units).
 
 ## How the projection is consumed
 
 | Surface | Hook | Consumer engine | What it shows |
 |---|---|---|---|
-| Streaming page (batter tab) | `useWeekBatterScores` + slot-aware | `slotAware` per FA | FA rank by week-long upgrade margin over the user's optimal lineup |
+| Streaming page (batter tab) | `useWeekBatterScores` + slot-aware | `slotAware` + `streamCatImpact` per FA | FA rank by contested-category impact: net cat deltas vs the displaced starter, pivotality-weighted |
 | Streaming page (pitcher tab) | `useWeekPitcherScores` | `projectPitcherPlayer` per FA | FA rank by **sum** of per-start rating scores within the pickup window. Summing privileges two-start pitchers |
 | Game Plan card (both sides) | `useCorrectedMatchupAnalysis` | `projectBatterTeam` + `projectPitcherTeam` × my + opp | Corrected matchup margin = MTD + projection blend mid-week; pure projection on the Sunday pivot (`targetWeek: 'next'`) |
 | Lineup page (Batters tab) | `optimizeWeek` | per-day `assignStarters` | Optimal slot assignment per day for the rest of the matchup week |

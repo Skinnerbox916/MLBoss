@@ -14,11 +14,14 @@ import { getStreamingWeekTarget, type WeekTarget } from '@/lib/dashboard/weekRan
 import { faShouldShow } from '@/lib/roster/playerPool';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 import type { SlotAwarePerDay } from '@/lib/projection/slotAware';
+import type { CatDelta } from '@/lib/projection/streamCatImpact';
 
 export interface TopWeekStream {
   player: FreeAgentPlayer;
-  /** Slot-aware week value: sum of daily starter-score deltas. */
-  streamingValue: number;
+  /** Category-impact scalar — the board's ranking key. */
+  impact: number;
+  /** Net per-cat deltas vs the displaced starters, |contribution| desc. */
+  catDeltas: CatDelta[];
   perDay: SlotAwarePerDay[];
 }
 
@@ -65,15 +68,23 @@ export function useTopWeekStream(): { top: TopWeekStream | null; isLoading: bool
     weekBounds,
   );
 
-  const slotAware = useSlotAwareStreaming(scored, myProjection, roster, positions, days);
+  const slotAware = useSlotAwareStreaming(
+    scored, myProjection, roster, positions, days,
+    scoredBatterCategories, categoryWeights,
+  );
 
   const top = useMemo<TopWeekStream | null>(() => {
     let best: TopWeekStream | null = null;
     for (const s of scored) {
       const sa = slotAware.byPlayerKey.get(s.player.player_key);
-      if (!sa || sa.streamingValue <= 0) continue;
-      if (!best || sa.streamingValue > best.streamingValue) {
-        best = { player: s.player, streamingValue: sa.streamingValue, perDay: sa.perDay };
+      if (!sa || sa.impact <= 0) continue;
+      if (!best || sa.impact > best.impact) {
+        best = {
+          player: s.player,
+          impact: sa.impact,
+          catDeltas: sa.catDeltas,
+          perDay: sa.perDay,
+        };
       }
     }
     return best;

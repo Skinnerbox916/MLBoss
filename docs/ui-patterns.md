@@ -152,6 +152,7 @@ Used for batters (`LineupManager`), today's starting pitchers (`TodayPitchers`),
 Batter version: `src/components/lineup/PlayerRow.tsx` + `PlayerSplitsPanel.tsx`
 Pitcher today version: `src/components/lineup/TodayPitchers.tsx` + `src/components/shared/ScoreBreakdownPanel.tsx`
 Pitcher streaming version: `src/components/streaming/StreamingBoard.tsx` + `src/components/shared/ScoreBreakdownPanel.tsx`
+Batter streaming version: `src/components/streaming/BatterStreamingBoard.tsx` (expands to the swap story — day-by-day displaced starter + full net category-delta strip)
 
 ### Stat Comparison (head-to-head)
 Two patterns exist for showing your stats vs opponent — pick by layout context:

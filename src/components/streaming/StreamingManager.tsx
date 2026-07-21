@@ -207,6 +207,8 @@ export default function StreamingManager() {
     myRoster,
     leaguePositions,
     pickupDays,
+    scoredBatterCategories,
+    batterCategoryWeights,
   );
 
   const pitcherHelper = targetWeek === 'next'
@@ -317,6 +319,8 @@ export default function StreamingManager() {
           <BatterStreamingBoard
             faScores={batterFAScores}
             slotAwareValues={slotAware.byPlayerKey}
+            rosterNameByKey={slotAware.rosterNameByKey}
+            categoryWeights={batterCategoryWeights}
             days={pickupDays}
             faLoading={ctxLoading || batterFaLoading || batterScoresLoading}
           />

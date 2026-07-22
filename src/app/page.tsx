@@ -40,6 +40,24 @@ export default async function HomePage() {
       >
         Sign in with Yahoo!
       </a>
+
+      {/* Yahoo Fantasy attribution (required for API access). The official
+          two-tone wordmark needs a light backing to stay legible in both
+          themes, so it sits on a white chip. */}
+      <footer className="absolute bottom-8 flex flex-col items-center gap-2">
+        <span className="inline-flex items-center rounded-md bg-white px-3 py-1.5 shadow-sm ring-1 ring-black/5">
+          <Image
+            src="/assets/yahoo-fantasy.svg"
+            alt="Yahoo Fantasy"
+            width={132}
+            height={20}
+            className="h-5 w-auto"
+          />
+        </span>
+        <span className="text-caption text-muted-foreground">
+          Fantasy data provided by Yahoo Fantasy
+        </span>
+      </footer>
     </div>
   );
 }

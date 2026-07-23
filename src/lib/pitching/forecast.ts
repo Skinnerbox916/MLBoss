@@ -130,10 +130,12 @@ export interface BuildForecastArgs {
 // authoritative copy.
 // ---------------------------------------------------------------------------
 
-/** League-average opponent K-rate. Anchors the log5 baseline for K
- *  matchup adjustments. Same value as LEAGUE_K_RATE in `./talent` but
- *  keyed semantically to the OPS-K-rate batter context. */
-const LEAGUE_OPS_K_RATE = 0.223;
+/** League-average opponent K-rate per PA. Anchors the log5 baseline for
+ *  K matchup adjustments — same denominator and value as LEAGUE_K_RATE
+ *  in `talentModel.ts` (2026 MLB season aggregate ≈ .222), and the same
+ *  denominator as `TeamOffense.strikeOutRate` (per-PA since 2026-07 —
+ *  see docs/history.md "Ledger-driven calibration fixes"). */
+const LEAGUE_OPS_K_RATE = 0.221;
 
 // `xwobaToXera`, `composeXwobaAllowed`, `talentBaa`, `talentHrPerPA`, and
 // `talentContactRate` now live in `./talent` as the single canonical

@@ -52,16 +52,17 @@ Both sides emit the same `PerCategoryProjection` row shape (`{ statId, expectedC
 
 The volume half of every batter number: per-PA rates × expected PA. The canonical curve lives in [src/lib/mlb/paBySpot.ts](../src/lib/mlb/paBySpot.ts) — one home consumed by the projection (`expectedPAperGame`, re-exported from `batterTeam.ts` for legacy import sites) **and** the L3 rating's opportunity multiplier (`paOpportunityRatio`), so the score and the volume can never disagree about what a lineup spot is worth.
 
-**Basis: PA per game *started*, not PA per game.** We forecast players in posted lineups (and cached spots), so the right population is starters at that slot — a number that already includes being lifted mid-game. Slot-level PA-per-game tables that include pinch-hitters and defensive substitutes measure a different (much lower) thing.
+**Basis: slot-level table × starter share.** The population we forecast is *starters* at a slot (posted lineups and cached spots) — but published PA-by-slot tables measure the **slot**, which keeps accruing PA after the starter leaves (the pinch-hitter or defensive sub bats in the same slot). The starter gets only a share of the slot's PA, and the share shrinks down the order — bottom-of-order starters are lifted for pinch-hitters, double-switched, and platoon-hooked far more than table-setters. The model is therefore `slot PA × starter share`, two separately-anchored factors.
 
 | Anchor | Status | Source |
 |---|---|---|
-| Per-spot PA/GS (1st ≈ 4.65 → 9th ≈ 3.77, ~0.11/spot decline) | hard-sourced | [RotoGraphs: Plate Appearances by Lineup Spot](https://fantasy.fangraphs.com/buying-generic-plate-appearances-by-lineup-spot/) (2016 league data; slot shape is era-stable, level drifts ≤ ~0.05 with run environment) |
-| Unknown-order fallback (4.1) | estimated | Below the slot mean (4.16) on purpose: bats with no posted/cached spot skew part-time and bottom-of-order |
+| Per-slot PA/G (1st ≈ 4.65 → 9th ≈ 3.77, ~0.11/spot decline) | hard-sourced | [RotoGraphs: Plate Appearances by Lineup Spot](https://fantasy.fangraphs.com/buying-generic-plate-appearances-by-lineup-spot/) (2016 league data; slot shape is era-stable, level drifts ≤ ~0.05 with run environment) |
+| Starter share of slot PA (≈ 0.987 at spot 1 → 0.937 at spot 9, linear) | estimated | Least-squares fit of actual-starter-PA ÷ slot-table-PA from the forecast ledger's graded batter-days (n = 708 starter-games, 2026-07; per-spot ratios noisy individually, cleanly linear in aggregate). Absorbs both substitution attrition and 2016→2026 level drift. |
+| Unknown-order fallback (4.0) | estimated | Below the starter-basis slot mean (≈ 4.07) on purpose: bats with no posted/cached spot skew part-time and bottom-of-order |
 
-**History:** the original implementation was a linear ±8% ramp around 4.1 (spot 1 = 4.43) — anchored right at the bottom of the order but ~0.2 PA low at the top, which surfaced as the forecast ledger's first finding (spots 1–3 under-forecast, 2026-07). Replaced with the sourced table; `MODEL_VERSION` 2026.07.20.
+**History:** the original implementation was a linear ±8% ramp around 4.1 (spot 1 = 4.43) — ~0.2 PA low at the top of the order, the forecast ledger's first finding (2026-07). The 2026.07.20 fix re-anchored to the sourced slot table but read it as PA-per-game-started; the ledger then showed a monotone over-forecast growing down the order (+0.19 at spot 1 → +0.40 at spot 9) — the signature of the missing starter-share conversion, added in 2026.07.23. See [history.md](./history.md#2026-07--ledger-driven-calibration-fixes).
 
-**Standing verification:** the `batter-day` engine grades exactly this constant — the PA row of its scorecard plus the lineup-spot slice finding. Era drift and any residual bottom-order attrition show up there; re-anchor from the ledger's own numbers once a season's worth has accumulated rather than fudging ahead of evidence.
+**Standing verification:** the `batter-day` engine grades exactly this constant — the PA row of its scorecard plus the lineup-spot slice finding. The starter-share fit is one summer week of data; re-fit from the ledger once a fuller sample accumulates, and treat any new monotone-by-spot PA finding as this constant drifting.
 
 ## Reuse rules
 

@@ -39,7 +39,7 @@ import {
 
 const LEAGUE_AVG = 0.239;
 const LEAGUE_K_PER_PA = 0.221;
-const LEAGUE_BB_PER_PA = 0.094;
+const LEAGUE_BB_PER_PA = 0.089; // re-refreshed 2026-07-23 (May's .094 was the early-season walk spike)
 const LEAGUE_H_PER_PA = 0.212;
 /** League-average HR per plate appearance. 2026 MLB rate is ~0.028
  *  (notably lower than the 2024 anchor 0.034). HR is the constant most

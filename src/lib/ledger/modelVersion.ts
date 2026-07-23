@@ -21,7 +21,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.07.20';
+export const MODEL_VERSION = '2026.07.23';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -48,6 +48,24 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'batter-day', stats: '*' },
       { engine: 'batter-week', stats: '*' },
       { engine: 'points-batter-day', stats: '*' },
+    ],
+  },
+  {
+    version: '2026.07.23',
+    date: '2026-07-23',
+    summary:
+      'Three ledger-driven calibration fixes (docs/history.md "2026-07 — Ledger-driven calibration fixes"): ' +
+      '(1) TeamOffense.strikeOutRate was K/AB fed into a per-PA log5 — every opposing lineup looked ~13% more ' +
+      'K-prone than reality, inflating all pitcher K forecasts; now K/PA. (2) Starter-share taper on the ' +
+      'PA-by-spot curve — the sourced table measures the SLOT (incl. pinch-hitters), starters get 98.7%→93.7% ' +
+      'of it down the order. (3) LEAGUE_BB_RATE .094 → .089 (May refresh caught the early-season walk spike). ' +
+      'Pitcher IP model untouched — ip keeps pooling.',
+    touched: [
+      { engine: 'batter-day', stats: '*' },
+      { engine: 'batter-week', stats: '*' },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'pitcher-start', stats: ['k', 'bb', 'h', 'hr', 'er'] },
+      { engine: 'points-pitcher-start', stats: '*' },
     ],
   },
 ];

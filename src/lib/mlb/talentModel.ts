@@ -45,9 +45,12 @@ import type { StatcastBatter, StatcastPitcher } from './types';
 // with batter-side LEAGUE_AVG / LEAGUE_K_PER_PA / LEAGUE_BB_PER_PA in
 // batterForecast.ts and leagueMean values in categoryBaselines.ts — MLB
 // is zero-sum, both sides must agree. See docs/history.md "2026-05 —
-// League rate calibration refresh".
+// League rate calibration refresh". BB re-refreshed 2026-07-23: the
+// May snapshot (.094) caught the annual early-season walk spike; the
+// season-to-date aggregate settled at .0894 (see history.md "2026-07 —
+// Ledger-driven calibration fixes").
 const LEAGUE_K_RATE = 0.221;
-const LEAGUE_BB_RATE = 0.094;
+const LEAGUE_BB_RATE = 0.089;
 const LEAGUE_XWOBACON = 0.368;        // batter xwOBA on contact
 const LEAGUE_XWOBACON_PITCHER = 0.368; // pitcher-allowed xwOBA on contact
 const LEAGUE_HARD_HIT = 0.40;         // MLB average Hard-Hit % (EV ≥ 95 mph)

@@ -570,9 +570,9 @@ function computeConfidence(args: {
   // to league average; we look at whether the directions cluster.
   const dirs: Array<'above' | 'avg' | 'below'> = [];
 
-  // K rate vs league: ~22.3% mean, half-band of 4 percentage points.
+  // K rate vs league: ~22.1% mean, half-band of 4 percentage points.
   // (Above average for a pitcher = MORE Ks = better.)
-  dirs.push(bucket(kPerPA, 0.223, 0.04));
+  dirs.push(bucket(kPerPA, 0.221, 0.04));
 
   // contactXwoba vs league: ~.368 mean, half-band of .025.
   // For pitchers, LOWER contactXwoba is better — invert for direction.
@@ -747,10 +747,10 @@ export function computePitcherTalent(args: ComputeTalentArgs): PitcherTalent {
   // average pitcher) and use those instead.
   const fallbackKPerPA = currentLine?.strikeoutsPer9 != null
     ? clamp(currentLine.strikeoutsPer9 / 9 / 4.2, 0.10, 0.45)
-    : 0.223;
+    : 0.221;
   const fallbackBbPerPA = currentLine?.bb9 != null
     ? clamp(currentLine.bb9 / 9 / 4.2, 0.02, 0.20)
-    : 0.084;
+    : 0.089;
 
   const kFromSkills = componentTalent != null && componentTalent.components.kN > 0;
   const bbFromSkills = componentTalent != null && componentTalent.components.bbN > 0;

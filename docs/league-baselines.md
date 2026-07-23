@@ -13,7 +13,7 @@ Anchors the batter talent regression in [talentModel.ts](../src/lib/mlb/talentMo
 | Constant | File | Anchor |
 |---|---|---|
 | `LEAGUE_K_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | MLB-wide K-per-PA. Refresh from MLB Stats API (current season) or FanGraphs. Same value drives both batter and pitcher regressions (zero-sum). Last refreshed 2026 mid-season — see [history.md](./history.md#2026-05--league-rate-calibration-refresh). |
-| `LEAGUE_BB_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | MLB-wide BB-per-PA. Last refreshed 2026 mid-season. |
+| `LEAGUE_BB_RATE` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | MLB-wide BB-per-PA. Last refreshed 2026-07 season-to-date; the earlier May value caught the annual early-season walk spike — source this one from a late-enough aggregate to wash April out (see [history.md](./history.md#2026-07--ledger-driven-calibration-fixes-k-denominator-pa-starter-share-bb-anchor)). |
 | `LEAGUE_XWOBACON` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average xwOBA on contact (batter). The component blended toward population for thin BIP samples. |
 | `LEAGUE_HARD_HIT` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average Hard-Hit % (EV ≥ 95 mph). |
 | `LEAGUE_XWOBA` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | End-result composite clamp. Anchors the assembled component-blended xwOBA back to a sane range. |

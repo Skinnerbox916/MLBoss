@@ -32,6 +32,15 @@ The slate engines are the statistically dense ones (~15–30 probables, ~200–3
 
 The categories streaming boards are ranked client-side (see [streaming-page.md](./streaming-page.md)), so there is no server-side categories board rank to capture — engine accuracy for those flows is covered by `pitcher-start` and `batter-day`, which price the same slate through the same L2 layer.
 
+## Snapshot context
+
+Context is the slice vocabulary: every conditional finding the scorecard can ever run is limited to what capture stamped, and new slices only work from the day their key starts being captured. Beyond the modifier attribution (below), snapshots carry two kinds of fields added for the confounder screen (2026-07):
+
+- **Frozen forecast inputs** — things the model priced that drift until game time and can't be reconstructed later: the forecast weather (`tempF`, `windMph`, `windDir`), the opposing probable's identity (`oppSpMlbId` — probables change), pitcher hand.
+- **Joinability keys** — `gamePk`, `gameTimeUtc`, `venueId`. These make *post-game objective facts* (home-plate umpire, catcher, days of rest, day/night) recoverable at analysis time from the MLB API without any pre-game fetch. Deliberately **not** captured at forecast time: umpire and catcher are mostly unassigned/unposted at capture leads ≥ 1 day, and rest days would add per-pitcher fetches to a fire-and-forget path — all of them are immutable historical facts once the game ends, so freezing them pre-game buys nothing.
+
+Batter snapshots on doubleheader days carry game 1's keys (the `doubleHeader` flag lets a screen exclude those rows).
+
 The categories streaming boards' ranking scalars (`streamCatImpact` for batters, `streamPitcherCatImpact` for pitchers) are deliberately **not** ledger engines. They're roster-relative — the "prediction" is a *difference* against your own lineup/staff (net-over-displaced-starter for batters; net-of-team-week-ratio for pitchers), not an absolute player line, so there's no single MLB actual to grade. Their gradable inputs are already covered: per-player category production comes from `projectBatterPlayer` / `projectPitcherPlayer` (graded as `batter-day` / `pitcher-start`), and the batter playing-time share is the same `playingTimeFactor` that `batter-week` verifies against actual weekly PA. So a change to a streaming board's value/units (the 2026-07 batter and pitcher category-impact reworks) touches no captured prediction and must **not** bump `MODEL_VERSION` — doing so would falsely segment a cohort for a change the ledger can't see. One known seam, not a capture gap: `batter-week` estimates its full-time pace reference over the league-wide analysis pool while the streaming board estimates it over the FA pool only, so the two surfaces can assign a player a slightly different playing-time share.
 
 ## Actuals
@@ -47,6 +56,7 @@ The page leads with **findings** — automatic, significance-tested flags — be
 Detectors (in `buildScorecard`):
 
 - **Per-stat bias** per engine (min n: 300 batter-days / 50 starts / 30 points rows; rare-event stats with actual mean < 0.05/game are excluded from ratio tests).
+- **Calibration slope** per stat: actual regressed on predicted must be ~1.0 — a property of honest conditional means, independent of how noisy the stat is. Slope < 1 = over-spread (predictions more extreme than outcomes reward: the talent layer over-trusts thin samples, or a multiplicative modifier amplifies the tails); > 1 = under-spread. Same t-bars against the slope's own SE, plus a ±0.15 magnitude floor. Orthogonal to bias — a stat can have a clean mean and a dishonest spread.
 - **Conditional bias slices** — where aggregate tables hide misses: home/away (both sides), platoon side vs LHP/RHP, hitter vs pitcher parks, lineup spots 1–3 vs 7–9 (PA model). Two-sample t on the group biases. Slice keys come from snapshot `context` — new slices need the context captured *from that day forward*, which is why capture context is deliberately rich.
 - **Probability calibration** (QS, W): any bucket whose forecast rate misses the realized rate by ≥ 6 points (n ≥ 25).
 - **Discrimination inversion**: the 70+ composite-score bucket must out-produce the <45 bucket (K for pitchers, TB for batters), or the score isn't ranking.
@@ -69,6 +79,7 @@ The ledger exists to improve the engines. The loop is **detect → localize → 
 | Knob slice (bias splits by applied modifier size) | That L2 modifier is mis-scaled | `parkAdjustment.ts`, `platoon.ts`, opp-log5 clamps in `forecast.ts` / `batterForecast.ts` (see [unified-rating-model.md](./unified-rating-model.md)) |
 | Context slice (home/away, platoon side) without a knob split | A modifier is *missing* or keyed wrong | same files — but check the identity/handedness path first |
 | Probability calibration gap | QS/W probability curves | `forecast.ts` probability section |
+| Over-spread (slope < 1) with clean bias | L1 spread — prior too light for that stat, or a log5/ratio modifier amplifying the tails (multiplicative-in-odds errors hit extreme players hardest) | prior strengths in `talentModel.ts` / `talent.ts`; that stat's log5 or clamp in the forecast layer |
 | Per-player persistent miss (worst-misses) | Talent inputs for that archetype (role change, rookie prior, injury) | talent layer + `playingTime.ts` |
 | High DNP rate | Playing-time / probables assumptions upstream of everything | capture is honest; look at scratch patterns in context |
 | Score-bucket inversion | Composite weighting at L3 | `batterRating.ts` / `rating.ts` weight vectors |
@@ -81,7 +92,7 @@ The knob slices work because capture stores **modifier attribution**: pitcher sn
 
 `src/lib/ledger/scorecard.ts`, served by `GET /api/admin/forecast/scorecard`. All metrics computed in app code over one joined query — adding a slice never needs a migration.
 
-- **Bias** (mean predicted − actual), **relative bias** (% of actual mean — comparable across stats), and **MAE** per stat per engine. Bias is the tuning signal; MAE is the noise floor.
+- **Bias** (mean predicted − actual), **relative bias** (% of actual mean — comparable across stats), **MAE**, and **calibration slope** (actual-on-predicted; spread honesty) per stat per engine. Bias is the tuning signal; MAE is the noise floor; slope is the over-confidence check.
 - **Score buckets** — realized production by predicted composite score (<45 / 45–55 / 55–70 / 70+): the discrimination view behind "does an 80 actually out-produce a 55?"
 - **Calibration** for probability forecasts (QS, W): predicted-probability buckets vs realized rates.
 - **Lead-day segments** — D−0 vs D−3 accuracy.

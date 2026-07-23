@@ -27,7 +27,7 @@ export interface TeamOffense {
   ops: number | null;              // regressed
   avg: number | null;              // regressed
   runsPerGame: number | null;      // raw current season (counting stat)
-  strikeOutRate: number | null;    // regressed — K / AB
+  strikeOutRate: number | null;    // regressed — K / PA (log5 consumers are per-PA)
   homeRunsPerGame: number | null;  // raw current season (counting stat)
   // vs LHP / RHP splits (all three rate fields regressed)
   vsLeft: { ops: number | null; avg: number | null; strikeOutRate: number | null } | null;
@@ -38,12 +38,15 @@ export interface TeamOffense {
 // League-mean priors and regression shape
 // ---------------------------------------------------------------------------
 
-// 2024 MLB team-line averages. Rough but close — the league anchor here
+// MLB team-line averages. Rough but close — the league anchor here
 // just needs to be stable, not perfectly calibrated. Updating once a
-// season is enough.
+// season is enough. K rate is per PA (MLB Stats API season aggregate,
+// 2026-07) — it MUST stay on the same denominator as `kRate()` below
+// and the log5 anchors in pitching/forecast.ts / talentModel.ts; see
+// docs/history.md "2026-07 — Ledger-driven calibration fixes".
 const LEAGUE_TEAM_OPS = 0.710;
 const LEAGUE_TEAM_AVG = 0.243;
-const LEAGUE_TEAM_K_RATE = 0.223;
+const LEAGUE_TEAM_K_RATE = 0.222;
 
 // Effective sample size for the league-mean prior, expressed in AB. ~200
 // AB ≈ one weekend series worth of team ABs, so a team with 600 AB (about
@@ -127,11 +130,19 @@ const n = (v: string | undefined): number | null => {
   return isNaN(f) ? null : f;
 };
 
+/**
+ * Team K rate per PLATE APPEARANCE. The denominator matters: this rate
+ * is the opponent side of a log5 whose other two inputs (pitcher
+ * kPerPA, league anchor) are per-PA. Using AB here inflated every
+ * opposing lineup's K-proneness by ~13% (league K/AB ≈ .25 vs K/PA ≈
+ * .22), which the forecast ledger surfaced as a +16% slate-wide
+ * pitcher-K over-forecast (2026-07).
+ */
 function kRate(raw: RawTeamStat): number | null {
   const k = raw.strikeOuts;
-  const ab = raw.atBats;
-  if (k == null || ab == null || ab === 0) return null;
-  return k / ab;
+  const pa = raw.plateAppearances;
+  if (k == null || pa == null || pa === 0) return null;
+  return k / pa;
 }
 
 interface ParsedSplitLine {

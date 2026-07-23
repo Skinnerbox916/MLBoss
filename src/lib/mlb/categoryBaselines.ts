@@ -165,10 +165,11 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     normRange: [0, 0.025],
     betterIs: 'higher',
   },
-  18: { // BB — stabilises ~120 PA. leagueMean refreshed 2026 (was 0.084).
-        //      BB rate has climbed notably; 2026 league BB/PA is ~0.094.
+  18: { // BB — stabilises ~120 PA. leagueMean refreshed 2026 (was 0.084),
+        //      re-refreshed 2026-07-23: the May value (.094) caught the
+        //      early-season walk spike; season-to-date settled at ~.089.
     label: 'BB',
-    leagueMean: 0.094,
+    leagueMean: 0.089,
     leaguePriorN: 80,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.walks / s.pa : null),

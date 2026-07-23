@@ -157,6 +157,20 @@ export async function capturePitcherSlate(
           mults: Object.fromEntries(
             Object.entries(forecast.multipliers).map(([k, m]) => [k, round3(m.multiplier)]),
           ),
+          // Joinability + candidate-confounder screen (2026-07, see
+          // docs/forecast-verification.md#snapshot-context): gamePk makes
+          // post-game facts (umpire, catcher, days of rest) recoverable at
+          // analysis time without pre-game fetches; the weather block
+          // freezes the FORECAST weather the model actually priced — it
+          // drifts until first pitch, so it can't be reconstructed later.
+          gamePk: game.gamePk,
+          gameTimeUtc: game.gameDate,
+          venueId: game.venue.mlbId,
+          throws: pp.talent.throws,
+          oppSpMlbId: opposing?.mlbId ?? null,
+          tempF: game.weather.temperature,
+          windMph: game.weather.windSpeed,
+          windDir: game.weather.windDirection,
         },
       });
     }
@@ -200,7 +214,7 @@ export async function captureBatterSlate(
   gameDate: string,
   games: EnrichedGame[],
 ): Promise<number> {
-  const byMlbId = new Map<number, ActiveBatter & { isHome: boolean }>();
+  const byMlbId = new Map<number, ActiveBatter & { isHome: boolean; game: EnrichedGame }>();
   for (const game of games) {
     if (!PREGAME_STATUSES.has(game.status)) continue;
     for (const isHome of [true, false]) {
@@ -213,6 +227,7 @@ export async function captureBatterSlate(
             name: entry.fullName,
             teamAbbr: team.abbreviation,
             isHome,
+            game,
           });
         }
       }
@@ -276,6 +291,20 @@ export async function captureBatterSlate(
         parkFactor: day.parkFactor ?? null,
         weatherFlag: day.weatherFlag ?? null,
         mods,
+        // Joinability + candidate-confounder screen (2026-07, see
+        // docs/forecast-verification.md#snapshot-context). On doubleheader
+        // days these describe game 1 (the dedup map keeps the first
+        // pregame game); the doubleHeader flag above lets the screen
+        // exclude those rows.
+        gamePk: batter.game.gamePk,
+        gameTimeUtc: batter.game.gameDate,
+        venueId: batter.game.venue.mlbId,
+        oppSpMlbId: (batter.isHome
+          ? batter.game.awayProbablePitcher
+          : batter.game.homeProbablePitcher)?.mlbId ?? null,
+        tempF: batter.game.weather.temperature,
+        windMph: batter.game.weather.windSpeed,
+        windDir: batter.game.weather.windDirection,
       },
     });
   }

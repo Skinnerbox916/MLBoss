@@ -41,6 +41,16 @@ export interface StatGrade {
   /** Standard error of the bias — the noise floor the findings test
    *  against. 0 when n < 2. */
   se: number;
+  /** Calibration slope: ACTUAL regressed on PREDICTED. If predictions
+   *  are honest conditional means the slope is exactly 1 — independent
+   *  of how noisy the stat is. < 1 ⇒ over-spread (predictions more
+   *  extreme than outcomes reward — the model over-trusts its own
+   *  signal); > 1 ⇒ under-spread (too timid). Orthogonal to bias: a
+   *  stat can have a clean mean and a dishonest spread, and vice versa.
+   *  Null when predictions barely vary or n < 3. */
+  slope: number | null;
+  /** Standard error of the slope (null with it). */
+  slopeSe: number | null;
   /** How many model versions this headline grade pools (live cohort). >1
    *  means the metric accumulated unbroken across a version bump that
    *  didn't touch it; 1 after a bump that did. Undefined on segmented
@@ -152,15 +162,37 @@ function gradeStat(rows: { pred: number; actual: number }[], stat: string): Stat
     ? rows.reduce((s, r) => s + (r.pred - r.actual - bias) ** 2, 0) / (n - 1)
     : 0;
   const actualMean = n ? aSum / n : 0;
+  const predMean = n ? pSum / n : 0;
+
+  // Calibration slope (actual ~ predicted, OLS) + its standard error.
+  // Guarded to null when the predictions carry no real spread to test —
+  // a near-constant predictor makes the slope numerically explosive and
+  // semantically empty.
+  let slope: number | null = null;
+  let slopeSe: number | null = null;
+  if (n >= 3) {
+    const sxx = rows.reduce((s, r) => s + (r.pred - predMean) ** 2, 0);
+    if (sxx > 1e-9) {
+      const sxy = rows.reduce((s, r) => s + (r.pred - predMean) * (r.actual - actualMean), 0);
+      const b = sxy / sxx;
+      const sse = rows.reduce(
+        (s, r) => s + (r.actual - actualMean - b * (r.pred - predMean)) ** 2, 0);
+      slope = round(b);
+      slopeSe = round(Math.sqrt(sse / (n - 2) / sxx), 4);
+    }
+  }
+
   return {
     stat,
     n,
-    predictedMean: round(n ? pSum / n : 0),
+    predictedMean: round(predMean),
     actualMean: round(actualMean),
     bias: round(bias),
     biasPct: Math.abs(actualMean) >= 0.05 ? round(bias / actualMean, 3) : null,
     mae: round(mae),
     se: round(n > 1 ? Math.sqrt(variance / n) : 0, 4),
+    slope,
+    slopeSe,
   };
 }
 
@@ -255,6 +287,34 @@ function biasFindings(engine: ForecastEngine, grades: StatGrade[], minN: number)
       engine,
       title: `${engine} ${t > 0 ? 'over' : 'under'}-forecasts ${g.stat.toUpperCase()} by ${Math.round(Math.abs(g.biasPct) * 100)}%`,
       detail: `predicted ${g.predictedMean} vs actual ${g.actualMean} per game (bias ${fmtSigned(g.bias)}, n=${g.n})`,
+    });
+  }
+  return out;
+}
+
+/** Calibration-slope findings: is each stat's prediction SPREAD honest,
+ *  independent of its mean? Tested as (slope − 1) against the slope's own
+ *  SE with the shared t-bars, plus a ±0.15 magnitude floor so trivial
+ *  mis-spread doesn't page. Over-spread points at the talent layer
+ *  trusting thin samples too much, or a multiplicative modifier
+ *  amplifying the tails (the 2026-07 K log5 bug was both). */
+function spreadFindings(engine: ForecastEngine, grades: StatGrade[], minN: number): Finding[] {
+  const out: Finding[] = [];
+  for (const g of grades) {
+    if (g.n < minN || g.slope === null || g.slopeSe === null || g.slopeSe <= 0) continue;
+    const dev = g.slope - 1;
+    const t = dev / g.slopeSe;
+    if (Math.abs(t) < T_WATCH || Math.abs(dev) < 0.15) continue;
+    const severity: Finding['severity'] =
+      Math.abs(t) >= T_FLAG && Math.abs(dev) >= 0.25 ? 'flag' : 'watch';
+    out.push({
+      severity,
+      engine,
+      title: `${engine} ${g.stat.toUpperCase()} forecasts ${dev < 0 ? 'over-spread' : 'under-spread'} (slope ${g.slope})`,
+      detail: `actual-on-predicted slope ${g.slope} ± ${g.slopeSe} vs 1.0 (n=${g.n}) — ` +
+        (dev < 0
+          ? 'predictions are more extreme than outcomes reward; the model over-trusts its own signal'
+          : 'predictions are too timid; the model under-uses real signal'),
     });
   }
   return out;
@@ -556,6 +616,7 @@ export async function buildScorecard(
     const minN =
       engine === 'batter-week' ? 150 : kind === 'batter-line' ? 300 : kind === 'pitcher-line' ? 50 : 30;
     findings.push(...biasFindings(engine, statGrades, minN));
+    findings.push(...spreadFindings(engine, statGrades, minN));
 
     // Scratch / bench rate — a playing-time forecast miss, not noise.
     // (For week windows this means zero games all week — IL / demotion —

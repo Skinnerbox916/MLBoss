@@ -132,8 +132,12 @@ const PROFILES: Profile[] = [
   {
     name: 'bad',
     desc: 'Back-end starter — high contact quality allowed, low K',
-    expectedTier: 'weak',
-    expectedScoreRange: [22, 38],
+    // Recalibrated 2026-07-23 (was weak / [22,38]): with the per-PA opp-K
+    // fix + anchor alignment this profile forecasts ~5.4 ERA on 4.3 K —
+    // a never-stream arm; 'bad' is the truthful tier. See docs/history.md
+    // "2026-07 — Ledger-driven calibration fixes".
+    expectedTier: 'bad',
+    expectedScoreRange: [20, 30],
     currentLine: STD_LINE(5.40, 6.8, 30, 6),
     priorLine:   STD_LINE(5.20, 7.0, 165, 28),
     currentSavant: STD_SAVANT(140, 100, 0.165, 0.090, 0.420, 0.46, 91.8, 2.0),

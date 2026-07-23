@@ -406,12 +406,15 @@ function StatTable({ title, stats, showPool }: { title: string; stats: StatGrade
             <th className="py-1 pr-4 font-normal cursor-help" title="95% confidence range on the bias. A bias smaller than this is indistinguishable from noise — wait for more data.">±95%</th>
             <th className="py-1 pr-4 font-normal cursor-help" title="Bias as a share of actual production — makes stats of different sizes comparable.">Bias %</th>
             <th className="py-1 pr-4 font-normal cursor-help" title="Mean absolute error: the typical size of a single-game miss, noise included. The floor bias is measured against.">MAE</th>
+            <th className="py-1 pr-4 font-normal cursor-help" title="Calibration slope: actual regressed on predicted. 1.00 = the spread of predictions is honest. Below 1 = over-spread (predictions more extreme than reality rewards — the model over-trusts its own signal); above 1 = too timid. Independent of bias. Red = significantly off 1.">Slope</th>
           </tr>
         </thead>
         <tbody>
           {stats.map(s => {
             // Same significance test the findings run: bias vs its noise floor.
             const significant = s.se > 0 && Math.abs(s.bias / s.se) >= 3 && s.biasPct !== null && Math.abs(s.biasPct) >= 0.05;
+            const slopeOff = s.slope !== null && s.slopeSe !== null && s.slopeSe > 0
+              && Math.abs((s.slope - 1) / s.slopeSe) >= 3 && Math.abs(s.slope - 1) >= 0.25;
             return (
             <tr key={s.stat} className="border-b border-border/40">
               <td className="py-1 pr-4 uppercase">{s.stat}</td>
@@ -427,6 +430,9 @@ function StatTable({ title, stats, showPool }: { title: string; stats: StatGrade
                 {s.biasPct === null ? '—' : `${fmtSigned(Math.round(s.biasPct * 100))}%`}
               </td>
               <td className="py-1 pr-4">{s.mae}</td>
+              <td className={`py-1 pr-4 ${slopeOff ? 'text-error-600' : ''}`}>
+                {s.slope === null ? '—' : s.slope.toFixed(2)}
+              </td>
             </tr>
             );
           })}

@@ -8,6 +8,18 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Ledger-driven calibration fixes (K denominator, PA starter share, BB anchor)
+
+First full pass of the forecast ledger's detect → localize → fix loop, from the 2026-07-23 scorecard (`MODEL_VERSION` 2026.07.23). Three unrelated-looking findings, three distinct root causes — recorded together because each one is a trap someone could reintroduce:
+
+**1. `TeamOffense.strikeOutRate` was K/AB fed into a per-PA log5.** The ledger flagged pitcher-start K +16% over-forecast (n=147) while IP, TBF, and H were nearly clean — so volume was innocent and the per-PA K rate itself was inflated ~13%. Modifier attribution cleared the knobs (every stored mult slate-averaged ≈ 1.0), and backing the log5 out gave a sane slate-average talent K% (~22.8%) — the corruption was the *opponent input*: `teams.ts` computed team K rate as `strikeOuts / atBats` (league ≈ .250) while `buildGameForecast` log5s it against per-PA quantities anchored at .221. Every opposing lineup looked ~13% more strikeout-prone than reality. Fixed at the source: `kRate()` is now K/PA, `LEAGUE_TEAM_K_RATE` and `LEAGUE_OPS_K_RATE` aligned to the per-PA league value. **Don't reintroduce:** any rate entering a log5 must state its denominator; K% without a denominator comment is a bug waiting to happen (K/AB ≈ 1.13 × K/PA — big enough to matter, small enough to survive eyeballing).
+
+**2. PA-by-spot curve read a slot-level table as starter-level.** The 2026.07.20 re-anchor fixed the curve's *level* using the sourced RotoGraphs table, but that table measures the **slot** — which keeps accruing PA via pinch-hitters and subs after the starter leaves. The graded population (posted-lineup starters) gets only a share, shrinking down the order. Signature in the ledger: monotone PA over-forecast, +0.19 at spot 1 → +0.40 at spot 9, surviving the 07-20 fix. Fixed with a `STARTER_SHARE` taper (0.987 → 0.937, least-squares from 708 graded starter-games) in `paBySpot.ts`; fallback 4.1 → 4.0. **Don't reintroduce:** re-anchoring the slot table to "PA per game started" semantics, or removing the share taper as redundant — the two factors have different sources and drift independently. See [projection.md#pa-by-lineup-spot](./projection.md#pa-by-lineup-spot).
+
+**3. `LEAGUE_BB_RATE` .094 → .089.** The 2026-05 refresh sourced BB% from a May season aggregate — but walk rates spike every April/May and settle over the summer; by late July the same MLB Stats API aggregate read .0894. The ledger's headline "+25% batter BB over-forecast" was itself mostly a cold-walk week (league BB% for the graded window was .0822 vs .0894 season) — the durable, sourced correction is only the anchor refresh. Synced in all four homes (talentModel, batterForecast, categoryBaselines stat 18, pitcher fallbacks). **Don't reintroduce:** single-month league-mean sourcing during the season's first half; prefer season-to-date aggregates late enough to wash out April, and note the fetch date.
+
+Methodology note for future ledger passes: before tuning a constant off a finding, (a) decompose rate × volume (the K flag looked like an IP problem and wasn't), (b) check the graded week against the league backdrop (the BB flag was half weather, i.e. sampling), (c) verify the actuals path itself before trusting a bias (the walk discrepancy was nearly diagnosed as a parser bug — it wasn't, but the check cost one query).
+
 ## 2026-07 — Stream-aware concessions + TBD-slot start inference
 
 Two compounding biases made the pitcher Game Plan concede 5 of 7 cats mid-week while the Boss Brief simultaneously said "stream 3 to catch up":

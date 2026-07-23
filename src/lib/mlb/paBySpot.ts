@@ -8,11 +8,19 @@
  * Calibration + sources: docs/projection.md#pa-by-lineup-spot
  */
 
-/** PA per game STARTED, lineup spots 1–9 (hard-sourced; see doc). */
-const PA_PER_GAME_STARTED = [4.65, 4.55, 4.43, 4.33, 4.24, 4.13, 4.01, 3.9, 3.77] as const;
+/** PA per game accrued by each lineup SLOT 1–9 (hard-sourced; see doc).
+ *  A slot's PA includes everyone who bats in it — the starter AND any
+ *  pinch-hitter / substitute who takes the spot after him. */
+const PA_PER_GAME_SLOT = [4.65, 4.55, 4.43, 4.33, 4.24, 4.13, 4.01, 3.9, 3.77] as const;
+
+/** Share of the slot's PA that goes to the STARTER at that slot
+ *  (estimated, ledger-derived; see doc). We forecast players in posted
+ *  lineups, so the starter is the population we grade — and starters
+ *  lose PA to substitutions, increasingly so down the order. */
+const STARTER_SHARE = [0.987, 0.981, 0.975, 0.968, 0.962, 0.956, 0.949, 0.943, 0.937] as const;
 
 /** No-signal fallback when the batting order is unknown (estimated; see doc). */
-export const PA_PER_GAME_NO_SPOT = 4.1;
+export const PA_PER_GAME_NO_SPOT = 4.0;
 
 /**
  * Expected PA per game for a batter starting at lineup `spot` (1–9).
@@ -22,7 +30,8 @@ export function expectedPAperGame(spot: number | null): number {
   if (spot == null || !Number.isFinite(spot) || spot < 1 || spot > 9) {
     return PA_PER_GAME_NO_SPOT;
   }
-  return PA_PER_GAME_STARTED[Math.round(spot) - 1];
+  const i = Math.round(spot) - 1;
+  return PA_PER_GAME_SLOT[i] * STARTER_SHARE[i];
 }
 
 /**

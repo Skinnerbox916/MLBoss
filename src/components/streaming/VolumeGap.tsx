@@ -8,6 +8,7 @@ import CapPill from '@/components/shared/CapPill';
 import type { LeagueLimits } from '@/lib/fantasy/limits';
 import type { PitcherTeamProjectionResponse } from '@/lib/hooks/usePitcherTeamProjection';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
+import { parseYahooIP } from '@/lib/utils';
 
 const STAT_ID_K = 42;
 const STAT_ID_W = 28;
@@ -38,9 +39,10 @@ interface CatRow {
   behind: boolean;
 }
 
-function parseStatStr(v: string | undefined): number {
+function parseStatStr(v: string | undefined, statId?: number): number {
   if (v === undefined || v === '') return 0;
-  const n = parseFloat(v);
+  // IP is thirds notation ("103.2" = 103⅔); the rest are plain decimals.
+  const n = statId === STAT_ID_IP ? parseYahooIP(v) : parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -127,8 +129,8 @@ export default function VolumeGap({
     : 'Projected end-of-week totals (matchup-to-date plus the rest-of-week forecast for your scheduled SPs).';
   const rows = useMemo<CatRow[]>(() => {
     return COUNTING_CATS.map(spec => {
-      const myMtd = parseStatStr(myStatsMap.get(spec.statId));
-      const oppMtd = parseStatStr(oppStatsMap.get(spec.statId));
+      const myMtd = parseStatStr(myStatsMap.get(spec.statId), spec.statId);
+      const oppMtd = parseStatStr(oppStatsMap.get(spec.statId), spec.statId);
       const myProj = projectedTotal(myMtd, myProjection, spec.statId);
       const oppProj = projectedTotal(oppMtd, oppProjection, spec.statId);
       const delta = myProj - oppProj;
@@ -147,7 +149,7 @@ export default function VolumeGap({
   const showIpCap = limits?.maxInningsPitched != null;
   const showGsCap = limits?.maxGamesStarted != null;
   const gsCapReached = showGsCap && parseStatStr(myUsedGs) >= limits!.maxGamesStarted!;
-  const ipCapReached = showIpCap && parseStatStr(myUsedIp) >= limits!.maxInningsPitched!;
+  const ipCapReached = showIpCap && parseStatStr(myUsedIp, STAT_ID_IP) >= limits!.maxInningsPitched!;
 
   const projectionAvailable = !!myProjection && !!oppProjection;
   const behindCount = rows.filter(r => r.behind).length;

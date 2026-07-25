@@ -118,10 +118,12 @@ Returns per-day breakdowns alongside the total so the UI can show "starts at 2B"
 Both routes filter their input roster (active batters / non-IL pitchers), fan out per-day games via `getGameDay`, and run the corresponding `projectXxxTeam` engine.
 
 The pitcher-team route additionally resolves each rostered pitcher to an MLB ID and computes their full `PitcherTalent` (SP-filtered current+prior season lines from [`getPitcherSeasonLines`](../src/lib/mlb/players.ts), plus overall current+prior lines from [`getPitcherOverallLines`](../src/lib/mlb/players.ts), plus current+prior Savant). Talent is passed on `ActivePitcher.talent` so the engine can dispatch by `role`:
-- starters match against probable starters in the day's slate via [`isLikelySamePlayer`](../src/lib/pitching/display.tsx) — pitchers with no probable contribute 0 to the SP path
+- starters match against probable starters in the day's slate via [`isLikelySamePlayer`](../src/lib/pitching/display.tsx) — pitchers with no probable contribute 0 to the SP path, except via TBD-slot inference (below)
 - relievers go through [`buildReliefWeekForecast`](../src/lib/pitching/forecast.ts) once per pitcher for the remaining-day window
 
 Today's already-concluded games are filtered out of the per-day slate before projection via the shared [`isStartConcluded`](../src/lib/mlb/gameState.ts) helper — otherwise a finished 1pm game double-counts the SP's expected IP against the cap at 7pm.
+
+**TBD-slot inference (roster path only).** MLB posts probables ~7-10 days out, so a matchup week's far end can hold a rostered starter's real turn as a game with an *unposted* slot. A starter with zero matched probables in the window claims his team's first such slot (`inferred: true`, one per arm, shared claim registry) — but only on a day whose slate is **≥50% unposted** (`isSlateUnposted`), never today. Inside the posting horizon an empty slot is a genuine TBD (bullpen game / undecided spot start), not a missing turn; claiming those inflated the Boss Card's "IP left" by ~60% on 2026-07-25. FA scoring passes no claim registry — streaming prices only confirmed starts. Rationale and the failure it caused: [history.md](./history.md).
 
 `useCorrectedMatchupAnalysis` runs four projections in parallel (my + opp × batter + pitcher counting cats), merges the per-cat projection records into one map per side, and hands them to `composeCorrectedRows`. See [recommendation-system.md](./recommendation-system.md) for what happens after.
 

@@ -96,6 +96,18 @@ export interface ActivePitcher {
    *  makes SV read "out of reach" for a roster that can't get saves. */
   seasonSaves?: number;
   seasonGames?: number;
+  /**
+   * Date (YYYY-MM-DD) on which Yahoo affirmatively says this pitcher starts,
+   * from `FreeAgentPlayer.starting_status`. Yahoo's feed names the starter
+   * ahead of MLB StatsAPI posting the probable, so when the sources disagree
+   * about tomorrow, this wins: the engine scores a start on this date even
+   * when the slate's probable slot is empty or names someone else.
+   *
+   * Requires `talent` — with no posted probable there is no stamped talent to
+   * read off the slate, so the caller must resolve it (see
+   * `useWeekPitcherScores`). Only ever covers the next game day.
+   */
+  confirmedStartDate?: string | null;
 }
 
 export interface PitcherProjectionDeps {
@@ -127,9 +139,16 @@ export interface PitcherProjectionDeps {
    * corrected margins need it (the 2026-07-21 "Gerrit Cole's Sunday start
    * = 0 IP" miss). When set, a starter with ZERO matched probables claims
    * his team's first unposted slot in the window (at most one per arm; the
-   * shared set stops two rostered arms from claiming the same slot).
+   * shared set stops two rostered arms from claiming the same slot) — but
+   * only on days MLB hasn't posted yet, per `isSlateUnposted`. Never today.
    * `projectPitcherTeam` passes a fresh set per run; the FA scoring path
    * omits it — streaming only prices CONFIRMED starts.
+   *
+   * The FA board fills its unposted-slot gap differently, via
+   * `ActivePitcher.confirmedStartDate`: Yahoo names the specific pitcher, so
+   * there is no claim to contend over. Rest-day inference stays roster-only
+   * precisely because it can't tell which of several same-team free agents
+   * owns the slot. See docs/streaming-page.md#yahoo-confirmed-starters.
    */
   tbdClaims?: Set<string>;
 }
@@ -252,6 +271,32 @@ function findStart(player: ActivePitcher, games: EnrichedGame[]): MatchedStart |
     return { game, pp, isHome };
   }
   return null;
+}
+
+/**
+ * Share of a day's probable slots MLB hasn't posted, above which the day
+ * counts as "not posted yet" for TBD-slot inference.
+ *
+ * The two populations are far apart, so the threshold isn't delicate: a day
+ * inside MLB's posting horizon carries only genuine TBDs — bullpen games,
+ * undecided spot starts — which run 0-10% of slots (2026-07-25 live: D+1 =
+ * 1/30, D+7 = 2/30); a day past the horizon is essentially 100% unposted
+ * (D+14 = 30/30). The horizon itself moves during the day and by team, which
+ * is exactly why this reads the slate instead of hardcoding a D+N cutoff.
+ */
+const UNPOSTED_SLATE_SHARE = 0.5;
+
+/** True when a day's slate is broadly unposted — MLB hasn't announced this
+ *  date's probables yet, so an empty slot means "unknown", not "bullpen
+ *  game". Gates TBD-slot inference (see `PitcherProjectionDeps.tbdClaims`). */
+function isSlateUnposted(games: EnrichedGame[]): boolean {
+  if (games.length === 0) return false;
+  let unposted = 0;
+  for (const g of games) {
+    if (!g.homeProbablePitcher) unposted++;
+    if (!g.awayProbablePitcher) unposted++;
+  }
+  return unposted / (games.length * 2) >= UNPOSTED_SLATE_SHARE;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +428,25 @@ export function projectPitcherPlayer(
     const match = findStart(player, games);
     const talent = match?.pp.talent ?? null;
     if (!match || !talent) {
+      // Yahoo-confirmed start (see `ActivePitcher.confirmedStartDate`): Yahoo
+      // says this arm starts today and MLB hasn't posted it — or posted
+      // someone else. Yahoo wins. Needs pre-resolved talent and a real game
+      // on this team's schedule; absent either, fall through to no-start.
+      const yahooConfirmed =
+        player.confirmedStartDate === day.date && !!player.talent && teamGames.length > 0;
+      if (yahooConfirmed) {
+        const game = teamGames[0];
+        const isHome = normalizeTeamAbbr(game.homeTeam.abbreviation) === normalizeTeamAbbr(player.teamAbbr);
+        perStart.push(scoreStart({
+          day,
+          game,
+          isHome,
+          talent: player.talent!,
+          doubleHeader,
+        }));
+        continue;
+      }
+
       // Off-day, opponent-side game, or talent not stamped (rookie call-up
       // we couldn't resolve). Either way: no contribution.
       perStart.push({
@@ -415,6 +479,11 @@ export function projectPitcherPlayer(
     const teamAbbr = normalizeTeamAbbr(player.teamAbbr);
     outer: for (const day of deps.days) {
       const games = deps.gamesByDate.get(day.date) ?? [];
+      // Only claim on days MLB hasn't posted yet (`isSlateUnposted`). Inside
+      // the posting horizon an empty slot is a real TBD — a bullpen game or
+      // an undecided spot start — and handing it to a rostered ace invents
+      // ~5.5 IP plus K/W/QS that never arrive.
+      if (day.isToday || !isSlateUnposted(games)) continue;
       for (const game of games) {
         const isHome = normalizeTeamAbbr(game.homeTeam.abbreviation) === teamAbbr;
         const isAway = normalizeTeamAbbr(game.awayTeam.abbreviation) === teamAbbr;

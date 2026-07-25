@@ -23,6 +23,16 @@ export function cn(...classes: ClassValue[]) {
 // parseFloat gives nonsense for arithmetic (58.1 - 34.2 = 23.9... but .toFixed gives 23.9).
 // Yahoo sometimes returns decimal fractions like "34.1125" for partial IP, so we normalize
 // via outs to get correct math. Both MLB Stats API and Yahoo use the same thirds convention.
+/**
+ * Yahoo/MLB IP string → decimal innings, for arithmetic that mixes a
+ * matchup-to-date IP total with a projected one (`103.2` is 103⅔ innings,
+ * not 103.2 — `parseFloat` silently under-counts by up to ⅔ IP per side).
+ * Display keeps the thirds notation; only math goes through here.
+ */
+export function parseYahooIP(ip: string): number {
+  return parseIPToOuts(ip) / 3;
+}
+
 export function parseIPToOuts(ip: string): number {
   const val = parseFloat(ip);
   if (isNaN(val)) return 0;

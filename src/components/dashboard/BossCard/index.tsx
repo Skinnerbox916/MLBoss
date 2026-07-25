@@ -61,15 +61,10 @@ export default function BossCard() {
   const myStandings = standings.find(s => s.team_key === teamKey);
   const oppStandings = standings.find(s => s.team_key === opponent?.team_key);
 
-  // Still fetched for the Boss Brief synthesis (which talks about
-  // "X starts left vs Y" style narration). The WeekProgress block
-  // itself no longer renders per-day starts.
-  const {
-    myStarts,
-    oppStarts,
-    myRemaining,
-    oppRemaining,
-  } = useWeekProbables(teamKey, opponent?.team_key, weekBounds);
+  // Start COUNTS only — the Boss Brief's cap-pressure and stream rules read
+  // "how many starts are still on deck". Rest-of-week IP comes from the
+  // projection below, never from these probables (see `BossBriefInput`).
+  const { myRemaining, oppRemaining } = useWeekProbables(teamKey, opponent?.team_key, weekBounds);
 
   // SP + RP IP projection per team — feeds the headline "IP left" number
   // and the SP/RP breakdown subline in the pitcher block. Independent
@@ -160,8 +155,10 @@ export default function BossCard() {
 
   const brief = getBossBrief({
     analysis,
-    myStarts,
-    oppStarts,
+    // Same `weeklyIp` the WeekProgress panel prints as "IP left" — the brief
+    // narrates the panel, it doesn't compute a second opinion.
+    myProjectedIp: myProjection?.weeklyIp,
+    oppProjectedIp: oppProjection?.weeklyIp,
     myRemaining,
     oppRemaining,
     limits,

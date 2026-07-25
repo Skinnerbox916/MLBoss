@@ -22,19 +22,42 @@ import { withCache, withCacheGated, CACHE_CATEGORIES } from './cache';
  * of pagination (it's what the streaming board cares about); RP is included
  * for completeness (some streamable long-relievers / openers).
  *
+ * `sort=AR` (Actual Rank) is required for the same reason it is on
+ * `getAvailableBatters`: Yahoo's default sort is OR (preseason rank), so the
+ * paginated slice is ordered by who was *expected* to be good in March. Arms
+ * with no preseason pedigree — call-ups, converted relievers, post-hype
+ * breakouts — sort below the page cap and never enter the pool at all.
+ * Measured live (469.l.108611, July 2026): 139 of the 400 AR-ranked SP free
+ * agents were absent from the OR-ranked 400, including the AR #10 SP. Those
+ * are precisely the streaming targets, so an OR-sorted pool systematically
+ * hides the players this board exists to find.
+ *
+ * Every row is hydrated with Yahoo's `starting_status` probable-starter flag.
+ * Yahoo's fantasy feed names tomorrow's starter before MLB StatsAPI posts the
+ * probable slot — when the two sources disagree about whether someone starts
+ * tomorrow, Yahoo wins. This rides along on the same requests, so it costs no
+ * extra Yahoo calls. The flag only ever covers the next game day; consumers
+ * gate on the echoed date. See docs/streaming-page.md#yahoo-confirmed-starters.
+ *
  * Semi-dynamic caching (5-minute TTL) — free agent pool shifts with transactions.
+ * Cache key is `-v2` because the AR switch changes pool membership, not just
+ * ordering; a stale OR-sorted entry is a materially different answer.
  */
 export async function getAvailablePitchers(userId: string, leagueKey: string): Promise<FreeAgentPlayer[]> {
   return withCacheGated(
-    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:fa-pitchers:${leagueKey}`,
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:fa-pitchers-v2:${leagueKey}`,
     CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,
     async () => {
       const api = new YahooFantasyAPI(userId);
+      // Yahoo clamps `starting_status` to the next game day regardless of the
+      // date we pass, so the value here is just a well-formed placeholder —
+      // the echoed date on each row is what consumers actually key off.
+      const ssDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const [spFa, rpFa, spW, rpW] = await Promise.all([
-        api.getLeaguePlayers(leagueKey, { position: 'SP', status: 'FA', maxPages: 16 }), // up to 400 SPs
-        api.getLeaguePlayers(leagueKey, { position: 'RP', status: 'FA', maxPages: 4 }),  // up to 100 RPs
-        api.getLeaguePlayers(leagueKey, { position: 'SP', status: 'W', maxPages: 4 }),   // waiver pool
-        api.getLeaguePlayers(leagueKey, { position: 'RP', status: 'W', maxPages: 2 }),
+        api.getLeaguePlayers(leagueKey, { position: 'SP', status: 'FA', sort: 'AR', maxPages: 16, startingStatusDate: ssDate }), // up to 400 SPs
+        api.getLeaguePlayers(leagueKey, { position: 'RP', status: 'FA', sort: 'AR', maxPages: 4, startingStatusDate: ssDate }),  // up to 100 RPs
+        api.getLeaguePlayers(leagueKey, { position: 'SP', status: 'W', sort: 'AR', maxPages: 4, startingStatusDate: ssDate }),   // waiver pool
+        api.getLeaguePlayers(leagueKey, { position: 'RP', status: 'W', sort: 'AR', maxPages: 2, startingStatusDate: ssDate }),
       ]);
       // Tag waiver-pool rows. Yahoo's row-level ownership block is empty
       // here, so the only place we know they're on waivers is the query

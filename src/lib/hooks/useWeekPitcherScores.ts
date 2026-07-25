@@ -17,6 +17,8 @@ import {
 import type { TeamOffense } from '@/lib/mlb/teams';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
+import { usePitcherTalent } from './usePitcherTalent';
+import { isLikelySamePlayer } from '@/lib/pitching/display';
 
 export interface WeekPitcherScore {
   player: FreeAgentPlayer;
@@ -97,6 +99,36 @@ export function useWeekPitcherScores(
     return m;
   }, [teamOffense]);
 
+  // Yahoo-confirmed starters the MLB slate doesn't back up. Yahoo names
+  // tomorrow's starter before StatsAPI posts the probable slot, and when the
+  // two disagree we believe Yahoo — but a pitcher with no posted probable has
+  // no talent stamped on the slate, so we resolve talent for just these arms.
+  // Gated on the date Yahoo ECHOED (it ignores the one we send and always
+  // answers for the next game day) intersected with the playable window, so a
+  // stale flag can never leak onto a later day.
+  const playableDateSet = useMemo(() => new Set(playableDays.map(d => d.date)), [playableDays]);
+
+  const yahooConfirmed = useMemo(() => {
+    const out = new Map<string, string>(); // player_key -> confirmed date
+    for (const fa of faPool) {
+      const ss = fa.starting_status;
+      if (!ss?.isStarting || !playableDateSet.has(ss.date)) continue;
+      const games = gamesByDate.get(ss.date) ?? [];
+      const posted = games.some(g =>
+        (g.homeProbablePitcher && isLikelySamePlayer(fa.name, g.homeProbablePitcher.name)) ||
+        (g.awayProbablePitcher && isLikelySamePlayer(fa.name, g.awayProbablePitcher.name)),
+      );
+      if (!posted) out.set(fa.player_key, ss.date);
+    }
+    return out;
+  }, [faPool, playableDateSet, gamesByDate]);
+
+  const needTalent = useMemo(
+    () => faPool.filter(fa => yahooConfirmed.has(fa.player_key)),
+    [faPool, yahooConfirmed],
+  );
+  const { getTalent } = usePitcherTalent(needTalent);
+
   const scored = useMemo<WeekPitcherScore[]>(() => {
     if (faPool.length === 0 || scoredCategories.length === 0) return [];
     if (playableDays.length === 0) return [];
@@ -111,11 +143,18 @@ export function useWeekPitcherScores(
 
     const out: WeekPitcherScore[] = [];
     for (const fa of faPool) {
+      const confirmedStartDate = yahooConfirmed.get(fa.player_key) ?? null;
       const active: ActivePitcher = {
         // Name-based matching — placeholder mlbId is fine.
         mlbId: 0,
         name: fa.name,
         teamAbbr: fa.editorial_team_abbr,
+        confirmedStartDate,
+        // Only the Yahoo-confirmed path needs pre-resolved talent; everyone
+        // else reads it off the matched probable.
+        talent: confirmedStartDate
+          ? getTalent(fa.name, fa.editorial_team_abbr)?.talent ?? null
+          : undefined,
       };
       const projection = projectPitcherPlayer(active, deps);
       // Drop FAs that have zero projected starts in the pickup window —
@@ -125,7 +164,7 @@ export function useWeekPitcherScores(
       out.push({ player: fa, projection });
     }
     return out;
-  }, [faPool, scoredCategories, playableDays, gamesByDate, teamOffenseMap, categoryWeights]);
+  }, [faPool, scoredCategories, playableDays, gamesByDate, teamOffenseMap, categoryWeights, yahooConfirmed, getTalent]);
 
   const isLoading = dayResults.some(d => d.isLoading);
 

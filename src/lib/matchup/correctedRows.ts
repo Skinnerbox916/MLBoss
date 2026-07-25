@@ -39,6 +39,7 @@
 import { rowHasComparablePair, type MatchupRow } from '@/components/shared/matchupRows';
 import type { ProjectedCategory } from '@/lib/hooks/useBatterTeamProjection';
 import { isProjectablePitcherStat } from '@/lib/projection/pitcherTeam';
+import { parseYahooIP } from '@/lib/utils';
 
 /** Yahoo stat_id for AVG — the one rate-stat case in standard leagues. */
 const STAT_ID_AVG = 3;
@@ -360,7 +361,10 @@ function deltaWinning(my: number, opp: number, betterIs: 'higher' | 'lower'): bo
 function parseRowValue(rows: MatchupRow[], statId: number, side: 'my' | 'opp'): number | null {
   const row = rows.find(r => r.statId === statId);
   if (!row) return null;
-  const v = parseFloat(side === 'my' ? row.myVal : row.oppVal);
+  const raw = side === 'my' ? row.myVal : row.oppVal;
+  // IP arrives in thirds notation ("103.2" = 103⅔). Every other stat is a
+  // plain decimal. Only IP feeds arithmetic here (the ratio denominators).
+  const v = statId === STAT_ID_IP ? parseYahooIP(raw) : parseFloat(raw);
   return Number.isFinite(v) ? v : null;
 }
 

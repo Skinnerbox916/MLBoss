@@ -228,6 +228,20 @@ export interface FreeAgentPlayer {
   average_draft_pick?: number;
   /** Fraction of leagues where player was drafted (0-1). */
   percent_drafted?: number;
+  /**
+   * Yahoo's own probable-starter flag, when requested via
+   * `startingStatusDate`. Yahoo's fantasy feed names the starter earlier
+   * than MLB StatsAPI posts the probable slot — this is how a next-day
+   * starter surfaces before the league schedule admits he exists.
+   *
+   * `date` is the date **Yahoo echoed back**, NOT the one we requested.
+   * Yahoo clamps `starting_status` to the next game day and ignores the
+   * requested date entirely (verified 2026-07-25: asking for 07-27 echoed
+   * 07-26). Consumers MUST gate on this echoed date — treating the flag as
+   * valid for the requested day would stamp tomorrow's starters onto every
+   * day of the week. See docs/streaming-page.md#yahoo-confirmed-starters.
+   */
+  starting_status?: { date: string; isStarting: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -1506,6 +1520,34 @@ export class YahooFantasyAPI {
   // =========================================================================
 
   /**
+   * Pull Yahoo's `starting_status` sub-resource off a player row.
+   *
+   * Shape: `{ starting_status: [ { coverage_type, date }, { is_starting } ] }`.
+   * Absent entirely when the player is not starting — absence is a "no",
+   * not "unknown". We keep the echoed `date` because Yahoo ignores the
+   * requested one (see the `starting_status` field docblock).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private parseStartingStatus(playerArray: any[]): { date: string; isStarting: boolean } | undefined {
+    for (const el of playerArray) {
+      if (!el || typeof el !== 'object' || !('starting_status' in el)) continue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ss = (el as any).starting_status;
+      if (!Array.isArray(ss)) continue;
+
+      let date: string | undefined;
+      let isStarting: boolean | undefined;
+      for (const part of ss) {
+        if (!part || typeof part !== 'object') continue;
+        if (typeof part.date === 'string') date = part.date;
+        if ('is_starting' in part) isStarting = String(part.is_starting) === '1';
+      }
+      if (date && isStarting !== undefined) return { date, isStarting };
+    }
+    return undefined;
+  }
+
+  /**
    * Parse the `percent_owned` and `draft_analysis` subresource blocks out of a
    * Yahoo player array. These live alongside the main props block as sibling
    * objects after `;out=percent_owned,draft_analysis` is requested.
@@ -1996,6 +2038,17 @@ export class YahooFantasyAPI {
        * low pre-season but are killing it now actually appear.
        */
       sort?: 'AR' | 'OR' | 'PTS' | 'A';
+      /**
+       * When set (YYYY-MM-DD), hydrate each row with Yahoo's
+       * `starting_status` probable-starter flag. Rides along on the same
+       * requests — no extra round trips.
+       *
+       * Yahoo IGNORES this date and always answers for the next game day;
+       * we send it because the response echoes back the date it actually
+       * answered for, which is the only trustworthy key. Read the echoed
+       * date off `FreeAgentPlayer.starting_status.date`.
+       */
+      startingStatusDate?: string;
     },
   ): Promise<FreeAgentPlayer[]> {
     const status = options?.status ?? 'A';
@@ -2003,6 +2056,8 @@ export class YahooFantasyAPI {
     const maxPages = options?.maxPages ?? 4; // 100 players max
     const posParam = options?.position ? `;position=${options.position}` : '';
     const sortParam = options?.sort ? `;sort=${options.sort}` : '';
+    const ssOut = options?.startingStatusDate ? ',starting_status' : '';
+    const ssDate = options?.startingStatusDate ? `;date=${options.startingStatusDate}` : '';
 
     const players: FreeAgentPlayer[] = [];
 
@@ -2010,7 +2065,7 @@ export class YahooFantasyAPI {
       const start = page * count;
       // ;out=percent_owned,draft_analysis hydrates each player with
       // market-confidence signals in the same request.
-      const endpoint = `/league/${leagueKey}/players;status=${status}${posParam}${sortParam};start=${start};count=${count};out=percent_owned,draft_analysis`;
+      const endpoint = `/league/${leagueKey}/players;status=${status}${posParam}${sortParam};start=${start};count=${count};out=percent_owned,draft_analysis${ssOut}${ssDate}`;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response = await this.request<YahooAPIResponse<any>>(endpoint);
@@ -2066,6 +2121,9 @@ export class YahooFantasyAPI {
         const waiverDate: string | undefined = undefined;
 
         const market = this.parsePlayerMarketSignals(playerArray);
+        const startingStatus = options?.startingStatusDate
+          ? this.parseStartingStatus(playerArray)
+          : undefined;
 
         players.push({
           player_key: playerProps.player_key ?? '',
@@ -2084,6 +2142,7 @@ export class YahooFantasyAPI {
           percent_owned: market.percent_owned,
           average_draft_pick: market.average_draft_pick,
           percent_drafted: market.percent_drafted,
+          starting_status: startingStatus,
         });
         foundAny = true;
       }

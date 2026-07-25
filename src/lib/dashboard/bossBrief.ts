@@ -1,6 +1,6 @@
 import type { AnalyzedMatchupRow, MatchupAnalysis } from '@/lib/matchup/analysis';
 import type { LeagueLimits } from '@/lib/fantasy/limits';
-import type { DayProbables } from '@/lib/hooks/useWeekProbables';
+import { parseYahooIP } from '@/lib/utils';
 
 export interface BossBriefInput {
   /**
@@ -11,8 +11,17 @@ export interface BossBriefInput {
    * the rail highlight.
    */
   analysis: MatchupAnalysis;
-  myStarts: DayProbables[];
-  oppStarts: DayProbables[];
+  /**
+   * Rest-of-week projected IP per side (`PitcherTeamProjectionResponse.
+   * weeklyIp`) — the SAME number `WeekProgress` prints as "IP left" two
+   * lines above the brief. Undefined while the projections load, which
+   * mutes the volume rule rather than narrating a number the panel
+   * contradicts. Boss Brief must never re-derive rest-of-week volume from
+   * probables: that fork is what let the card claim "~45 IP left" and
+   * "projected for 125.5 IP" (= 103.2 + 22.3) in one render.
+   */
+  myProjectedIp?: number;
+  oppProjectedIp?: number;
   myRemaining: number;
   oppRemaining: number;
   limits?: LeagueLimits;
@@ -91,31 +100,17 @@ export function getBossBrief(input: BossBriefInput): BossBriefOutput | null {
   // the week. Pitching stats are cumulative; the head-to-head on a given day
   // matters less than the end-of-week IP gap.
   const ipRow = allRows.find(r => r.name === 'IP');
-  const myCurrentIp = ipRow ? parseFloat(ipRow.myVal) : 0;
-  const oppCurrentIp = ipRow ? parseFloat(ipRow.oppVal) : 0;
+  const myCurrentIp = ipRow ? parseYahooIP(ipRow.myVal) : 0;
+  const oppCurrentIp = ipRow ? parseYahooIP(ipRow.oppVal) : 0;
 
-  const calculateRemainingIp = (starts: DayProbables[]) => {
-    return starts
-      .filter(d => d.day.isRemaining)
-      .reduce((sum, d) => {
-        const dayIp = d.starts.reduce((daySum, s) => {
-          // Use talent-based ipPerStart if available; fall back to league avg.
-          return daySum + (s.pitcher.talent?.ipPerStart ?? 5.4);
-        }, 0);
-        return sum + dayIp;
-      }, 0);
-  };
-
-  const myRemainingIp = calculateRemainingIp(input.myStarts);
-  const oppRemainingIp = calculateRemainingIp(input.oppStarts);
-
-  const myTotalProjectedIp = myCurrentIp + myRemainingIp;
-  const oppTotalProjectedIp = oppCurrentIp + oppRemainingIp;
+  const myTotalProjectedIp = myCurrentIp + (input.myProjectedIp ?? 0);
+  const oppTotalProjectedIp = oppCurrentIp + (input.oppProjectedIp ?? 0);
   const ipGap = oppTotalProjectedIp - myTotalProjectedIp;
+  const hasProjections = input.myProjectedIp !== undefined && input.oppProjectedIp !== undefined;
 
   const losingCountingPit = pitchingRows.filter(r => r.countsTowardRecord && r.winning === false && (r.name === 'K' || r.name === 'W' || r.name === 'QS' || r.name === 'IP'));
 
-  if (ipGap > 5.0 && losingCountingPit.length > 0) {
+  if (hasProjections && ipGap > 5.0 && losingCountingPit.length > 0) {
     const streamersNeeded = Math.ceil(ipGap / 5.4);
     return {
       text: `Volume Gap — You're projected for ${myTotalProjectedIp.toFixed(1)} IP vs Opponent's ${oppTotalProjectedIp.toFixed(1)} IP. You likely need ${streamersNeeded}+ streamers to catch up in ${joinLabels(losingCountingPit)}.`,

@@ -137,6 +137,30 @@ The first-initial gate stops same-team-same-surname collisions (Lopez × 2, Ure�
 
 **Future improvement:** if we ever sync Yahoo `player_id` ↔ MLB `id`, this name-based matching becomes unnecessary.
 
+## Free-agent pool sort
+
+`getAvailablePitchers` passes `sort=AR` (Actual Rank), matching `getAvailableBatters`. Yahoo's default is `OR` — **preseason** rank — so an OR-sorted page cap returns whoever was expected to be good in March. Arms with no preseason pedigree (call-ups, converted relievers, post-hype breakouts) sort below the cap and never enter the pool at all.
+
+Measured live (469.l.108611, 2026-07-25): of the 400 AR-ranked SP free agents, **139 were absent from the OR-ranked 400** — including the AR #10 SP. Those are exactly the players a streaming board exists to find, so an OR-sorted pool systematically hides its own subject matter. The pool cache key carries `-v2` because this changes membership, not just ordering.
+
+## Yahoo-confirmed starters
+
+Yahoo's fantasy feed names tomorrow's starter **before** MLB StatsAPI posts the probable slot. When the sources disagree about whether someone starts tomorrow, **Yahoo wins**.
+
+`getAvailablePitchers` hydrates every row with Yahoo's `starting_status` sub-resource, which rides along on the FA sweep's existing requests — no extra Yahoo calls against the ~60-100/hr budget. `FreeAgentPlayer.starting_status` is `{ date, isStarting }`.
+
+**The `date` is the one Yahoo echoed back, not the one we requested.** Yahoo clamps `starting_status` to the next game day and ignores the requested date entirely — verified 2026-07-25: asking for `2026-07-27` echoed `2026-07-26`, and two MLB-posted 7/27 starters came back absent. Consumers **must** gate on the echoed date; trusting the requested date would stamp tomorrow's starters onto every day of the streaming window. Practically this makes the flag a **D+1-only** signal; D+2 and beyond still depend on posted MLB probables.
+
+Flow, in [useWeekPitcherScores](../src/lib/hooks/useWeekPitcherScores.ts):
+
+1. Keep FAs whose echoed `starting_status.date` falls inside the playable window and who have **no** posted probable that day (`isLikelySamePlayer` against the slate).
+2. Resolve talent for just those arms via `usePitcherTalent` — with no posted probable there is no talent stamped on the slate to read off, which is the one thing the normal FA path depends on.
+3. Pass `confirmedStartDate` + `talent` on `ActivePitcher`; [`projectPitcherPlayer`](../src/lib/projection/pitcherTeam.ts) scores a start against the team's real game that day.
+
+This is a **second source**, not the rest-day inference the roster path uses. It names a specific pitcher, so it needs no `tbdClaims` contention registry — the rest-day TBD-slot inference documented on `PitcherProjectionDeps.tbdClaims` remains roster-only. Worked example: 2026-07-26, KC's probable slot was TBD in both MLB and ESPN while four KC starters sat in the FA pool (Lugo, Cameron, Avila, Dobnak) with rest patterns that pointed at three different arms. A rest-day heuristic would have handed the slot to the wrong pitcher; Yahoo flagged Avila alone.
+
+**Known gap:** when Yahoo contradicts a posted MLB probable, the Yahoo-named starter gains his start but the displaced MLB starter is not suppressed on other surfaces (`/lineup`, roster projection) — those still read the posted slate. Late-scratch handling across surfaces is follow-up work.
+
 ## Data pipeline
 
 | Source | Hook | Endpoint | TTL | What it gives us |

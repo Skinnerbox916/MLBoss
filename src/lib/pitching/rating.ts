@@ -123,6 +123,16 @@ interface NormWindow {
   formatExpected: (v: number) => string;
 }
 
+// Centering contract (2026-07-25): each window is centered on what the
+// forecast layer outputs for a league-average talent vector (the
+// league-baselines.md anchors: 22.1% K, 8.9% BB, .368 contact-xwOBA,
+// 5.4 IP/start), so a league-average starter composites to ~50 and the
+// "50 = neutral" score contract holds. The smoke harness's
+// `leagueAverage` profile locks this — if you move a window or a
+// forecast anchor, run /api/admin/test-pitcher-eval and keep that
+// profile inside 46-54. Widths set the score-points-per-unit exchange
+// rate between categories; change a width only with a reason.
+// Rationale: docs/unified-rating-model.md#layer-3--pitcherrating.
 const PITCHER_NORM: Record<number, NormWindow> = {
   // QS — P(QS). The forecast layer shrinks its raw heuristic toward the
   // 0.40 league base (output range ~0.18-0.73), so the window brackets
@@ -131,9 +141,13 @@ const PITCHER_NORM: Record<number, NormWindow> = {
     label: 'QS', betterIs: 'higher', worst: 0.15, best: 0.65,
     formatExpected: (v) => `${(v * 100).toFixed(0)}% QS`,
   },
-  // K — per-game expected K count. Window 3.5 (low) → 9.0 (elite).
+  // K — per-game expected K count. League-average forecast is ~5.1 K
+  // (5.4 IP × 4.3 PA/IP × .221 K/PA); window centers there. The old
+  // 3.5→9.0 window was centered at 6.25 with an unreachable ceiling
+  // (the model's ace archetype forecasts ~7.8 K), which dragged every
+  // normal K rate to ~0.30 and skewed the whole scale ~4 points low.
   42: {
-    label: 'K', betterIs: 'higher', worst: 3.5, best: 9.0,
+    label: 'K', betterIs: 'higher', worst: 2.4, best: 7.9,
     formatExpected: (v) => `${v.toFixed(1)} K`,
   },
   // W — P(W) from the decomposed P(team win) × P(credit) model (typical
@@ -143,14 +157,19 @@ const PITCHER_NORM: Record<number, NormWindow> = {
     label: 'W', betterIs: 'higher', worst: 0.20, best: 0.48,
     formatExpected: (v) => `${(v * 100).toFixed(0)}% W`,
   },
-  // ERA — per-game expected ERA. Window 5.50 (worst) → 2.30 (best).
+  // ERA — per-game expected ERA. Centered at 4.10, the model's output
+  // for league-average talent (xwobaToXera's .318 → 4.20 anchor lands
+  // slightly lower after composition; the harness leagueAverage profile
+  // measures 4.08-4.15).
   26: {
-    label: 'ERA', betterIs: 'lower', worst: 5.50, best: 2.30,
+    label: 'ERA', betterIs: 'lower', worst: 5.70, best: 2.50,
     formatExpected: (v) => `${v.toFixed(2)} ERA`,
   },
-  // WHIP — per-game expected WHIP. Window 1.55 → 0.95.
+  // WHIP — per-game expected WHIP. Centered at 1.35, the model's output
+  // for league-average talent ((BB + H)/IP composes to ~1.34 at the
+  // league anchors).
   27: {
-    label: 'WHIP', betterIs: 'lower', worst: 1.55, best: 0.95,
+    label: 'WHIP', betterIs: 'lower', worst: 1.65, best: 1.05,
     formatExpected: (v) => `${v.toFixed(2)} WHIP`,
   },
   // IP — per-game expected IP. Window 4.5 → 6.0.

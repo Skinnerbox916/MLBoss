@@ -276,17 +276,18 @@ function tierFromScore(score: number): PitcherTier {
 }
 ```
 
-Sub-score normalization windows (drives the per-cat color strips on the breakdown panel):
+Sub-score normalization windows (drives the per-cat color strips on the breakdown panel). Values live in `PITCHER_NORM` ([pitching/rating.ts](../src/lib/pitching/rating.ts)); this table lists projection sources only.
 
-| Sub-score | Projection source | Normalization window |
-|---|---|---|
-| **QS** | `probabilities.qs` | 0.15 → 0.65 |
-| **K** | `expectedPerGame.k` | 3.5 → 9.0 |
-| **W** | `probabilities.w` | 0.20 → 0.48 |
-| **ERA** | `expectedERA` | 5.50 → 2.30 (lower is better) |
-| **WHIP** | derived from `expectedPerPA.bbPerPA` and `expectedPerPA.baa` | 1.55 → 0.95 (lower is better) |
+| Sub-score | Projection source |
+|---|---|
+| **QS** | `probabilities.qs` |
+| **K** | `expectedPerGame.k` |
+| **W** | `probabilities.w` |
+| **ERA** | `expectedERA` (lower is better) |
+| **WHIP** | derived from `expectedPerPA.bbPerPA` and `expectedPerPA.baa` (lower is better) |
+| **IP** | `expectedPerGame.ip` |
 
-The QS/W windows bracket the probability output ranges set by the calibration in [Start probabilities](#start-probabilities) — retune them together.
+**Centering contract (2026-07):** each window is centered on the forecast layer's output for a league-average talent vector (the [league-baselines.md](./league-baselines.md) anchors), so a league-average starter composites to ~50 and the "50 = neutral" score contract holds — with two documented exceptions: IP is deliberately centered low (the IP/start distribution is left-skewed; a 5.4-IP league-average arm reads 0.60 because that's "clearly good for an IP-counting league"), and the QS/W windows bracket the probability output ranges set by the calibration in [Start probabilities](#start-probabilities) — retune those together. The `leagueAverage` profile in the smoke harness locks the composite: move a window or a forecast anchor and the other must move with it. Before 2026-07 the K window was centered ~1.1 K/start high with an unreachable ceiling, which skewed the whole scale ~7 points low (league average read 43, "Weak") — see [history.md](./history.md#2026-07--pitcher-score-scale-recentered-league-average--50).
 
 ## Regime-shift probe (talent layer)
 
@@ -469,7 +470,8 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | `W_BB`, `W_HR` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | FanGraphs 2024 wOBA values for BB and HR |
 | Velocity slope (down / up) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | -1 mph YoY ≈ 5% perf drop; +1 mph ≈ 3% lift (asymmetry is empirically motivated) |
 | Velocity multiplier cap | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Single-factor cap on composite influence — but velocity is informational only now (regime probe absorbs the signal) |
-| `tierFromScore` thresholds | [pitching/rating.ts](../src/lib/pitching/rating.ts) | Score boundaries between ace/tough/avg/weak/bad |
+| `tierFromScore` thresholds | [pitching/rating.ts](../src/lib/pitching/rating.ts) | Score boundaries between ace/tough/avg/weak/bad. The 'average' band (42-61) centers on ~51.5 — consistent with the recentered scale where league-average talent scores ~50 |
+| `PITCHER_NORM` windows | [pitching/rating.ts](../src/lib/pitching/rating.ts) | Per-cat normalization windows; centered so league-average talent composites to ~50 (see [§Layer 3 centering contract](#layer-3--pitcherrating)). Widths set the score-points-per-unit exchange rate between categories. Locked by the harness `leagueAverage` profile |
 | P(W) model (`PYTH_EXP`, `HOME_ODDS`, `W_CREDIT_BASE/PER_IP`, `runsFactor`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Pythagorean odds + IP-linked credit share; ledger-anchored 2026-07, n=188 starts — see [§Start probabilities](#start-probabilities) |
 | `QS_BASE`, `QS_SPREAD` | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Raw QS heuristic shrunk toward league base; tails were ~3× over-spread — see [§Start probabilities](#start-probabilities) |
 | `PA_FULL_TRUST` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Effective PA for full sample-confidence; see [league-baselines.md](./league-baselines.md) |

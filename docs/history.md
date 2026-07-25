@@ -8,6 +8,52 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — Next-week matchup projections stopped assuming both rosters stand pat
+
+Next-week pitcher columns were pure current-roster projections on both sides. In a league where the top manager adds 3.2 starters a week and the bottom one adds none, that compared a streamer's roster to a stand-pat roster and called it a matchup forecast — the user's own 83 projected IP understated his week by ~15, and an opponent who streams was invisible. Streaming entered the pipeline in exactly one place, `streamCapacity`, which is my-side-only by construction (it models a lever, not a prediction) and never touches displayed values.
+
+**Replaced with** `computeTeamStreamRates` + `applyExpectedStreams` ([streamVolume.ts](../src/lib/projection/streamVolume.ts)): a recency-weighted (3-week half-life) SP-adds-per-week rate per team from the league transaction feed, capped by `maxWeeklyAdds`, folded into a projected pitcher week at league-average per-start output including the ERA/WHIP numerator and denominator. Verified against the reference league 2026-07-25: 0 → 3.23 expected starts/week across ten managers, the dead team at 0, the user at 2.70.
+
+**Scope, corrected the same day.** The first cut applied it to next-week surfaces only, reasoning that mid-week has matchup-to-date plus `streamCapacity`. The points-parity audit exposed the flaw: points' only H2H surface *is* the current-week marquee, so "next-week only" left the identical blind spot open in the other scoring mode — and `includeFA=0` on the opponent's points projection is the same stand-pat assumption by another name. The double-count risk was never about the opponent at all; it was about pricing MY expected adds into rows that `streamCapacity` already softens. Final rule, split by SIDE rather than by surface:
+
+- **Opponent: always.** Every forward projection of them carries their expected streams — pro-rated over remaining days mid-week (`proRateStreamStarts`), full week on the pivot. Nothing else models their adds, mid-week included, so there is nothing to double-count against. This is what makes the Boss Card's "opp IP left" and the points marquee's projected final honest about a manager who streams daily.
+- **Me: pivot only.** Mid-week my remaining adds are a lever, already represented by `streamCapacity` (reachability on losing rows, capped at even). On the pivot they go into the rows and capacity drops to the residual (cap − expected).
+
+Points follows the identical rate and pro-rating (shared helpers) with a points-native per-start anchor — the FA pool's own mean expected points per start (`faStartPointsAvg`), never a constant, because scoring profiles differ too much between leagues. See [points-leagues.md](./points-leagues.md#opponent-stream-volume).
+
+Don't reintroduce / don't "simplify" to:
+
+- **Roster-only pitcher columns on either side.** The stand-pat assumption is not neutral — it is wrong by a different amount for every manager, which is exactly the error a matchup comparison cannot absorb.
+- **Capacity-based estimates ("assume everyone burns their add cap").** Considered and rejected: it can't distinguish a streamer from an absentee, so it flips real leads into false toss-ups. Demonstrated behavior discriminates; that's the whole value.
+- **My expected streams mid-week.** That IS the double-count `streamCapacity` already covers. The asymmetry is deliberate and load-bearing, not an oversight to tidy up.
+- **Full-cap `streamCapacity` on the pivot.** With my expected streams inside the pivot's rows, capacity must be the residual. Restoring the full cap re-softens deficits with moves already priced in. Mid-week it correctly stays the full remaining budget.
+- **A hardcoded points-per-start constant** for the points side. Two leagues with identical rosters value a start completely differently; the anchor has to come from the priced FA pool.
+
+## 2026-07 — Dashboard reference grid rebuilt on a time axis
+
+The reference grid had accumulated four problems that only show up when you read the rendered page instead of the card list (2026-07-25):
+
+1. **The same player twice.** `LineupIssuesCard` and `PlayerUpdatesCard` read the same `useRoster` fetch and sat side by side; a DTD arm in the active lineup was an "issue" in one and a "flag" in the other. **Merged into `LineupRosterCard`** — fixes over watch-list, ordering carries the meaning.
+2. **`WaiversCard` sampled an unranked FA pool.** Six names by ownership, no pricing, no incumbent comparison — value-free by the app's own standard, and /streaming and /roster already price that pool in native units. **Trimmed to process facts** (priority, pending claims) plus a route.
+3. **Dead space inside cards.** A `row-span-2` card was stretched by `h-full` to the sum of the rows it spanned, so `NextWeekCard`'s nine short rows rendered ~300px of empty interior next to a tall Recent Activity. **Fixed with `self-start`** on every card: height follows content, gaps land between cards.
+4. **No grouping.** Two different opponents (this week's scouting, next week's projection) at equal weight in adjacent columns, and league-transaction noise weighted like a lineup emergency. **Ordered as a time axis** — today → this week → housekeeping → next week — mirroring how the five routes are ordered by decision horizon. `NextWeekCard` became the full-width closing row with batting and pitching side by side (no tab click to see half the matchup); points got `PointsNextWeekCard` so the mode isn't left without a forward surface — but at grid size, not full width: its content is three numbers, and stretching it would recreate the dead space this pass removed. Parity is of grammar, not geometry.
+
+**Don't** reintroduce a separate roster-health card next to the lineup-issues card (they share a fetch and a subject), a "top available" list on the dashboard (unranked pool samples are not value), or `h-full`-stretched cards. Card-height debugging starts at `self-start`, not at padding.
+
+## 2026-07 — "This Week" projection card cut from the dashboard
+
+`SeasonComparisonCard` rendered the same `MatchupProjectionCard` as `NextWeekCard` with `targetWeek="current"`: both sides' projected category totals for the in-progress matchup. It had no readable interpretation. Mid-week the corrected projection is a blend of matchup-to-date + rest-of-week, so the card either restated the live scoreboard (already the `BossCard` marquee's job, with margins and a tactical line on top) or — read as "what we expected this week" — contradicted results that had already happened. Deleted along with the now-single-use `MatchupProjectionCard` wrapper, which was folded into `NextWeekCard`. Card titles also dropped the `— Week NN` suffix; these are outlook surfaces, not week logs.
+
+**Don't reintroduce** a current-week twin of the next-week projection card. Live matchup state belongs to `BossCard` / the Game Plan panels; a start-of-week snapshot belongs to the forecast ledger (`/admin/forecast`), not the dashboard. `useCorrectedMatchupAnalysis(..., { targetWeek: 'current' })` is still the right hook for *decision* surfaces (Lineup, Streaming) — it's the descriptive card that was wrong.
+
+## 2026-07 — Pitcher score scale recentered (league average = 50)
+
+2026-07-25 (`MODEL_VERSION` 2026.07.25.2). A league-average-everything starter (league-baselines.md anchors: 22.1% K, 8.9% BB, .368 xwOBACON, 5.4 IP/start) composited to ~43 — tier "Weak" — breaking the documented "50 = neutral" contract and making every roster/streaming surface read average arms as droppable (the surfaced case: McClanahan, dead-average inputs + short outings, scored 39 "Weak" while a true league-average arm scored barely higher). Root cause: the `PITCHER_NORM` K window (3.5→9.0) was centered at 6.25 K/start when the model forecasts ~5.1 for league-average talent, with a ceiling the model's own ace archetype can't reach (~7.8); ERA and WHIP windows were centered smaller amounts high. The IP window had been recentered for exactly this reason earlier — the fix never propagated to the other windows.
+
+Recentered K/ERA/WHIP on the model's league-average *output* (K 2.4→7.9, ERA 5.70→2.50, WHIP 1.65→1.05), widths preserved so per-cat exchange rates didn't move. QS/W windows untouched (they bracket the calibrated probability ranges — see the W/QS entry below); IP untouched (deliberately low-centered, left-skewed distribution). Every pitcher score shifted +6-9 uniformly; ordering unchanged; **no forecast quantity changed** — the ledger's per-stat grading pools straight through this bump, only the composite score segments (scorecard discrimination buckets now key on the `score` cohort).
+
+Guard rails added so this can't drift silently again: a `leagueAverage` profile in the smoke harness locks the composite to 46-54, and `PITCHER_NORM` is now in the calibration-anchors table. **Don't** re-widen a window toward "aspirational" bests (9 K/start) — windows bracket what the *forecast layer outputs*, not raw MLB stat ranges; if a window looks wrong, first check what the forecast produces for league-average talent, then move window and anchor together.
+
 ## 2026-07 — W/QS probability recalibration
 
 Second ledger pass (2026-07-25, `MODEL_VERSION` 2026.07.25), from the first 188 graded pitcher starts. The scorecard flagged both start probabilities; pulling the raw snapshot rows and fitting properly showed two different diseases:

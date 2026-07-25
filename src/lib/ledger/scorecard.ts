@@ -655,7 +655,10 @@ export async function buildScorecard(
       card.qsCalibration = calibrate(cohortRows('qs').map(r => ({ p: r.predicted.qs ?? 0, hit: isQs(r.pitching!) })));
       card.wCalibration = calibrate(cohortRows('w').map(r => ({ p: r.predicted.w ?? 0, hit: (r.pitching!.w ?? 0) > 0 })));
       card.worstMisses = playerMisses(played, ['k', 'er'], 'pit', 3);
-      card.scoreBuckets = scoreBuckets(played, 'pit', [
+      // Buckets are absolute score bands, so they segment on the 'score'
+      // cohort — a scale recenter (e.g. 2026.07.25.2) must not pool
+      // pre/post scores into the same 70+/<45 bands.
+      card.scoreBuckets = scoreBuckets(cohortRows('score'), 'pit', [
         ['k', l => l.k ?? 0],
         ['er', l => l.er ?? 0],
         ['qsRate', l => (isQs(l) ? 1 : 0)],
@@ -717,7 +720,9 @@ export async function buildScorecard(
     if (engine === 'batter-day') {
       // PA bias isolates the playing-time model; TB/K biases the rate model.
       card.worstMisses = playerMisses(played, ['pa', 'tb', 'k'], 'bat', 5);
-      card.scoreBuckets = scoreBuckets(played, 'bat', [
+      // Same 'score' cohort keying as the pitcher buckets; with no batter
+      // 'score' changelog entries this pools everything (no-op today).
+      card.scoreBuckets = scoreBuckets(cohortRows('score'), 'bat', [
         ['tb', l => l.tb ?? 0],
         ['r+rbi', l => (l.r ?? 0) + (l.rbi ?? 0)],
       ]);

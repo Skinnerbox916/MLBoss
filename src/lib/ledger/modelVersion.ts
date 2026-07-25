@@ -17,11 +17,12 @@ import type { ForecastEngine } from './capture';
  * The manifest below is what lets it tell the two apart. See
  * docs/forecast-verification.md#model-versions.
  *
- * Bump `MODEL_VERSION` (zero-padded YYYY.MM.DD so string order = time order)
+ * Bump `MODEL_VERSION` (zero-padded YYYY.MM.DD so string order = time order;
+ * a second bump on the same day appends '.2', which still string-sorts after)
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.07.25';
+export const MODEL_VERSION = '2026.07.25.2';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -84,6 +85,22 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
     touched: [
       { engine: 'pitcher-start', stats: ['qs', 'w'] },
       { engine: 'points-pitcher-start', stats: '*' },
+    ],
+  },
+  {
+    version: '2026.07.25.2',
+    date: '2026-07-25',
+    summary:
+      'Pitcher 0-100 score scale recentered (docs/history.md "2026-07 — Pitcher score scale ' +
+      'recentered"): the K/ERA/WHIP normalization windows in PITCHER_NORM were miscentered ' +
+      '(K window midpoint 6.25 K/start vs the ~5.1 the model forecasts for league-average ' +
+      'talent), so a league-average starter composited to ~43, breaking the "50 = neutral" ' +
+      'contract. Windows recentered on the model\'s league-average output, widths preserved — ' +
+      'every pitcher score shifts +6-9 uniformly, ordering unchanged. NO forecast quantity ' +
+      'changed: k/bb/h/hr/er/ip/qs/w all keep pooling. Only the composite score (and the ' +
+      'discrimination buckets built on it) segments at this bump.',
+    touched: [
+      { engine: 'pitcher-start', stats: ['score'] },
     ],
   },
 ];

@@ -16,25 +16,37 @@
  * distribution still lands at the expected score / tier across the
  * archetype range:
  *
+ * Ranges below are on the recentered scale (2026-07-25: PITCHER_NORM
+ * windows centered so league-average talent scores ~50 — see
+ * docs/history.md). Everything shifted +6-9 vs the pre-recenter ranges;
+ * relative ordering is the real contract.
+ *
+ *   - `leagueAverage` → score ≈ 46-54, tier 'average'  (THE SCALE LOCK:
+ *                  rates and workload pinned to league-baselines.md
+ *                  anchors; must composite to ~50 or a window and a
+ *                  forecast anchor have drifted apart)
  *   - `ace`     → score ≥ 78, tier 'ace'
- *   - `mid`     → score ≈ 50-60, tier 'average'
- *   - `montero` → score ≈ 40-50, tier 'average'  (NOT 'ace' — the
+ *   - `mid`     → score ≈ 52-64, tier 'average'  (avg rates, above-avg
+ *                  5.87 IP/start workload — earns >50 through volume)
+ *   - `montero` → score ≈ 44-58, tier 'average'  (NOT 'ace' — the
  *                  hot-start-vs-weak-teams false positive that drove
  *                  the rebuild)
- *   - `bad`     → score ≤ 35, tier 'weak' or 'bad'
+ *   - `bad`     → score ≤ 36, tier 'weak'
  *   - `houser`  → score ≈ 30-45, tier 'weak'  (split-decline: K% and
  *                  barrel% co-decline vs prior, whiff% flat. The
  *                  regime probe must fire negative; if it doesn't,
  *                  the model anchors to the much-better prior season)
- *   - `abbott`  → score ≈ 28-42, tier 'weak'  (multi-skill collapse:
- *                  K%, BB%, whiff% all worse vs prior. Strong regime
- *                  signal — most aggressive prior shrink expected)
- *   - `lopezJ`  → score ≈ 38-50, tier 'average' or 'weak'  (BB
- *                  explosion + paradoxically weak contact. Regime
- *                  probe fires; BB compounding penalty in forecast.ts
- *                  bumps expectedERA above what xwOBA→xERA alone
- *                  would produce. If this profile lands ≥ 55, the
- *                  BB compounding term has regressed.)
+ *   - `abbott`  → score ≈ 40-48, bottom-of-'average'  (multi-skill
+ *                  collapse: K%, BB%, whiff% all worse vs prior. Strong
+ *                  regime signal — most aggressive prior shrink expected.
+ *                  The assertion is the talent lean + the gap below
+ *                  leagueAverage, not the tier label)
+ *   - `lopezJ`  → score ≈ 50-61, tier 'average'  (BB explosion +
+ *                  paradoxically weak contact. Regime probe fires; BB
+ *                  compounding penalty in forecast.ts bumps expectedERA
+ *                  above what xwOBA→xERA alone would produce. If this
+ *                  profile reaches 'tough' (≥ 62), the BB compounding
+ *                  term has regressed.)
  *
  * If any of these change materially, either the calibration shifted
  * intentionally (update this file) or you broke something (don't ship).
@@ -103,7 +115,7 @@ const PROFILES: Profile[] = [
     name: 'montero',
     desc: 'Hot 27 IP start vs weak teams over rough 130 IP prior (false-ace bait)',
     expectedTier: 'average',
-    expectedScoreRange: [38, 52],
+    expectedScoreRange: [44, 58],
     currentLine: STD_LINE(2.36, 7.5, 27, 5),
     priorLine:   STD_LINE(4.85, 7.2, 130, 24),
     currentSavant: STD_SAVANT(110, 70, 0.205, 0.073, 0.330, 0.36, 93.4, -0.5),
@@ -113,7 +125,7 @@ const PROFILES: Profile[] = [
     name: 'ace',
     desc: 'Skubal-shaped: elite K, low BB, suppressed contact, 192 IP prior',
     expectedTier: 'ace',
-    expectedScoreRange: [78, 95],
+    expectedScoreRange: [78, 100],
     currentLine: STD_LINE(2.65, 11.0, 35, 6),
     priorLine:   STD_LINE(2.80, 11.3, 192, 31),
     currentSavant: STD_SAVANT(140, 90, 0.310, 0.055, 0.300, 0.32, 96.5, -2.5),
@@ -121,23 +133,46 @@ const PROFILES: Profile[] = [
   },
   {
     name: 'mid',
-    desc: 'League-average innings eater',
+    desc: 'League-average rates, above-average workload (5.87 IP/start) — ' +
+          'an innings eater earns >50 through volume; see leagueAverage ' +
+          'for the true-neutral lock',
     expectedTier: 'average',
-    expectedScoreRange: [48, 62],
+    expectedScoreRange: [52, 64],
     currentLine: STD_LINE(4.20, 8.4, 35, 6),
     priorLine:   STD_LINE(4.10, 8.5, 180, 30),
     currentSavant: STD_SAVANT(150, 100, 0.220, 0.080, 0.370, 0.40, 93.5, 0.5),
     priorSavant:   STD_SAVANT(750, 480, 0.222, 0.082, 0.368, 0.40, 93.7, 0.3),
   },
   {
+    name: 'leagueAverage',
+    desc: 'League-average EVERYTHING — rates AND workload pinned to the ' +
+          'league-baselines.md anchors (22.1% K, 8.9% BB, .368 xwOBACON, ' +
+          '5.4 IP/start). This is the scale lock: the 0-100 score contract ' +
+          'says 50 = neutral, and the PITCHER_NORM windows in rating.ts are ' +
+          'centered so this profile composites to ~50. If this drifts out ' +
+          'of range, a window or a forecast anchor moved without the other — ' +
+          'recenter them together. Distinct from `mid`, whose 5.87 IP/start ' +
+          'workload is deliberately above average (an innings eater earns ' +
+          'a >50 score through volume).',
+    expectedTier: 'average',
+    expectedScoreRange: [46, 54],
+    currentLine: STD_LINE(4.20, 8.55, 32.4, 6),
+    priorLine:   STD_LINE(4.20, 8.55, 162, 30),
+    currentSavant: STD_SAVANT(140, 95, 0.221, 0.089, 0.368, 0.40, 93.5, 0.0),
+    priorSavant:   STD_SAVANT(700, 470, 0.221, 0.089, 0.368, 0.40, 93.5, 0.0),
+  },
+  {
     name: 'bad',
     desc: 'Back-end starter — high contact quality allowed, low K',
     // Recalibrated 2026-07-23 (was weak / [22,38]): with the per-PA opp-K
     // fix + anchor alignment this profile forecasts ~5.4 ERA on 4.3 K —
-    // a never-stream arm; 'bad' is the truthful tier. See docs/history.md
-    // "2026-07 — Ledger-driven calibration fixes".
-    expectedTier: 'bad',
-    expectedScoreRange: [20, 30],
+    // a never-stream arm. Re-ranged 2026-07-25 with the window recenter
+    // (+8 uniform shift): lands ~32, back to 'weak'. The never-stream
+    // verdict lives in the score — 32 is the bottom decile of rosterable
+    // starters on the recentered scale; 'bad' (<28) is now reserved for
+    // arms the forecast sees as actively unrosterable.
+    expectedTier: 'weak',
+    expectedScoreRange: [26, 36],
     currentLine: STD_LINE(5.40, 6.8, 30, 6),
     priorLine:   STD_LINE(5.20, 7.0, 165, 28),
     currentSavant: STD_SAVANT(140, 100, 0.165, 0.090, 0.420, 0.46, 91.8, 2.0),
@@ -151,10 +186,9 @@ const PROFILES: Profile[] = [
           'flatness cancels the signal, the talent estimate stays anchored ' +
           'to the much-better prior season and this score will be too high.',
     expectedTier: 'weak',
-    // Floor 30 → 28 with the 2026-07-25 W/QS window recalibration: the
-    // compressed W normalization shaves ~1 point off low-P(W) profiles
-    // (this case sat exactly on the old floor). Tier is the real assertion.
-    expectedScoreRange: [28, 45],
+    // Tier is the real assertion; the range brackets the regime probe
+    // firing (an anchored-to-prior failure lands 50+).
+    expectedScoreRange: [30, 45],
     currentLine: STD_LINE(7.12, 4.75, 30, 6),
     priorLine:   STD_LINE(3.31, 6.62, 125, 21),
     currentSavant: SAVANT(143, 116, 0.112, 0.070, 0.398, 0.474, 0.191, 0.103, null, -2.24),
@@ -166,9 +200,13 @@ const PROFILES: Profile[] = [
           'Strongest regime signal in the test set (3+ co-directional ' +
           'declines). Prior cap should shrink hardest here. Talent estimate ' +
           'must lean current-season; if it splits the difference we have a ' +
-          'regression-too-conservative bug.',
-    expectedTier: 'weak',
-    expectedScoreRange: [28, 42],
+          'regression-too-conservative bug. On the recentered scale he lands ' +
+          'at the very bottom of average — the assertion is the talent lean ' +
+          '(kPerPA ~.18 vs prior .218) and the gap below leagueAverage, not ' +
+          'the tier label; if this approaches mid (~58), regression got too ' +
+          'conservative.',
+    expectedTier: 'average',
+    expectedScoreRange: [40, 48],
     currentLine: STD_LINE(5.97, 6.30, 30, 6),
     priorLine:   STD_LINE(2.87, 9.20, 156, 27),
     currentSavant: SAVANT(158, 119, 0.152, 0.095, 0.385, 0.370, 0.206, 0.082, null, -0.72),
@@ -180,10 +218,10 @@ const PROFILES: Profile[] = [
           'way down (weak contact when ball is in play). Pure xwOBA → xERA ' +
           'undersells him because linear weights treat each walk independently. ' +
           'The forecast-layer BB compounding penalty must add ~0.4-0.7 ERA ' +
-          'on top of base xERA. If this profile lands ≥ 55, BB compounding ' +
-          'has regressed.',
+          'on top of base xERA. If this profile reaches tough (≥ 62), BB ' +
+          'compounding has regressed (the penalty is worth ~4-5 score points).',
     expectedTier: 'average',
-    expectedScoreRange: [38, 52],
+    expectedScoreRange: [50, 61],
     currentLine: STD_LINE(6.52, 6.83, 29, 6),
     priorLine:   STD_LINE(4.08, 11.30, 110, 18),
     currentSavant: SAVANT(146, 101, 0.158, 0.151, 0.273, 0.297, 0.211, 0.040, null, -1.23),

@@ -66,7 +66,7 @@ import DivergingRow from '@/components/ui/DivergingRow';
 />
 ```
 
-Used in: BattingCard, PitchingCard, NextWeekCard, SeasonComparisonCard. Use this whenever comparing two teams' stat categories side-by-side.
+Used in: BattingCard, PitchingCard, NextWeekCard. Use this whenever comparing two teams' stat categories side-by-side.
 
 ### DashboardCard
 `DashboardCard` — wrapper for dashboard grid cards. Provides header (title + icon), loading skeleton, footer slot, and grid sizing.
@@ -79,7 +79,9 @@ import DashboardCard from '@/components/dashboard/DashboardCard';
 </DashboardCard>
 ```
 
-Sizes: `sm | md | lg | xl` (control grid col-span/row-span). All dashboard cards must use this wrapper.
+Sizes: `sm | md | lg | xl | full` (control grid col-span/row-span; `full` spans every column at every breakpoint for a full-width row). All dashboard cards must use this wrapper.
+
+Cards are `self-start` — height follows content, never the row band a `row-span` claims. If a card looks like it has dead space at the bottom, the content is short, not the layout: shrink the size or move it, don't pad it.
 
 ### Skeleton
 `Skeleton` — animated loading placeholder.
@@ -181,7 +183,7 @@ No shared table component exists yet — follow these conventions when building 
 `RecentActivityCard` pattern: timeline dot (colored by type) + team name + timestamp + player changes. Used for league transaction feeds.
 
 ### Alert/Warning Display
-`LineupIssuesCard` pattern: colored left border (3px) + icon + message. Error = red border, warning = accent border.
+`LineupRosterCard` pattern: colored left border (3px) + icon + message. Error = red border, warning = accent border.
 
 ### App Shell (responsive)
 

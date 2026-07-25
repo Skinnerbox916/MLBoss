@@ -42,20 +42,25 @@ Both mode dashboards render the same three rows, mode-native content in each —
 | **1. Matchup marquee** — "am I winning, what's the lever" | `BossCard` (live category tally, caps, Boss Brief) | `PointsMarquee` (live score, projected finals via `usePointsOpponentWeek`, points brief from `lib/points/brief.ts`) |
 | **2. Top action** — one priced move, routes to /streaming | `TopStreamTile` (slot-aware #1 batter stream via `useTopWeekStream`) | `TopWeekMoveTile` (week-moves board #1) |
 | **3. Reference grid** — the shared cards | `GridLayout` of the both-mode cards + projection cards | `GridLayout` of the both-mode cards |
+| **4. Next-week bookend** — closing the page with the forward view | `NextWeekCard` (full-width row, both sides' projected categories) | `PointsNextWeekCard` (grid card, projected points both sides) |
 
 Roster-construction content (suggested moves lists, VOR holds/drops) deliberately does NOT appear on either dashboard — that's /roster's job; row 2 names ONE action and routes.
+
+**Reference-grid order is a time axis**, not arbitrary: today (`LineupRosterCard`) → this week (`OpponentStatusCard`, `RecentActivityCard`) → housekeeping (`WaiversCard`) → next week (the bookend). It mirrors how the five routes themselves are ordered (by decision horizon — see CLAUDE.md). Mount order in both dashboards encodes it; keep them in sync.
+
+**Card height:** every card is `self-start` in the grid — as tall as its content, never stretched to fill the row band a `row-span` claims. Dead space belongs between cards, not inside one (a `lg` card next to two stacked `md` cards used to render ~300px of empty interior). `size="full"` spans every column at every breakpoint for content that wants horizontal room.
 
 **Two gating axes** (see docs/ui-patterns.md#the-mode-axis-categories--points): scoring `mode` picks the dashboard; `headToHead` (from `useActiveLeague`, orthogonal — Yahoo 'roto'/'point' leagues have no weekly opponent) gates every opponent-shaped element inside it.
 
 | Card | Mode | H2H-only | Why |
 |---|---|---|---|
-| `LineupIssuesCard` | both | no | Roster status + today's slate — no scoring semantics. |
-| `PlayerUpdatesCard` | both | no | Roster injury/news — no scoring semantics. |
-| `OpponentStatusCard` | both | **yes** | Opponent injuries + probables — needs a weekly opponent. |
-| `WaiversCard` | both | no | Waiver priority + pending claims + FA pool. |
+| `LineupRosterCard` | both | no | Today's fixes (lineup issues) over today's watch list (health) — no scoring semantics. Replaced the split `LineupIssuesCard` + `PlayerUpdatesCard`, which double-printed the same player (docs/history.md). |
+| `OpponentStatusCard` | both | **yes** | Opponent injuries, probables (arms added this week chipped `NEW`), adds this week + their stream rate — needs a weekly opponent. |
+| `WaiversCard` | both | no | Waiver priority + pending claims. Process facts only — the FA pool is priced on /streaming, not sampled unranked here. |
 | `RecentActivityCard` | both | no | League transactions. |
 | `BossCard` | categories | **yes** | L7 Boss Brief over live matchup margins. |
-| `SeasonComparisonCard` / `NextWeekCard` | categories | **yes** | Both are `MatchupProjectionCard` — opponent projections. |
+| `NextWeekCard` | categories | **yes** | Next week's projected category totals, both sides, `size="full"` — batting and pitching side by side at lg+, tabbed below. No current-week twin by design (docs/history.md). |
+| `PointsNextWeekCard` | points | **yes** | Points twin of the above: both sides' projected points vs next week's opponent + margin. Grid-sized (`md`), not full-width — one currency needs three numbers, not two tables; parity is of function, not geometry. |
 | `TopStreamTile` / `TopWeekMoveTile` | categories / points | no | Streaming value exists with or without an opponent. |
 | `PointsMarquee` | points | internal | Renders the season variant (projected week + standing) itself when `!headToHead`. |
 

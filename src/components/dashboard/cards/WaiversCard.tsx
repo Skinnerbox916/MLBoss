@@ -1,18 +1,20 @@
 'use client';
 
+import Link from 'next/link';
 import { FiShoppingCart } from 'react-icons/fi';
 import DashboardCard from '../DashboardCard';
-import { Text } from '@/components/typography';
 import { useFantasy } from '../FantasyProvider';
 import { useTransactions } from '@/lib/hooks/useTransactions';
-import { useAvailableBatters } from '@/lib/hooks/useAvailableBatters';
 
+/**
+ * Waiver process facts: priority position and claims in flight. Deliberately
+ * NOT a "top available" list — an unranked pool sample is value-free, and the
+ * pool is priced properly (native units, net of the incumbent) on /streaming
+ * and /roster. See docs/history.md.
+ */
 export default function WaiversCard() {
   const { context, leagueKey, teamKey } = useFantasy();
-  const { transactions, isLoading: txLoading } = useTransactions(leagueKey);
-  const { batters, isLoading: battersLoading } = useAvailableBatters(leagueKey);
-
-  const isLoading = txLoading || battersLoading;
+  const { transactions, isLoading } = useTransactions(leagueKey);
 
   const league = context?.leagues?.find(l => l.league_key === leagueKey);
   const waiverPriority = league?.user_team?.waiver_priority;
@@ -55,34 +57,12 @@ export default function WaiversCard() {
           </div>
         )}
 
-        {/* Top available batters */}
-        <div className="space-y-1">
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Top Available
-          </div>
-          {batters.length === 0 ? (
-            <Text variant="caption">No available batters</Text>
-          ) : (
-            batters.slice(0, 6).map(player => (
-              <div key={player.player_key} className="flex items-center justify-between py-0.5">
-                <div className="min-w-0 flex-1">
-                  <span className="text-sm font-medium truncate block">{player.name}</span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                  <span className="text-xs text-muted-foreground">{player.editorial_team_abbr}</span>
-                  <span className="text-[11px] px-1.5 py-0.5 bg-surface-muted rounded font-medium text-muted-foreground">
-                    {player.display_position}
-                  </span>
-                  {player.ownership_type === 'waivers' && (
-                    <span className="text-[11px] px-1.5 py-0.5 bg-primary/10 rounded font-medium text-primary">
-                      W
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        <Link
+          href="/streaming"
+          className="block text-xs text-accent hover:underline pt-1"
+        >
+          Priced pickups →
+        </Link>
       </div>
     </DashboardCard>
   );

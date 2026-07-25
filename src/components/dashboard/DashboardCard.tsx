@@ -4,7 +4,7 @@ import Icon from '@/components/Icon';
 import Skeleton from '@/components/ui/Skeleton';
 import { Heading } from '@/components/typography';
 
-export type CardSize = 'sm' | 'md' | 'lg' | 'xl';
+export type CardSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
 interface DashboardCardProps {
   title: string;
@@ -21,6 +21,9 @@ const sizeToGridClass: Record<CardSize, string> = {
   md: 'col-span-1 row-span-2 md:col-span-2 md:row-span-1',
   lg: 'col-span-1 row-span-2 md:col-span-2 md:row-span-2',
   xl: 'col-span-1 row-span-3 md:col-span-4 md:row-span-2',
+  // Every column at every breakpoint — a full-width row inside the grid, for
+  // content that wants horizontal room (side-by-side category tables).
+  full: 'col-span-1 md:col-span-4 lg:col-span-6',
 };
 
 export default function DashboardCard({
@@ -33,7 +36,12 @@ export default function DashboardCard({
   className = '',
 }: DashboardCardProps) {
   return (
-    <div className={`${sizeToGridClass[size]} ${className}`}>
+    // `self-start`: a card is as tall as its content, never stretched to fill
+    // the row band it spans. Without it a `row-span-2` card inherits the sum
+    // of two auto-rows — so Next Week (9 short rows) got stretched to
+    // Waivers + Recent Activity and rendered ~300px of empty interior. Dead
+    // space belongs between cards, not inside one.
+    <div className={`self-start ${sizeToGridClass[size]} ${className}`}>
       {/* p-3.5 (14px) on mobile so 1-up stacked cards don't feel cavernous;
           24px on sm+ — see the design system's mobile adaptations. */}
       <div className="bg-surface rounded-lg shadow p-3.5 sm:p-6 h-full flex flex-col">

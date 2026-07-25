@@ -7,11 +7,9 @@ import { FantasyProvider } from '@/components/dashboard/FantasyProvider';
 import BossCard from '@/components/dashboard/BossCard';
 import TopStreamTile from '@/components/dashboard/TopStreamTile';
 import {
-  SeasonComparisonCard,
   OpponentStatusCard,
-  LineupIssuesCard,
+  LineupRosterCard,
   WaiversCard,
-  PlayerUpdatesCard,
   NextWeekCard,
   RecentActivityCard,
 } from '@/components/dashboard/cards';
@@ -44,14 +42,15 @@ export default function DashboardModeRouter() {
       <FantasyProvider>
         {headToHead && <BossCard />}
         <TopStreamTile className="mb-6" />
+        {/* Reference grid on a left-to-right time axis — today (lineup +
+            roster status), this week (opponent scouting, league churn),
+            housekeeping — closed by the full-width next-week bookend. */}
         <GridLayout>
-          <LineupIssuesCard />
-          <PlayerUpdatesCard />
+          <LineupRosterCard />
           {headToHead && <OpponentStatusCard />}
-          {headToHead && <SeasonComparisonCard />}
-          {headToHead && <NextWeekCard />}
-          <WaiversCard />
           <RecentActivityCard />
+          <WaiversCard />
+          {headToHead && <NextWeekCard />}
         </GridLayout>
       </FantasyProvider>
     </div>

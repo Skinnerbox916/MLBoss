@@ -10,11 +10,11 @@ import PointsMarquee from '@/components/dashboard/PointsMarquee';
 import GridLayout from '@/components/dashboard/GridLayout';
 import { FantasyProvider } from '@/components/dashboard/FantasyProvider';
 import {
-  LineupIssuesCard,
-  PlayerUpdatesCard,
+  LineupRosterCard,
   OpponentStatusCard,
   WaiversCard,
   RecentActivityCard,
+  PointsNextWeekCard,
 } from '@/components/dashboard/cards';
 
 /**
@@ -51,12 +51,14 @@ export default function PointsDashboard() {
       <TopWeekMoveTile />
 
       <FantasyProvider>
+        {/* Same left-to-right time axis as the categories grid: today, this
+            week, housekeeping, then the next-week outlook. */}
         <GridLayout>
-          <LineupIssuesCard />
-          <PlayerUpdatesCard />
+          <LineupRosterCard />
           {headToHead && <OpponentStatusCard />}
-          <WaiversCard />
           <RecentActivityCard />
+          <WaiversCard />
+          {headToHead && <PointsNextWeekCard />}
         </GridLayout>
       </FantasyProvider>
     </div>

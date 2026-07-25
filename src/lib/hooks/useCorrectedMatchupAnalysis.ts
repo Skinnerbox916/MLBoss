@@ -4,16 +4,23 @@ import { useMemo } from 'react';
 import { useScoreboard } from './useScoreboard';
 import { useLeagueCategories } from './useLeagueCategories';
 import { useLeagueEngagements } from './useLeagueEngagements';
+import { useLeagueStreamRates } from './useLeagueStreamRates';
 import { useBatterTeamProjection, type BatterTeamProjectionResponse } from './useBatterTeamProjection';
 import { usePitcherTeamProjection, type PitcherTeamProjectionResponse } from './usePitcherTeamProjection';
 import { buildMatchupRows } from '@/components/shared/matchupRows';
 import { analyzeMatchup, withSwing, type MatchupAnalysis } from '@/lib/matchup/analysis';
 import { composeCorrectedRows } from '@/lib/matchup/correctedRows';
 import { isRatioCat } from '@/lib/league/forecast';
-import { getMatchupWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
+import { getMatchupWeekDays, getWeekDays, type WeekTarget } from '@/lib/dashboard/weekRange';
 import { useLeagueWeekBounds } from './useFantasyContext';
 import { useMovesBudget } from './useMovesBudget';
 import { LEAGUE_AVG_START_OUTPUT } from '@/lib/projection/streamPitcherCatImpact';
+import {
+  applyExpectedStreams,
+  applyExpectedStreamsToProjection,
+  maxStreamStartsPerWeek,
+  proRateStreamStarts,
+} from '@/lib/projection/streamVolume';
 import type { ProjectedCategory } from './useBatterTeamProjection';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { MatchupData } from '@/lib/yahoo-fantasy-api';
@@ -63,7 +70,10 @@ function regressOpponentCounting(
  *    and produces a corrected-margin analysis. Each row carries `margin`
  *    (end-of-week projected) and `rawMargin` (MTD only) plus `swing`
  *    (`margin - rawMargin`), so the UI can render "currently X → projected
- *    Y" arrows.
+ *    Y" arrows. The opponent's rest-of-week projection additionally carries
+ *    their **expected streamed starts** pro-rated over remaining days; mine
+ *    stays roster-only because my remaining adds are the lever
+ *    `streamCapacity` models (see `streamVolume.ts` for the by-side rule).
  *  - `'next'` — Sunday streaming pivot. The matchup hasn't started yet,
  *    so there is no MTD to blend with. The hook drives the projection
  *    routes against next Mon-Sun, resolves the opponent off next week's
@@ -71,6 +81,12 @@ function regressOpponentCounting(
  *    mode — every margin comes directly from the projection. No
  *    `withSwing` is run (nothing to swing from), so rows carry `margin`
  *    only — UI renders the projected value with no before/after arrow.
+ *    BOTH sides' pitcher projections carry each manager's **expected
+ *    streamed starts** here (`applyExpectedStreams`), scaled by next week's
+ *    real day count — a roster-only next-week comparison would assume nobody
+ *    adds a starter. Mine are priced in only on this path (mid-week they're
+ *    `streamCapacity`'s lever instead), so capacity drops to the residual;
+ *    theirs are priced in on both paths. See `streamVolume.ts`.
  *
  * Batter cats project via `useBatterTeamProjection`; counting pitcher
  * cats (K, W, QS, IP) via `usePitcherTeamProjection`. Pitcher ratio cats
@@ -95,7 +111,13 @@ export interface CorrectedMatchupAnalysis {
   isLoading: boolean;
   myProjection: BatterTeamProjectionResponse | undefined;
   oppProjection: BatterTeamProjectionResponse | undefined;
+  /** Mine, roster-only mid-week; stream-adjusted on the pivot (where my
+   *  expected adds are priced into the rows rather than held as capacity). */
   myPitcherProjection: PitcherTeamProjectionResponse | undefined;
+  /** Theirs, ALWAYS stream-adjusted — `byCategory` and the IP totals carry
+   *  their expected streamed starts (rest-of-week mid-week, full week on the
+   *  pivot). Consumers reading `weeklyIp` get the honest volume without
+   *  re-deriving it. */
   oppPitcherProjection: PitcherTeamProjectionResponse | undefined;
   /** Resolved opponent team_key for the analyzed matchup (current or
    *  next, per `targetWeek`). */
@@ -145,6 +167,12 @@ export function useCorrectedMatchupAnalysis(
   // counting-cat projection below. League-cached; doesn't gate loading
   // (a missing ratio just means no discount).
   const { ratioByTeamKey } = useLeagueEngagements(leagueKey);
+
+  // Expected streamed starts per team (demonstrated SP-add rate). Fetched in
+  // BOTH modes: the opponent's expected adds apply mid-week too, pro-rated
+  // over remaining days — nothing else in the app models them. Doesn't gate
+  // loading; a missing rate degrades to the roster-only projection.
+  const { startsByTeamKey } = useLeagueStreamRates(leagueKey);
 
   const opponentTeamKey = useMemo(() => {
     if (!teamKey) return undefined;
@@ -213,6 +241,13 @@ export function useCorrectedMatchupAnalysis(
     );
     const hasAnyProjection = Object.keys(myMerged).length > 0 || Object.keys(oppMerged).length > 0;
 
+    // Weekly expected-stream rates (demonstrated SP adds/wk). Applied by SIDE,
+    // not by surface — see streamVolume.ts: the opponent's adds are a
+    // prediction nothing else models, mine are a lever `streamCapacity`
+    // already covers mid-week.
+    const myStreamRate = startsByTeamKey.get(teamKey) ?? 0;
+    const oppStreamRate = opponentTeamKey ? startsByTeamKey.get(opponentTeamKey) ?? 0 : 0;
+
     if (isPivot) {
       // Projection-only path. The matchup hasn't started, so we don't
       // need MTD data on either side. We pass empty maps to buildMatchupRows
@@ -221,19 +256,46 @@ export function useCorrectedMatchupAnalysis(
       // projections (un-projectable K/9 / BB/9 / H/9) stay em-dash and
       // are filtered out by consuming panels.
       if (!hasAnyProjection) return empty();
+      // Expected streamed starts, both sides, across the whole target week —
+      // the matchup hasn't started, so there's no MTD and no in-week lever to
+      // conflict with. A roster-only comparison would assume both managers
+      // stand pat, wrong by very different amounts per manager. Added at
+      // league-average per-start output (counting cats AND the ERA/WHIP
+      // numerator/denominator) AFTER the engagement discount, which models
+      // missed lineup slots rather than transaction behavior.
+      //
+      // Scaled by next week's real day count: a combined all-star week is 14
+      // days and carries two weeks of streaming, not one.
+      const nextWeekDays = getWeekDays(new Date(), 'next', weekBounds).length || 7;
+      const myStreams = proRateStreamStarts(myStreamRate, nextWeekDays);
+      const oppStreams = proRateStreamStarts(oppStreamRate, nextWeekDays);
+      const myWithStreams = applyExpectedStreams(myMerged, myStreams);
+      const oppWithStreams = applyExpectedStreams(oppMerged, oppStreams);
+
       const baseRows = buildMatchupRows(categories, new Map<number, string>(), new Map<number, string>());
       const correctedRows = composeCorrectedRows({
         baseRows,
-        myProjection: myMerged,
-        oppProjection: oppMerged,
+        myProjection: myWithStreams,
+        oppProjection: oppWithStreams,
         daysElapsed: 0,
         mode: 'projection-only',
       });
       // daysElapsed = 0 → rate-stat margins get heavily soft-pedaled
       // (correct — pure-projection ERA shouldn't read as "locked").
-      // Next week's moves budget resets, so capacity uses the full weekly
-      // cap (fall back to `left` when the league doesn't report one).
-      const pivotStreams = Math.min(movesBudget?.cap ?? movesBudget?.left ?? 0, 7);
+      //
+      // Stream capacity is now the RESIDUAL above what the rows already
+      // price in: my expected streams are inside `myWithStreams`, so
+      // softening a deficit by the full weekly cap on top of that would
+      // count the same moves twice. Headroom = cap − expected. A manager
+      // who already streams to the cap has none, which is correct: the
+      // margin they're looking at is the streaming margin.
+      // No budget data yet → no softening (unchanged from before this
+      // engine landed); a null cap means Yahoo reports no weekly limit, so
+      // the ceiling is the one-stream-per-day bound.
+      const streamCeiling = movesBudget
+        ? maxStreamStartsPerWeek(movesBudget.cap ?? movesBudget.left)
+        : 0;
+      const pivotStreams = Math.max(0, streamCeiling - myStreams);
       const pivotCapacity: Record<number, number> = {};
       if (pivotStreams > 0) {
         for (const [statIdStr, perStart] of Object.entries(LEAGUE_AVG_START_OUTPUT)) {
@@ -247,8 +309,11 @@ export function useCorrectedMatchupAnalysis(
         isLoading: aggregateLoading,
         myProjection,
         oppProjection,
-        myPitcherProjection,
-        oppPitcherProjection,
+        // Both pitcher projections carry their streams on the pivot, so
+        // volume surfaces ("IP left", the streaming page's volume gap) agree
+        // with the category rows beside them.
+        myPitcherProjection: applyExpectedStreamsToProjection(myPitcherProjection, myStreams),
+        oppPitcherProjection: applyExpectedStreamsToProjection(oppPitcherProjection, oppStreams),
         opponentTeamKey,
         opponentName,
       };
@@ -268,6 +333,15 @@ export function useCorrectedMatchupAnalysis(
     const weekLengthDays = days.length || 7;
     const finished = days.filter(d => !d.isRemaining).length;
     const daysElapsed = finished + 0.5;
+    const remainingDays = Math.max(0, weekLengthDays - finished);
+
+    // Opponent's expected streams for the REST of this week only — their MTD
+    // already contains the ones they've made. My side stays roster-only here:
+    // my remaining adds are the lever `streamCapacity` models below, and
+    // pricing them into the rows too would double-count.
+    const oppStreams = proRateStreamStarts(oppStreamRate, remainingDays);
+    const oppWithStreams = applyExpectedStreams(oppMerged, oppStreams);
+    const oppPitcherProjectionStreamed = applyExpectedStreamsToProjection(oppPitcherProjection, oppStreams);
 
     const rawAnalysis = analyzeMatchup(baseRows, { daysElapsed, weekLengthDays });
     if (!hasAnyProjection) {
@@ -278,7 +352,7 @@ export function useCorrectedMatchupAnalysis(
         myProjection,
         oppProjection,
         myPitcherProjection,
-        oppPitcherProjection,
+        oppPitcherProjection: oppPitcherProjectionStreamed,
         opponentTeamKey,
         opponentName,
       };
@@ -286,7 +360,7 @@ export function useCorrectedMatchupAnalysis(
     const correctedRows = composeCorrectedRows({
       baseRows,
       myProjection: myMerged,
-      oppProjection: oppMerged,
+      oppProjection: oppWithStreams,
       daysElapsed: finished, // integer days for the AB-estimation fallback
       weekLengthDays,
       mode: 'blend',
@@ -294,8 +368,10 @@ export function useCorrectedMatchupAnalysis(
     // Stream capacity: what the remaining moves budget could still add to
     // the pitcher counting cats (one stream feeds all of them), capped by
     // remaining days. Upper bound by design — a reachability gate for the
-    // auto-concede rule, not a forecast. See AnalyzeOpts.streamCapacity.
-    const remainingDays = Math.max(0, weekLengthDays - finished);
+    // auto-concede rule, not a forecast. Stays the FULL remaining budget
+    // mid-week (unlike the pivot's residual): my side's rows carry no
+    // expected streams here, so there is nothing to double-count against.
+    // See AnalyzeOpts.streamCapacity.
     const streams = Math.min(movesBudget?.left ?? 0, remainingDays);
     const streamCapacity: Record<number, number> = {};
     if (streams > 0) {
@@ -313,7 +389,10 @@ export function useCorrectedMatchupAnalysis(
       myProjection,
       oppProjection,
       myPitcherProjection,
-      oppPitcherProjection,
+      // Opponent volume carries their expected rest-of-week streams, so the
+      // Boss Card's "IP left" and the streaming volume gap stop under-
+      // reporting a manager who adds a starter every other day.
+      oppPitcherProjection: oppPitcherProjectionStreamed,
       opponentTeamKey,
       opponentName,
     };
@@ -322,7 +401,7 @@ export function useCorrectedMatchupAnalysis(
     myProjection, oppProjection, myPitcherProjection, oppPitcherProjection,
     scoreLoading, nextScoreLoading, catsLoading,
     myProjLoading, oppProjLoading, myPitchProjLoading, oppPitchProjLoading,
-    opponentTeamKey, opponentName, movesBudget,
+    opponentTeamKey, opponentName, movesBudget, startsByTeamKey,
   ]);
 
   return result;

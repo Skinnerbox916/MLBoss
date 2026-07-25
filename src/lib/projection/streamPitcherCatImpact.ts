@@ -74,11 +74,23 @@ export const LEAGUE_AVG_START_OUTPUT: Record<number, number> = {
   [STAT_QS]: REF_QS,
   [STAT_IP]: REF_IP,
 };
-const COUNTING_REF = LEAGUE_AVG_START_OUTPUT;
-const RATIO_REF_NUM: Record<number, number> = {
+
+/** One league-average start's RATIO numerators, keyed by stat_id (ER for
+ *  ERA, baserunners for WHIP) — the ratio twin of
+ *  `LEAGUE_AVG_START_OUTPUT`. Denominator for both is
+ *  `LEAGUE_AVG_START_IP`. Same "one home, don't copy" rule. */
+export const LEAGUE_AVG_START_RATIO_NUM: Record<number, number> = {
   [STAT_ERA]: REF_ER,
   [STAT_WHIP]: REF_BR,
 };
+
+/** IP in one league-average start — the denominator that pairs with
+ *  `LEAGUE_AVG_START_RATIO_NUM`. Re-exported from `LEAGUE_IP_PER_START`
+ *  so stream-volume callers don't reach past this module for it. */
+export const LEAGUE_AVG_START_IP = REF_IP;
+
+const COUNTING_REF = LEAGUE_AVG_START_OUTPUT;
+const RATIO_REF_NUM = LEAGUE_AVG_START_RATIO_NUM;
 const RATIO_LEAGUE_RATE: Record<number, number> = {
   [STAT_ERA]: LEAGUE_ER_PER_IP,
   [STAT_WHIP]: LEAGUE_BR_PER_IP,

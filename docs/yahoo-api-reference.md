@@ -299,9 +299,11 @@ GET /league/{league_key}/draftresults
 ### League Transactions
 
 ```http
-GET /league/{league_key}/transactions            # recent moves
+GET /league/{league_key}/transactions            # ENTIRE season, newest first
 GET /league/{league_key}/transactions;type=add   # adds only
 ```
+
+**Not "recent" — the whole season in one call.** Verified 2026-07-25: 477 transactions for a 10-team league, back to draft day (Mar 27), no pagination needed. That makes per-manager behavioral history a single cached fetch rather than a crawl. Each entry carries `timestamp`, `status` (filter on `'successful'`), and per-player `type` (`add`/`drop`), `destination_team_key`, and `display_position` — so `'SP'` vs `'RP'` vs a bat is distinguishable per add without touching the player endpoints. Consumed this way by [streamVolume.ts](../src/lib/projection/streamVolume.ts) for per-team streaming rates. Volume caveat: one call, but a large response — cache the *computed* result, not just the feed (the feed itself sits at the 1-min dynamic tier).
 
 ---
 

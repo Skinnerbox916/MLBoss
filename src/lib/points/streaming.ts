@@ -221,6 +221,11 @@ export interface PointsStreamingAnalysis {
   batterFacts: PointsBatterDayFacts[];
   /** Rostered (healthy) arms with priced remaining starts. */
   myPitcherFacts: PointsMyPitcherFacts[];
+  /** Mean expected points of one available FA start in this league's scoring
+   *  profile — the points-native analog of `LEAGUE_AVG_START_OUTPUT`, used to
+   *  price an opponent's expected streamed starts. 0 when no FA starts are
+   *  priced (empty window / no pool). */
+  faStartPointsAvg: number;
 }
 
 const round1 = (n: number) => Number(n.toFixed(1));
@@ -287,6 +292,7 @@ export async function analyzePointsStreaming(
       batterPlugs: [],
       batterFacts: [],
       myPitcherFacts: [],
+      faStartPointsAvg: 0,
     };
   }
   const today = new Date().toISOString().slice(0, 10);
@@ -707,6 +713,18 @@ export async function analyzePointsStreaming(
       }),
   ];
 
+  // Mean expected points of ONE available FA start — this league's own
+  // answer to "what is a streamed start worth", in its own scoring profile.
+  // The categories side can anchor on league-average per-category output
+  // (`LEAGUE_AVG_START_OUTPUT`); points scoring varies too much between
+  // leagues for any constant, so the anchor is the live FA pool. Consumed by
+  // `usePointsOpponentWeek` to price an opponent's expected streams.
+  // See docs/points-leagues.md#opponent-stream-volume.
+  const allFaStarts = pitcherStreams.flatMap(p => p.starts);
+  const faStartPointsAvg = allFaStarts.length > 0
+    ? round1(allFaStarts.reduce((s, x) => s + x.expectedPoints, 0) / allFaStarts.length)
+    : 0;
+
   return {
     cadence,
     week: { start: days[0]?.date, end: days[days.length - 1]?.date, days: days.length },
@@ -717,5 +735,6 @@ export async function analyzePointsStreaming(
     batterPlugs,
     batterFacts,
     myPitcherFacts,
+    faStartPointsAvg,
   };
 }

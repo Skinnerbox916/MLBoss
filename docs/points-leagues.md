@@ -76,6 +76,17 @@ The points `/streaming` page's engine (2026-07 rebuild — see history.md). The 
 
 `weekProjectedPoints` (dashboard marquee) and the /streaming coverage strip share ONE engine: [projectRosterWeek](../src/lib/points/rosterWeek.ts). It solves the optimal batting lineup per remaining day and sums (daily cadence), or solves once for the locked week (weekly cadence) — position-aware, off-day-aware, injured benched. Pitchers are summed separately (priced by actual probable starts). The per-player day score is injected, so callers price a batter-day in context. Don't re-approximate this with a roster sum — see [engines.md](./engines.md#points-league-engines) and history.md.
 
+## Opponent stream volume
+
+The opponent's projected remaining points came from `analyzePointsTeam` with `includeFA=0` — roster-only, which is literally "assume they stand pat". Against a manager who adds a starter every other day that understates their week badly, and it drove both the marquee's projected final and the points brief.
+
+[usePointsOpponentWeek](../src/lib/hooks/usePointsOpponentWeek.ts) now adds what their **expected streamed starts** are worth. Two halves, and only the second is points-specific:
+
+- **How many starts** — the shared categories estimator: demonstrated recency-weighted SP adds/week from the league transaction feed (`useLeagueStreamRates`), pro-rated over the window's remaining days by the shared `proRateStreamStarts`. One home for the rate question, so the modes can't drift on it. Rule and rationale: [projection.md#expected-streamed-starts](./projection.md#expected-streamed-starts).
+- **What a start is worth** — `expectedStreamPoints` in [points/streamVolume.ts](../src/lib/points/streamVolume.ts), priced by `faStartPointsAvg`: the mean expected points of one *available FA start*, computed by `analyzePointsStreaming` through this league's own scoring profile (14.3 pts in the reference league, 2026-07-25). Deliberately **not** a constant — two leagues with identical rosters value a start completely differently (innings-heavy vs K-heavy weights, negative walks, QS bonuses), so any hardcoded number would be wrong somewhere.
+
+Same by-side rule as categories: opponent always, me only on next-week windows (the [PointsNextWeekCard](../src/components/dashboard/cards/PointsNextWeekCard.tsx)), where there's no in-week lever to hold in reserve. The streaming fetch that carries the anchor is already warm on the points dashboard (the top-move tile drives it) and never blocks: until it resolves the term is 0 and callers show the roster-only number.
+
 ## What this layer does not (yet) model
 
 - **Pitcher position-aware moves/depth** — see above.

@@ -295,10 +295,16 @@ export interface AnalyzeOpts {
    * streaming board stops valuing the very cats streaming would win (the
    * 2026-07-21 circular-concession report). One stream adds to K/W/QS/IP
    * simultaneously, so the same capacity applies per-cat without
-   * double-counting. Deliberately asymmetric (no opponent-side threat
-   * model — that needs their moves budget + engagement) and deliberately
-   * absent for ratio cats (added volume can't reliably fix an ERA/WHIP
-   * gap) and batter cats (batter adds displace, so net gain is small).
+   * double-counting. Deliberately absent for ratio cats (added volume can't
+   * reliably fix an ERA/WHIP gap) and batter cats (batter adds displace, so
+   * net gain is small).
+   *
+   * This is the user's LEVER, not a forecast — which is why it stays
+   * one-sided. The opponent's streaming is modeled where it belongs, as
+   * expected volume inside their projection, and only on the next-week
+   * pivot (`applyExpectedStreams` in projection/streamVolume.ts). Callers
+   * that price expected streams into the rows must pass the RESIDUAL
+   * capacity (cap − expected), or the same moves get counted twice.
    */
   streamCapacity?: Record<number, number>;
 }

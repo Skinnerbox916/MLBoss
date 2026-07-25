@@ -261,6 +261,8 @@ The reason: we don't project K/9 / BB/9 / H/9 separately. Ratio fidelity for tho
 
 **End-of-week pivot path.** Projection-only mode skips the MTD blend entirely. ERA and WHIP get pure-projection values (`projected ER / projected IP × 9`, `projected (H+BB) / projected IP`). K/9 / BB/9 / H/9 still aren't projected, so their rows pass through em-dash and are filtered out of the panel — no synthetic rate-cat row.
 
+Both sides' pivot projections also include each manager's **expected streamed starts** (demonstrated SP-add rate, league-average per-start output — [projection.md#expected-streamed-starts](./projection.md#expected-streamed-starts)), which is what lets the pivot Game Plan frame a streaming opponent honestly instead of pricing their stand-pat roster. It also moves the pivot's ERA/WHIP: added innings at league-average ER pull a good staff ratio up.
+
 For batter AVG, the blend works in mid-week (batters' AB is recoverable from H / AVG) and reduces to a clean projected AVG in pivot mode (`projected H / projected AB`). See [recommendation-system.md](./recommendation-system.md) for the matchup-margin engine details.
 
 ## Points-league view

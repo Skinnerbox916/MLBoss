@@ -70,6 +70,7 @@ function StarterRowCard({
   // separate classifier, no ACE-vs-FAIR mismatch.
   const rating = scorePitcher({
     pp: c.pp, oppOffense: opp ?? null, park: c.park, weather: c.weather,
+    ownOffense: teamOffense[(c.isHome ? c.game.homeTeam : c.game.awayTeam).mlbId] ?? null,
     isHome: c.isHome, game: c.game, scoredCategories, categoryWeights,
   });
   // Unknown hand → bats-agnostic overall opponent OPS, never the vs-RHP split.

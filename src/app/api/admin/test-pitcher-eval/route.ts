@@ -151,7 +151,10 @@ const PROFILES: Profile[] = [
           'flatness cancels the signal, the talent estimate stays anchored ' +
           'to the much-better prior season and this score will be too high.',
     expectedTier: 'weak',
-    expectedScoreRange: [30, 45],
+    // Floor 30 → 28 with the 2026-07-25 W/QS window recalibration: the
+    // compressed W normalization shaves ~1 point off low-P(W) profiles
+    // (this case sat exactly on the old floor). Tier is the real assertion.
+    expectedScoreRange: [28, 45],
     currentLine: STD_LINE(7.12, 4.75, 30, 6),
     priorLine:   STD_LINE(3.31, 6.62, 125, 21),
     currentSavant: SAVANT(143, 116, 0.112, 0.070, 0.398, 0.474, 0.191, 0.103, null, -2.24),

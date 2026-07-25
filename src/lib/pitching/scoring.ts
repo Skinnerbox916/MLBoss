@@ -98,6 +98,9 @@ export interface ScoredBreakdown {
 export interface PillInput {
   pp: ProbablePitcher;
   oppOffense: TeamOffense | null;
+  /** The pitcher's OWN team's offense — run support for the W odds.
+   *  Optional so older call sites degrade to league-average support. */
+  ownOffense?: TeamOffense | null;
   park: ParkData | null;
   weather: GameWeather;
   isHome: boolean;
@@ -222,7 +225,7 @@ export const DEFAULT_SCORED_CATS: EnrichedLeagueStatCategory[] = [
  * has no talent vector — same fail-safe behaviour the page expects.
  */
 export function scorePitcher(input: PillInput): PitcherStreamingRating {
-  const { pp, game, isHome, oppOffense, scoredCategories, focusMap, categoryWeights } = input;
+  const { pp, game, isHome, oppOffense, ownOffense, scoredCategories, focusMap, categoryWeights } = input;
 
   if (!pp.talent) {
     return neutralStreamingRating(pp.inningsPitched);
@@ -237,6 +240,7 @@ export function scorePitcher(input: PillInput): PitcherStreamingRating {
     isHome,
     opposingOffense: oppOffense,
     opposingPitcher: opposingTalent,
+    ownOffense: ownOffense ?? null,
   });
 
   const cats = scoredCategories ?? DEFAULT_SCORED_CATS;

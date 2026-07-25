@@ -8,6 +8,16 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-07 — W/QS probability recalibration
+
+Second ledger pass (2026-07-25, `MODEL_VERSION` 2026.07.25), from the first 188 graded pitcher starts. The scorecard flagged both start probabilities; pulling the raw snapshot rows and fitting properly showed two different diseases:
+
+**P(W): the old `0.40 + talent(±.15) + bullpen(±.05) + home(±.025)` spread was noise.** Mean forecast 40.5% vs realized 31.9%; calibration slope ~0.12 (honest = 1.0, slope 1 rejected at ~2.7σ); AUC 0.520 — realized win rate was flat ~32% across every forecast quintile. The diagnosis: SP-vs-SP talent is a *minor* driver of wins; the formula was spreading on the wrong signal while assuming the major drivers (run support, game run environment) were league-average. Replaced in the same pass with a decomposed `P(team win) × P(SP credited | team win)` model — Pythagorean run odds over both sides (SP talent ERAs, both pens, lineup run factors including own-team run support via a new optional `ownOffense` forecast input) and an IP-linked credit share; the decomposition is snapshotted as `context.wParts` so the next pass can grade each part directly. Anchors and evidence: [unified-rating-model.md#start-probabilities](./unified-rating-model.md#start-probabilities). **Don't reintroduce** (a) an additive SP-talent-spread W formula — the ledger graded it as noise, or (b) a wide overall W spread without ledger evidence at n ≥ 500; the model's discrimination must come from team-level run context, and even that is capped (P(team) .28–.72, P(W) .10–.55).
+
+**P(QS): honest middle, fantasy tails (~3× over-spread).** 50% forecasts realized 52.6%, but 13% forecasts realized 27% and 72% forecasts realized 45% (logit slope 0.25 ± 0.14). The raw `0.5·ipFactor + 0.5·eraFactor` heuristic now shrinks 0.55× toward a 0.40 base — middle unchanged, tails compressed. The L3 normalization windows in `rating.ts` compressed with both probabilities (W 0.20→0.65 became 0.22→0.45; QS 0.10→0.70 became 0.15→0.65) — they bracket the forecast's output range, and stale windows would have silently deflated every W sub-score.
+
+Also replaced the scorecard's fixed 20-point calibration bands with equal-count bins (up to 6, ≥30 rows each) and segmented the calibration views to the live model cohort. The fixed bands were what *delayed* this finding: with P(W) spanning only 20–60%, two bands held 95% of the data and the tails read as outlier buckets. Rationale home: [unified-rating-model.md#start-probabilities](./unified-rating-model.md#start-probabilities).
+
 ## 2026-07 — Ledger-driven calibration fixes (K denominator, PA starter share, BB anchor)
 
 First full pass of the forecast ledger's detect → localize → fix loop, from the 2026-07-23 scorecard (`MODEL_VERSION` 2026.07.23). Three unrelated-looking findings, three distinct root causes — recorded together because each one is a trap someone could reintroduce:

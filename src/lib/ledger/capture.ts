@@ -119,6 +119,7 @@ export async function capturePitcherSlate(
       const pp = isHome ? game.homeProbablePitcher : game.awayProbablePitcher;
       if (!pp?.talent || !pp.mlbId) continue;
       const oppTeam = isHome ? game.awayTeam : game.homeTeam;
+      const ownTeam = isHome ? game.homeTeam : game.awayTeam;
       const opposing = isHome ? game.awayProbablePitcher : game.homeProbablePitcher;
       const forecast = buildGameForecast({
         pitcher: pp.talent,
@@ -126,6 +127,7 @@ export async function capturePitcherSlate(
         isHome,
         opposingOffense: await getTeamOffense(oppTeam.mlbId),
         opposingPitcher: opposing?.talent ?? null,
+        ownOffense: await getTeamOffense(ownTeam.mlbId),
       });
       const g = forecast.expectedPerGame;
       // Composite 0-100 under the league-free default cats — captured so
@@ -157,6 +159,17 @@ export async function capturePitcherSlate(
           mults: Object.fromEntries(
             Object.entries(forecast.multipliers).map(([k, m]) => [k, round3(m.multiplier)]),
           ),
+          // P(W) decomposition (2026-07-25): lets the next calibration
+          // pass grade P(team win), credit share, and the run rates
+          // separately — the first W pass had to reverse-engineer the
+          // total and couldn't isolate which part was wrong.
+          wParts: {
+            pTeam: round3(forecast.probabilities.wParts.pTeam),
+            credit: round3(forecast.probabilities.wParts.credit),
+            rs: round3(forecast.probabilities.wParts.rs),
+            ra: round3(forecast.probabilities.wParts.ra),
+            ownOffenseKnown: forecast.probabilities.wParts.ownOffenseKnown,
+          },
           // Joinability + candidate-confounder screen (2026-07, see
           // docs/forecast-verification.md#snapshot-context): gamePk makes
           // post-game facts (umpire, catcher, days of rest) recoverable at

@@ -36,7 +36,7 @@ The categories streaming boards are ranked client-side (see [streaming-page.md](
 
 Context is the slice vocabulary: every conditional finding the scorecard can ever run is limited to what capture stamped, and new slices only work from the day their key starts being captured. Beyond the modifier attribution (below), snapshots carry two kinds of fields added for the confounder screen (2026-07):
 
-- **Frozen forecast inputs** — things the model priced that drift until game time and can't be reconstructed later: the forecast weather (`tempF`, `windMph`, `windDir`), the opposing probable's identity (`oppSpMlbId` — probables change), pitcher hand.
+- **Frozen forecast inputs** — things the model priced that drift until game time and can't be reconstructed later: the forecast weather (`tempF`, `windMph`, `windDir`), the opposing probable's identity (`oppSpMlbId` — probables change), pitcher hand. Since 2026-07-25 pitcher snapshots also freeze `wParts` — the P(W) decomposition (`pTeam`, `credit`, `rs`, `ra`, `ownOffenseKnown`) — so a W miscalibration can be localized to win odds vs credit share vs a run-rate input instead of reverse-engineered from the total (what limited the first W pass).
 - **Joinability keys** — `gamePk`, `gameTimeUtc`, `venueId`. These make *post-game objective facts* (home-plate umpire, catcher, days of rest, day/night) recoverable at analysis time from the MLB API without any pre-game fetch. Deliberately **not** captured at forecast time: umpire and catcher are mostly unassigned/unposted at capture leads ≥ 1 day, and rest days would add per-pitcher fetches to a fire-and-forget path — all of them are immutable historical facts once the game ends, so freezing them pre-game buys nothing.
 
 Batter snapshots on doubleheader days carry game 1's keys (the `doubleHeader` flag lets a screen exclude those rows).
@@ -58,7 +58,7 @@ Detectors (in `buildScorecard`):
 - **Per-stat bias** per engine (min n: 300 batter-days / 50 starts / 30 points rows; rare-event stats with actual mean < 0.05/game are excluded from ratio tests).
 - **Calibration slope** per stat: actual regressed on predicted must be ~1.0 — a property of honest conditional means, independent of how noisy the stat is. Slope < 1 = over-spread (predictions more extreme than outcomes reward: the talent layer over-trusts thin samples, or a multiplicative modifier amplifies the tails); > 1 = under-spread. Same t-bars against the slope's own SE, plus a ±0.15 magnitude floor. Orthogonal to bias — a stat can have a clean mean and a dishonest spread.
 - **Conditional bias slices** — where aggregate tables hide misses: home/away (both sides), platoon side vs LHP/RHP, hitter vs pitcher parks, lineup spots 1–3 vs 7–9 (PA model). Two-sample t on the group biases. Slice keys come from snapshot `context` — new slices need the context captured *from that day forward*, which is why capture context is deliberately rich.
-- **Probability calibration** (QS, W): any bucket whose forecast rate misses the realized rate by ≥ 6 points (n ≥ 25).
+- **Probability calibration** (QS, W): any bucket whose forecast rate misses the realized rate by ≥ 6 points *and* falls outside the binomial 95% band (n ≥ 25). Buckets are equal-count bins over the sorted predictions (up to 6, ≥30 rows each), not fixed 20-point bands — a probability forecast concentrates in its own dynamic range (P(W) spans ~21–45%), and fixed bands squeezed all the data into two readable buckets plus outlier bins.
 - **Discrimination inversion**: the 70+ composite-score bucket must out-produce the <45 bucket (K for pitchers, TB for batters), or the score isn't ranking.
 - **Board-rank inversion** (points): FA ranks 1–3 realizing fewer points than ranks 11+.
 - **Did-not-play rate**: scratches/bench days above baseline (a playing-time forecast miss, not noise).
@@ -94,7 +94,7 @@ The knob slices work because capture stores **modifier attribution**: pitcher sn
 
 - **Bias** (mean predicted − actual), **relative bias** (% of actual mean — comparable across stats), **MAE**, and **calibration slope** (actual-on-predicted; spread honesty) per stat per engine. Bias is the tuning signal; MAE is the noise floor; slope is the over-confidence check.
 - **Score buckets** — realized production by predicted composite score (<45 / 45–55 / 55–70 / 70+): the discrimination view behind "does an 80 actually out-produce a 55?"
-- **Calibration** for probability forecasts (QS, W): predicted-probability buckets vs realized rates.
+- **Calibration** for probability forecasts (QS, W): equal-count predicted-probability bins vs realized rates. Segments to the live model cohort like headline grades (keyed on the `qs` / `w` predicted keys in `MODEL_CHANGELOG`), so a probability retune resets its curve instead of re-flagging the miscalibration it fixed.
 - **Lead-day segments** — D−0 vs D−3 accuracy.
 - **Model-version segments** — before/after a tuning change (see below).
 - **Rank quality** (`points-pitcher-start`): FA board rank buckets (1–3 / 4–10 / 11+) vs realized points.

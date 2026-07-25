@@ -223,6 +223,10 @@ export function adjustedPitcherStartPoints(
    *  `meanTeamOffense(...)` over the slate's real offenses. Null falls back
    *  to the forecast's internal (stale-anchored) neutral. */
   baselineOffense: TeamOffense | null = null,
+  /** The pitcher's OWN team's offense — run support for the W term of the
+   *  points ratio (2026-07-25 W model). Real twin only; the neutral twin
+   *  stays support-neutral so the ratio carries the signal. */
+  ownOffense: TeamOffense | null = null,
 ): AdjustedStartPoints {
   const neutralPoints = forecastPitcherPoints(
     input.role === 'starter' ? input : { ...input, role: 'starter' },
@@ -238,10 +242,13 @@ export function adjustedPitcherStartPoints(
     isHome,
     opposingOffense,
     opposingPitcher: opposingProbable?.talent ?? null,
+    ownOffense,
   });
   // Context-stripped twin: neutral park, no weather signal (the weather
   // OBJECT must exist — its fields are the nullable part), league-average
-  // offense, unknown opposing SP.
+  // offense, unknown opposing SP, league-average run support. Both twins
+  // share the real teams and isHome, so pens and the home edge cancel in
+  // the ratio by construction.
   const neutralWeather = { temperature: null, condition: null, wind: null, windSpeed: null, windDirection: null };
   const fcNeutral = buildGameForecast({
     pitcher: input.talent,

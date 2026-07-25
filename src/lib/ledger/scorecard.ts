@@ -208,17 +208,25 @@ function gradeOne(rows: JoinedRow[], stat: string, side: Side): StatGrade {
 }
 
 function calibrate(rows: { p: number; hit: boolean }[]): CalibrationBucket[] {
-  const edges = [0, 0.2, 0.4, 0.6, 0.8, 1.0001];
+  // Equal-count bins over the sorted predictions, not fixed 20-point bands.
+  // A probability forecast concentrates in its own dynamic range (P(W)
+  // spans roughly 21-45%), so fixed bands pack most starts into one or two
+  // buckets and leave the rest as unreadable outlier bins. Equal-count bins
+  // put the resolution where the data is; bin count scales with n so every
+  // bucket independently clears the findings gate's n ≥ 25.
+  if (rows.length === 0) return [];
+  const sorted = [...rows].sort((a, b) => a.p - b.p);
+  const n = sorted.length;
+  const k = Math.max(1, Math.min(6, Math.floor(n / 30)));
   const out: CalibrationBucket[] = [];
-  for (let i = 0; i < edges.length - 1; i++) {
-    const inBucket = rows.filter(r => r.p >= edges[i] && r.p < edges[i + 1]);
-    if (inBucket.length === 0) continue;
-    const predictedMean = inBucket.reduce((s, r) => s + r.p, 0) / inBucket.length;
-    const actualRate = inBucket.filter(r => r.hit).length / inBucket.length;
-    const binomialSe = Math.sqrt(Math.max(predictedMean * (1 - predictedMean), 1e-9) / inBucket.length);
+  for (let i = 0; i < k; i++) {
+    const bin = sorted.slice(Math.floor((i * n) / k), Math.floor(((i + 1) * n) / k));
+    const predictedMean = bin.reduce((s, r) => s + r.p, 0) / bin.length;
+    const actualRate = bin.filter(r => r.hit).length / bin.length;
+    const binomialSe = Math.sqrt(Math.max(predictedMean * (1 - predictedMean), 1e-9) / bin.length);
     out.push({
-      bucket: `${Math.round(edges[i] * 100)}–${Math.min(100, Math.round(edges[i + 1] * 100))}%`,
-      n: inBucket.length,
+      bucket: `${Math.round(bin[0].p * 100)}–${Math.round(bin[bin.length - 1].p * 100)}%`,
+      n: bin.length,
       predictedMean: round(predictedMean),
       actualRate: round(actualRate),
       significant: Math.abs(predictedMean - actualRate) > 1.96 * binomialSe,
@@ -640,8 +648,12 @@ export async function buildScorecard(
     }
 
     if (engine === 'pitcher-start') {
-      card.qsCalibration = calibrate(played.map(r => ({ p: r.predicted.qs ?? 0, hit: isQs(r.pitching!) })));
-      card.wCalibration = calibrate(played.map(r => ({ p: r.predicted.w ?? 0, hit: (r.pitching!.w ?? 0) > 0 })));
+      // Calibration views segment like headline grades do: a probability
+      // recalibration resets its curve to post-change data instead of
+      // re-flagging the miscalibration it just fixed (cohortRows keys off
+      // the 'qs' / 'w' predicted keys in the MODEL_CHANGELOG manifest).
+      card.qsCalibration = calibrate(cohortRows('qs').map(r => ({ p: r.predicted.qs ?? 0, hit: isQs(r.pitching!) })));
+      card.wCalibration = calibrate(cohortRows('w').map(r => ({ p: r.predicted.w ?? 0, hit: (r.pitching!.w ?? 0) > 0 })));
       card.worstMisses = playerMisses(played, ['k', 'er'], 'pit', 3);
       card.scoreBuckets = scoreBuckets(played, 'pit', [
         ['k', l => l.k ?? 0],

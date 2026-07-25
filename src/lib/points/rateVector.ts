@@ -178,9 +178,12 @@ export interface PitcherRateVector {
 }
 
 /** League-baseline P(Win) for a league-average starter in a given start.
- *  ~0.36-0.40 across MLB (team wins ~50%, SP credited on ~75-80% when he goes
- *  5+). Quality (run prevention) and depth scale around this. */
-const BASE_P_WIN_PER_START = 0.38;
+ *  Ledger-calibrated 2026-07-25: realized SP win rate was 31.9% over the
+ *  first 188 graded starts vs the 0.38 this previously assumed — same
+ *  anchor as the categories-side W model (`W_CREDIT_BASE` × even team odds
+ *  ≈ 0.33; see docs/unified-rating-model.md#start-probabilities). Quality
+ *  (run prevention) and depth scale around this. */
+const BASE_P_WIN_PER_START = 0.33;
 
 /** League-average starter ERA anchor (matches the `xwobaToXera` anchor in
  *  pitching/talent.ts: league xwOBA-allowed → 4.20). Used to scale P(Win) by

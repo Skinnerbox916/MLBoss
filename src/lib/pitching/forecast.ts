@@ -31,6 +31,7 @@ import {
   xwobaToXera,
   talentNonHrContactXwoba,
   LEAGUE_OPS,
+  LEAGUE_IP_PER_START,
 } from './talent';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,20 @@ export interface GameForecast {
   probabilities: {
     qs: number;
     w: number;
+    /** P(W) decomposition — P(team win) × P(SP credited | team win) and
+     *  the run rates behind the win odds. Snapshot into the ledger's
+     *  context so the next calibration pass can grade each part instead
+     *  of reverse-engineering the total (the 2026-07 pass couldn't). */
+    wParts: {
+      pTeam: number;
+      credit: number;
+      /** Expected runs scored / allowed per 9 for the pitcher's side. */
+      rs: number;
+      ra: number;
+      /** False when run support fell back to league-average (no own-team
+       *  offense supplied — deliberate in L6 neutral paths). */
+      ownOffenseKnown: boolean;
+    };
   };
   multipliers: {
     velocity: ContextMultiplier;
@@ -96,9 +111,11 @@ export interface GameForecast {
     park: ContextMultiplier;
     weather: ContextMultiplier;
     opp: ContextMultiplier;
-    /** Bullpen — used ONLY inside probabilities.w. Not folded into the
-     *  Layer 3 composite (per architecture decision a1: bullpen affects
-     *  only Wins). Surfaced here for breakdown UI. */
+    /** Bullpen — breakdown-UI + ledger knob-attribution surface only.
+     *  Not folded into the Layer 3 composite (per architecture decision
+     *  a1: bullpen affects only Wins), and since 2026-07-25 the Wins
+     *  odds price both pens directly in run units (see `probabilities.
+     *  wParts`) rather than through this multiplier. */
     bullpen: ContextMultiplier;
   };
 }
@@ -115,8 +132,13 @@ export interface BuildForecastArgs {
    *  the team-offense cache. */
   opposingOffense: TeamOffense | null;
   /** Talent vector for the OTHER pitcher in this game (the opposing SP).
-   *  Used to dampen Wins probability against an ace. Null when TBD. */
+   *  Prices the run-scoring side of the Wins odds. Null when TBD →
+   *  league-average anchor. */
   opposingPitcher: PitcherTalent | null;
+  /** The pitcher's OWN team's offense — run support for the Wins odds.
+   *  Optional: omit/null = league-average support (deliberate in the L6
+   *  neutral/matchup-vacuum paths, a data gap everywhere else). */
+  ownOffense?: TeamOffense | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +158,26 @@ export interface BuildForecastArgs {
  *  denominator as `TeamOffense.strikeOutRate` (per-PA since 2026-07 —
  *  see docs/history.md "Ledger-driven calibration fixes"). */
 const LEAGUE_OPS_K_RATE = 0.221;
+
+/** P(QS) shrink anchors + P(W) model anchors. Ledger-calibrated
+ *  2026-07-25 against the first 188 graded starts — rationale and
+ *  sourcing per constant: docs/unified-rating-model.md#start-probabilities. */
+const QS_BASE = 0.40;
+const QS_SPREAD = 0.55;
+/** League ERA anchor for missing pens / TBD opposing SPs — same center
+ *  as `xwobaToXera` (.318 xwOBA → 4.20). */
+const LEAGUE_ERA_ANCHOR = 4.20;
+/** MLB Pythagorean exponent (Bill James; Pythagenpat ≈ 1.83 at MLB
+ *  run environments). */
+const PYTH_EXP = 1.83;
+/** Long-run MLB home win rate ≈ .540, expressed as odds. */
+const HOME_ODDS = 0.54 / 0.46;
+/** P(SP credited | team win) at a league-average 5.4-IP projection, and
+ *  its slope per projected IP (must complete 5 and leave with the lead —
+ *  deeper starts hold credit more often). Slope is estimated, not
+ *  hard-sourced; the ledger's wParts grading will check it. */
+const W_CREDIT_BASE = 0.64;
+const W_CREDIT_PER_IP = 0.10;
 
 // `xwobaToXera`, `composeXwobaAllowed`, `talentBaa`, `talentHrPerPA`, and
 // `talentContactRate` now live in `./talent` as the single canonical
@@ -350,29 +392,39 @@ function buildOppMultiplier(
   };
 }
 
+/** Relief-only ERA with staff-wide fallback (first cold start of the
+ *  season may lack splits). Null when the team has no staff data at all. */
+function rpEraOf(team: EnrichedGame['homeTeam']): number | null {
+  return team.staffSplits?.rp?.era ?? team.staffEra ?? null;
+}
+
 /**
- * Bullpen multiplier — used ONLY inside Wins probability. Bad bullpens
- * blow leads; good bullpens lock them. Reads real RP-only ERA from the
- * team staff splits when available; falls back to overall staffEra
- * when the splits are missing (e.g. first cold start of the season).
+ * Team-offense OPS → run-rate factor for the Wins odds. Cross-team
+ * season regressions put runs/game ≈ linear in OPS with a slope of
+ * ~3% of league scoring per 10 OPS points (coefficient ~3 per OPS
+ * unit); clamps sit at the best/worst real MLB team offenses (±20%).
+ * See docs/unified-rating-model.md#start-probabilities.
+ */
+function runsFactor(ops: number | null): number {
+  if (ops == null) return 1.0;
+  return clamp(1 + (ops - LEAGUE_OPS) * 3.0, 0.80, 1.20);
+}
+
+/**
+ * Bullpen multiplier — DISPLAY + ledger knob-attribution only since
+ * 2026-07-25. Bad bullpens blow leads; good bullpens lock them. The
+ * Wins odds now price both pens directly in run units (`rpEraOf`
+ * inside the P(W) block); this ContextMultiplier survives as the
+ * breakdown-UI surface and the captured `mults.bullpen` knob.
  *
- * Anchor: 5.00 ERA → -8% on W odds; 3.40 ERA → +8% on W odds. Bullpen
- * ERA scale runs slightly hotter than overall staff ERA, but the
- * clamp range absorbs the small offset and the per-team baseline is
- * still ~4.10-4.20 — same calibration as the staffEra path.
- *
- * TODO: opposing-team bullpen for the user's pitcher's P(W). A weak
- * opposing pen makes late-inning run support more likely for the
- * user's team, lifting W odds by ~2-3%. Real but needs co-modeling
- * of the user's team's offense quality (currently assumed average in
- * P(W)). See docs/history.md "2026-05 — Batter forecast SP/RP blend"
- * for the scoping rationale.
+ * Anchor: 4.20 ERA = neutral, ±0.10 multiplier at the clamp edges.
+ * Bullpen ERA scale runs slightly hotter than overall staff ERA, but
+ * the clamp range absorbs the small offset and the per-team baseline
+ * is still ~4.10-4.20 — same calibration as the staffEra path.
  */
 function buildBullpenMultiplier(game: EnrichedGame, isHome: boolean): ContextMultiplier {
   const ownTeam = isHome ? game.homeTeam : game.awayTeam;
-  const rpEra = ownTeam.staffSplits?.rp?.era ?? null;
-  const fallbackEra = ownTeam.staffEra ?? null;
-  const era = rpEra ?? fallbackEra;
+  const era = rpEraOf(ownTeam);
 
   if (era == null) {
     return {
@@ -401,7 +453,7 @@ function buildBullpenMultiplier(game: EnrichedGame, isHome: boolean): ContextMul
 // ---------------------------------------------------------------------------
 
 export function buildGameForecast(args: BuildForecastArgs): GameForecast {
-  const { pitcher, game, isHome, opposingOffense, opposingPitcher } = args;
+  const { pitcher, game, isHome, opposingOffense, opposingPitcher, ownOffense = null } = args;
   const park = game.park ?? null;
 
   // ============================================================
@@ -574,25 +626,60 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
   // ----- Probabilities ----------------------------------------------------
   // QS: P(IP ≥ 6 AND ER ≤ 3). Heuristic on IP and expectedERA. Now that
   // expectedERA includes park/opp/weather, QS odds respond to context too
-  // (a tough park dampens an ace's QS probability, etc.).
+  // (a tough park dampens an ace's QS probability, etc.). The raw 0-1
+  // heuristic is over-spread — its middle is honest but its tails aren't —
+  // so it's shrunk toward the league QS base before use. Evidence +
+  // anchors: docs/unified-rating-model.md#start-probabilities.
   const ipFactor = clamp((expectedIp - 4.5) / 1.5, 0, 1);
   const eraFactor = clamp((4.50 - expectedERA) / 2.50, 0, 1);
-  const qs = clamp01(0.5 * ipFactor + 0.5 * eraFactor);
+  const rawQs = 0.5 * ipFactor + 0.5 * eraFactor;
+  const qs = clamp01(QS_BASE + QS_SPREAD * (rawQs - QS_BASE));
 
-  // W: pitcher talent vs opposing SP talent + bullpen + home/away.
-  // talent diff is computed from the un-adjusted talent xwOBAs (it's
-  // a relative measure of skill; we don't want park to swing W odds via
-  // BOTH our SP's xwoba going up AND the opposing SP's going up — they
-  // cancel for the talent-diff, then bullpen and home/away add).
+  // W: P(team wins) × P(SP credited | team win), both sides priced in
+  // runs. Replaced the additive talent-nudge formula 2026-07-25 after
+  // the ledger graded its spread as noise (n=188, slope ~0.1, AUC 0.52) —
+  // wins hinge on run support and game context far more than SP-vs-SP
+  // talent. Talent ERAs enter context-free: park/weather inflate both
+  // sides of the same game and roughly cancel in the win odds, while
+  // lineup quality is side-specific and enters via run factors.
+  // Anchors + evidence: docs/unified-rating-model.md#start-probabilities.
   const ourTalentXwoba = composeXwobaAllowed(pitcher);
-  const oppPitcherTalentDiff = opposingPitcher
-    ? ourTalentXwoba - composeXwobaAllowed(opposingPitcher)
-    : 0;
-  const talentDiff = clamp(-oppPitcherTalentDiff / 0.04 * 0.15, -0.15, 0.15);
+  const ownPenEra = rpEraOf(isHome ? game.homeTeam : game.awayTeam) ?? LEAGUE_ERA_ANCHOR;
+  const oppPenEra = rpEraOf(isHome ? game.awayTeam : game.homeTeam) ?? LEAGUE_ERA_ANCHOR;
+
+  // Runs allowed per 9 while we pitch: our SP's talent ERA over his
+  // expected innings, our pen for the rest, the opposing lineup's run
+  // factor (OPS vs our hand — `oppOps`, read at the top) on the whole.
+  const ra = ((xwobaToXera(ourTalentXwoba) * expectedIp
+    + ownPenEra * Math.max(0, 9 - expectedIp)) / 9) * runsFactor(oppOps);
+
+  // Runs scored per 9 — the run-support side the old formula assumed
+  // average: opposing SP talent (league anchor when TBD) over a league-
+  // average start, their pen after, our own offense's run factor (OPS
+  // vs the opposing SP's hand) on the whole.
+  const oppSpEra = opposingPitcher
+    ? xwobaToXera(composeXwobaAllowed(opposingPitcher))
+    : LEAGUE_ERA_ANCHOR;
+  const ownOps =
+    opposingPitcher?.throws === 'L' ? ownOffense?.vsLeft?.ops ?? ownOffense?.ops ?? null
+    : opposingPitcher?.throws === 'R' ? ownOffense?.vsRight?.ops ?? ownOffense?.ops ?? null
+    : ownOffense?.ops ?? null;
+  const rs = ((oppSpEra * LEAGUE_IP_PER_START
+    + oppPenEra * (9 - LEAGUE_IP_PER_START)) / 9) * runsFactor(ownOps);
+
+  // Pythagorean win odds + the long-run home edge, capped to the range
+  // real single-game MLB win probabilities live in (~.28-.72; the
+  // biggest moneyline favorites sit around −300).
+  const teamOdds = Math.pow(rs / ra, PYTH_EXP) * (isHome ? HOME_ODDS : 1 / HOME_ODDS);
+  const pTeam = clamp(teamOdds / (1 + teamOdds), 0.28, 0.72);
+
+  const credit = clamp(
+    W_CREDIT_BASE + W_CREDIT_PER_IP * (expectedIp - LEAGUE_IP_PER_START),
+    0.52, 0.78,
+  );
+  const w = clamp(pTeam * credit, 0.10, 0.55);
+  const wParts = { pTeam, credit, rs, ra, ownOffenseKnown: ownOps != null };
   const bullpen = buildBullpenMultiplier(game, isHome);
-  const bullpenAdjust = (bullpen.multiplier - 1) * 0.5;
-  const homeAdj = isHome ? 0.025 : -0.025;
-  const w = clamp01(0.40 + talentDiff + bullpenAdjust + homeAdj);
 
   // ----- Surface multipliers (display only — already folded in above) ----
   // These are computed for the breakdown UI to show the user WHY their
@@ -623,7 +710,7 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
       h: expectedH,
       hr: expectedHR,
     },
-    probabilities: { qs, w },
+    probabilities: { qs, w, wParts },
     multipliers: { velocity, platoon, park: parkMult, weather, opp, bullpen },
   };
 }

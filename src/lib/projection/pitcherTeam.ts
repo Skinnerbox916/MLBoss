@@ -294,6 +294,7 @@ export function projectPitcherPlayer(
   }): PerStartProjection => {
     const { day, game, isHome, talent, pp, doubleHeader, inferred } = args;
     const opponentTeam = isHome ? game.awayTeam : game.homeTeam;
+    const ownTeam = isHome ? game.homeTeam : game.awayTeam;
     const opposingOffense = deps.teamOffense?.get(opponentTeam.mlbId) ?? null;
     const opposingProbable = isHome ? game.awayProbablePitcher : game.homeProbablePitcher;
 
@@ -303,6 +304,7 @@ export function projectPitcherPlayer(
       isHome,
       opposingOffense,
       opposingPitcher: opposingProbable?.talent ?? null,
+      ownOffense: deps.teamOffense?.get(ownTeam.mlbId) ?? null,
     });
 
     const rating = getPitcherRating({

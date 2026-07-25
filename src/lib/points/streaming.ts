@@ -466,21 +466,29 @@ export async function analyzePointsStreaming(
     ...startingArms.map(m => ({ name: m.arm.name, team: m.arm.editorial_team_abbr })),
   ]);
 
-  // Opposing-offense context for matchup-adjusted per-start points. One
-  // fetch per distinct opposing team (1h-cached upstream); null entries fall
-  // back to a neutral-offense forecast inside the adjuster.
+  // Team-offense context for matchup-adjusted per-start points: opposing
+  // teams (matchup difficulty) plus each arm's OWN team (run support for
+  // the W term, 2026-07-25). One fetch per distinct team (1h-cached
+  // upstream); null entries fall back to a neutral-offense forecast inside
+  // the adjuster.
   const oppIds = [...new Set([
     ...toScore.flatMap(m => m.starts.map(s => s.oppMlbId)),
     ...startingArms.flatMap(m => m.starts.map(s => s.oppMlbId)),
   ])];
+  const ownTeamId = (s: MatchedStart) => (s.isHome ? s.game.homeTeam : s.game.awayTeam).mlbId;
+  const ownIds = [...new Set([
+    ...toScore.flatMap(m => m.starts.map(ownTeamId)),
+    ...startingArms.flatMap(m => m.starts.map(ownTeamId)),
+  ])];
   const offenseByTeam = new Map(
-    await Promise.all(oppIds.map(async id => [id, await getTeamOffense(id)] as const)),
+    await Promise.all([...new Set([...oppIds, ...ownIds])].map(async id => [id, await getTeamOffense(id)] as const)),
   );
   // Empirical league-average opponent — the anchor the per-start matchup
-  // ratio is measured against (see matchupAdjust.meanTeamOffense). My own
-  // arms' opponents joining this set nudges the anchor, so FA stream totals
-  // can drift a rounding digit vs the pre-facts payload.
-  const slateMeanOffense = meanTeamOffense([...offenseByTeam.values()]);
+  // ratio is measured against (see matchupAdjust.meanTeamOffense), still
+  // averaged over OPPONENTS only so adding own-team rows above doesn't
+  // move it. My own arms' opponents joining this set nudges the anchor,
+  // so FA stream totals can drift a rounding digit vs the pre-facts payload.
+  const slateMeanOffense = meanTeamOffense(oppIds.map(id => offenseByTeam.get(id) ?? null));
 
   // Price one arm's matched probable starts: neutral per-start baseline
   // (rate × ipPerStart) for pts/IP context and fallback, then a per-start
@@ -505,7 +513,12 @@ export async function analyzePointsStreaming(
       let pts = perStart.expectedPoints;
       let hint: string | undefined;
       try {
-        const adj = adjustedPitcherStartPoints(startInput, profile, game, isHome, offenseByTeam.get(oppMlbId) ?? null, slateMeanOffense);
+        const ownMlbId = (isHome ? game.homeTeam : game.awayTeam).mlbId;
+        const adj = adjustedPitcherStartPoints(
+          startInput, profile, game, isHome,
+          offenseByTeam.get(oppMlbId) ?? null, slateMeanOffense,
+          offenseByTeam.get(ownMlbId) ?? null,
+        );
         pts = adj.points;
         hint = adj.hint || undefined;
       } catch {

@@ -124,9 +124,11 @@ interface NormWindow {
 }
 
 const PITCHER_NORM: Record<number, NormWindow> = {
-  // QS — P(QS), so window is straightforwardly 0-1.
+  // QS — P(QS). The forecast layer shrinks its raw heuristic toward the
+  // 0.40 league base (output range ~0.18-0.73), so the window brackets
+  // that: docs/unified-rating-model.md#start-probabilities.
   83: {
-    label: 'QS', betterIs: 'higher', worst: 0.10, best: 0.70,
+    label: 'QS', betterIs: 'higher', worst: 0.15, best: 0.65,
     formatExpected: (v) => `${(v * 100).toFixed(0)}% QS`,
   },
   // K — per-game expected K count. Window 3.5 (low) → 9.0 (elite).
@@ -134,9 +136,11 @@ const PITCHER_NORM: Record<number, NormWindow> = {
     label: 'K', betterIs: 'higher', worst: 3.5, best: 9.0,
     formatExpected: (v) => `${v.toFixed(1)} K`,
   },
-  // W — P(W). Window 0.20 (long-shot) → 0.65 (favorite).
+  // W — P(W) from the decomposed P(team win) × P(credit) model (typical
+  // range ~0.20-0.48, hard-clamped 0.10-0.55), so the window brackets
+  // the typical range: docs/unified-rating-model.md#start-probabilities.
   28: {
-    label: 'W', betterIs: 'higher', worst: 0.20, best: 0.65,
+    label: 'W', betterIs: 'higher', worst: 0.20, best: 0.48,
     formatExpected: (v) => `${(v * 100).toFixed(0)}% W`,
   },
   // ERA — per-game expected ERA. Window 5.50 (worst) → 2.30 (best).
@@ -205,10 +209,11 @@ function pickKHint(f: GameForecast): string {
 }
 
 function pickWHint(f: GameForecast): string {
-  const bullpen = f.multipliers.bullpen;
-  if (bullpen.available && Math.abs(bullpen.deltaPct) >= 4) {
-    return bullpen.deltaPct > 0 ? 'elite pen' : 'shaky pen';
-  }
+  // The strongest W signal is now the game's win odds themselves
+  // (run support + opposing SP + pens), not the bullpen alone.
+  const { pTeam } = f.probabilities.wParts;
+  if (pTeam >= 0.58) return 'favored';
+  if (pTeam <= 0.42) return 'underdog';
   return '';
 }
 

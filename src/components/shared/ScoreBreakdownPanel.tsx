@@ -71,9 +71,11 @@ export default function ScoreBreakdownPanel({
   c, teamOffense, scoredCategories, focusMap, categoryWeights,
 }: ScoreBreakdownPanelProps) {
   const oppOffense = teamOffense[c.opponentMlbId] ?? null;
+  const ownMlbId = (c.isHome ? c.game.homeTeam : c.game.awayTeam).mlbId;
   const pillInput: PillInput = {
     pp: c.pp,
     oppOffense,
+    ownOffense: teamOffense[ownMlbId] ?? null,
     park: c.park,
     weather: c.weather,
     isHome: c.isHome,

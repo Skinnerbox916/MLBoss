@@ -51,7 +51,7 @@ const STAT_WHIP = 27;
 // LEAGUE_IP_PER_START so they move together if the IP anchor is retuned.
 const REF_IP = LEAGUE_IP_PER_START;              // 5.4
 const REF_K = (8.6 / 9) * LEAGUE_IP_PER_START;   // ~8.6 K/9 → ~5.16
-const REF_W = 0.38;                              // P(W) league anchor (team ~50%, SP credited ~76%)
+const REF_W = 0.33;                              // P(W) league anchor — matches W_BASE (ledger-realized 31.9%, n=188; see docs/unified-rating-model.md#start-probabilities)
 const REF_QS = 0.42;                             // league SP quality-start rate ~40-45%
 const REF_ER = (4.10 / 9) * LEAGUE_IP_PER_START; // ~4.10 ERA → ~2.46 ER/start
 const REF_BR = 1.28 * LEAGUE_IP_PER_START;       // ~1.28 WHIP → ~6.9 baserunners/start

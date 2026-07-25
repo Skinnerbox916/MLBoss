@@ -231,15 +231,30 @@ interface GameForecast {
   expectedERA: number;
   expectedPerPA: { kPerPA, bbPerPA, hrPerPA, contactXwoba, baa };
   expectedPerGame: { ip, pa, k, bb, er, h, hr };
-  probabilities: { qs, w };
+  probabilities: { qs, w, wParts: { pTeam, credit, rs, ra, ownOffenseKnown } };
   multipliers: { velocity, platoon, park, weather, opp, bullpen };
 }
 ```
 
 - `expectedPerPA` — adjusted for opposing offense (log5 against opp K-rate-vs-hand, HR-park, etc.). The **batter side** consumes this for log5 calculations against the opposing SP.
 - `expectedPerGame` — projected IP, K, BB, ER, H, HR for the start. Drives the per-category score windows in Layer 3.
-- `probabilities` — P(QS), P(W). Bullpen quality (`MLBGame.{home,away}Team.staffSplits.rp.era` for real RP-only ERA, with `staffEra` as the fallback when splits are missing) and opposing-SP talent fold into P(W). See `buildBullpenMultiplier` in `pitching/forecast.ts`.
+- `probabilities` — P(QS), P(W) + the W decomposition (`wParts`). P(W) prices both sides in runs: SP talents, both pens (`MLBGame.{home,away}Team.staffSplits.rp.era` with `staffEra` fallback), opposing-lineup and own-offense run factors. See [Start probabilities](#start-probabilities) below.
 - `multipliers` — surfaced for breakdown UI. Bullpen is the only one that doesn't fold into the Layer 3 composite (it only affects W odds). The `park` multiplier comes from `getParkAdjustment` — shared with the batter-side rating.
+
+### Start probabilities
+
+The one home for the P(QS) / P(W) calibration rationale. Values live in `pitching/forecast.ts` (probability constants + the term scales inside `buildGameForecast`); the Layer 3 normalization windows in `pitching/rating.ts` bracket the resulting output ranges.
+
+**P(W) = P(team wins) × P(SP credited | team win).** The original additive formula (`0.40 ± SP-talent ± bullpen ± home`) was graded by the first ledger cycle (2026-07-25, n=188 starts) as noise: mean forecast 40.5% against a realized 31.9%, calibration slope ~0.1 (honest = 1.0), AUC 0.52 — realized win rate was flat ~32% across every forecast band, because wins hinge on run support and game context far more than SP-vs-SP talent. The replacement decomposes:
+
+- **P(team wins)** — Pythagorean win odds (exponent `PYTH_EXP` 1.83, Bill James / Pythagenpat at MLB run environments) over both sides' expected runs per 9. Runs allowed: our SP's *talent* ERA over his projected innings + our pen (`rpEraOf`: relief-only ERA, staff fallback) for the rest, scaled by the opposing lineup's run factor. Runs scored — the run-support side the old formula assumed average: opposing SP talent ERA (league 4.20 anchor when TBD) over a league-average 5.4-IP start + their pen, scaled by our own offense's run factor vs the opposing SP's hand. Talent ERAs enter context-free: park/weather inflate both sides of one game and roughly cancel in the odds ratio, while lineup quality is side-specific. `runsFactor` maps team OPS → run rate at ~3% of league scoring per 10 OPS points (cross-team season regressions, runs/G ≈ linear in OPS), clamped ±20% ≈ best/worst real MLB offenses. Home edge is the long-run MLB home win rate (~.540) applied in odds space, and the resulting probability is capped to .28–.72 — the band real single-game MLB win probabilities live in (biggest moneyline favorites ≈ −300).
+- **P(credited | team win)** — the starter must complete 5 and hand a lead to the pen, so credit share rises with projected depth: `0.64 + 0.10 × (IP − 5.4)`, clamped .52–.78. The 0.64 base reproduces the pool's realized 31.9% at neutral inputs (0.50 × 0.64 ≈ 0.32); the slope is estimated, not hard-sourced — flagged for the ledger to check.
+
+Final clamp 0.10–0.55; typical output ~0.20–0.48. Every input is regressed/clamped upstream and every missing input falls back to a league anchor (run-support-neutral in the L6 neutral/vacuum paths, which deliberately omit `ownOffense`). The full decomposition is returned as `probabilities.wParts` and snapshotted into ledger context, so the next calibration pass can grade P(team win), credit share, and run rates separately instead of reverse-engineering the total — the constraint that hampered the first pass.
+
+**P(QS) keeps its shape but shrinks its tails.** The raw `0.5·ipFactor + 0.5·eraFactor` heuristic graded honest in its middle bands (50% forecasts realized 52.6%) but over-spread ~3× at the tails (13% forecasts realized 27%; 72% realized 45%; logit slope 0.25 ± 0.14). It is now shrunk 0.55× toward a 0.40 base — the middle barely moves, the tails compress. Output range ~0.18-0.73.
+
+Re-grade both curves at `/admin/forecast` (they segment at model version `2026.07.25`) before re-widening anything; the pre-recalibration evidence is summarized in [history.md](./history.md#2026-07--wqs-probability-recalibration).
 
 ### Layer 3 — `PitcherRating`
 
@@ -265,11 +280,13 @@ Sub-score normalization windows (drives the per-cat color strips on the breakdow
 
 | Sub-score | Projection source | Normalization window |
 |---|---|---|
-| **QS** | `probabilities.qs` | 0.10 → 0.70 |
+| **QS** | `probabilities.qs` | 0.15 → 0.65 |
 | **K** | `expectedPerGame.k` | 3.5 → 9.0 |
-| **W** | `probabilities.w` | 0.20 → 0.65 |
+| **W** | `probabilities.w` | 0.20 → 0.48 |
 | **ERA** | `expectedERA` | 5.50 → 2.30 (lower is better) |
 | **WHIP** | derived from `expectedPerPA.bbPerPA` and `expectedPerPA.baa` | 1.55 → 0.95 (lower is better) |
+
+The QS/W windows bracket the probability output ranges set by the calibration in [Start probabilities](#start-probabilities) — retune them together.
 
 ## Regime-shift probe (talent layer)
 
@@ -453,6 +470,8 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | Velocity slope (down / up) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | -1 mph YoY ≈ 5% perf drop; +1 mph ≈ 3% lift (asymmetry is empirically motivated) |
 | Velocity multiplier cap | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Single-factor cap on composite influence — but velocity is informational only now (regime probe absorbs the signal) |
 | `tierFromScore` thresholds | [pitching/rating.ts](../src/lib/pitching/rating.ts) | Score boundaries between ace/tough/avg/weak/bad |
+| P(W) model (`PYTH_EXP`, `HOME_ODDS`, `W_CREDIT_BASE/PER_IP`, `runsFactor`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Pythagorean odds + IP-linked credit share; ledger-anchored 2026-07, n=188 starts — see [§Start probabilities](#start-probabilities) |
+| `QS_BASE`, `QS_SPREAD` | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Raw QS heuristic shrunk toward league base; tails were ~3× over-spread — see [§Start probabilities](#start-probabilities) |
 | `PA_FULL_TRUST` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Effective PA for full sample-confidence; see [league-baselines.md](./league-baselines.md) |
 | `MAX_CONFIDENCE_BAND` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Cap on pitcher score uncertainty band |
 | `MAX_BATTER_BAND` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Cap on batter score uncertainty band |

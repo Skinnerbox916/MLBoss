@@ -21,7 +21,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.07.23';
+export const MODEL_VERSION = '2026.07.25';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -65,6 +65,24 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'batter-week', stats: '*' },
       { engine: 'points-batter-day', stats: '*' },
       { engine: 'pitcher-start', stats: ['k', 'bb', 'h', 'hr', 'er'] },
+      { engine: 'points-pitcher-start', stats: '*' },
+    ],
+  },
+  {
+    version: '2026.07.25',
+    date: '2026-07-25',
+    summary:
+      'W/QS probability rebuild against the first 188 graded starts (docs/history.md ' +
+      '"2026-07 — W/QS probability recalibration"): the additive P(W) formula (0.40 ± ' +
+      'talent/bullpen/home) graded as noise (realized 31.9% vs 40.5% mean forecast; slope ~0.1, ' +
+      'AUC 0.52) and was replaced by P(team win) × P(credit | win) — Pythagorean run odds from ' +
+      'SP talent ERAs + both pens + lineup run factors (incl. own-team run support, previously ' +
+      'assumed average) with an IP-linked credit share; decomposition snapshotted as context.wParts. ' +
+      'P(QS) shrunk 0.55× toward a 0.40 base (middle bands were honest, tails ~3× over-spread). ' +
+      'Rate/volume stats untouched — k/bb/h/hr/er/ip keep pooling. points-pitcher-start carries ' +
+      'P(W) inside its matchup ratio, so its points grade segments too.',
+    touched: [
+      { engine: 'pitcher-start', stats: ['qs', 'w'] },
       { engine: 'points-pitcher-start', stats: '*' },
     ],
   },

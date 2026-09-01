@@ -136,12 +136,14 @@ export async function pullStatcastDay(gameDate: string): Promise<PullResult> {
   return {
     gameDate, csvBytes: csv.length, parsedRows: records.length, skipped, inserted,
     games: new Set(rows.map(r => r.gamePk)).size,
-    plateAppearances: rows.filter(r => r.events != null).length,
+    plateAppearances: rows.filter(r => r.events != null && r.events !== 'truncated_pa').length,
   };
 }
 
 /** Per-game batting totals from the ingested events — for reconciling a
- *  pull against MLB box scores. `pa` counts PA-ending pitches. */
+ *  pull against MLB box scores. `pa` counts PA-ending pitches, excluding
+ *  Savant's `truncated_pa` (an at-bat cut off by an inning-ending
+ *  baserunning out — not a plate appearance; 66 of ~34k in Aug 2026). */
 export async function eventGameTotals(gameDate: string): Promise<
   { gamePk: number; pa: number; k: number; bb: number; hr: number; h: number; pitches: number }[]
 > {
@@ -149,7 +151,7 @@ export async function eventGameTotals(gameDate: string): Promise<
   const rows = await db.execute(sql`
     select game_pk,
       count(*)::int as pitches,
-      count(*) filter (where events is not null)::int as pa,
+      count(*) filter (where events is not null and events <> 'truncated_pa')::int as pa,
       count(*) filter (where events in ('strikeout','strikeout_double_play'))::int as k,
       count(*) filter (where events in ('walk','intent_walk'))::int as bb,
       count(*) filter (where events = 'home_run')::int as hr,

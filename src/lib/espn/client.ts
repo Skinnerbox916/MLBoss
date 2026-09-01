@@ -4,6 +4,7 @@
  */
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2';
+const ESPN_USER_AGENT = 'MLBoss/1.0';
 
 export interface ESPNPitcher {
   displayName: string;
@@ -61,7 +62,11 @@ export async function fetchESPNScoreboard(
 
   try {
     const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
+      // ESPN's edge started rejecting Node's default User-Agent with 403 on
+      // 2026-08-09 (browser UAs and anything with parentheses too). A bare
+      // product token passes. Without it the slate silently renders with no
+      // probable pitchers — ESPN is the only probables source.
+      headers: { Accept: 'application/json', 'User-Agent': ESPN_USER_AGENT },
       next: { revalidate: 300 }, // 5 min cache (probable pitchers update frequently)
     });
 

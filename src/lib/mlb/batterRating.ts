@@ -67,7 +67,7 @@ import {
 import { getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
 import { platoonSummaryFactor, facingHandFrom } from './platoon';
 import { paOpportunityRatio } from './paBySpot';
-import { buildBatterForecast } from './batterForecast';
+import { buildBatterForecast, type BatterModifierKnobs } from './batterForecast';
 import { focusToCategoryWeights, type Focus } from '@/lib/rating/focus';
 
 // ---------------------------------------------------------------------------
@@ -104,6 +104,8 @@ export interface CategoryContribution {
   /** Short matchup-modifier hint (e.g. "vs Alcántara (sub-.230 BAA)",
    *  "Coors park", ""). Empty when the modifier is neutral / missing. */
   modifierHint: string;
+  /** Per-knob attribution of `expected / baseline` (L2 pass-through). */
+  knobs: BatterModifierKnobs;
 }
 
 export interface RatingMultiplier {
@@ -129,6 +131,9 @@ export interface BatterRating {
   /** All scored categories, in stable order (sorted by absolute
    *  contribution descending at the call site if the UI wants to). */
   categories: CategoryContribution[];
+  /** Share of PAs priced against the opposing SP (rest = bullpen); absent on
+   *  the degraded/no-context rating. Stamped into ledger snapshots. */
+  spShare?: number;
   platoon: RatingMultiplier;
   opportunity: RatingMultiplier;
   /** Surface multiplier — weather is now applied per-cat, this is the
@@ -365,7 +370,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
     if (!f) continue;
 
     const cfg = CATEGORY_BASELINE_CONFIG[cat.stat_id]!;
-    const { baseline, expected, effectivePA, modifierHint } = f;
+    const { baseline, expected, effectivePA, modifierHint, knobs } = f;
     const normalized = normalizeRate(expected, cat.stat_id, cat.betterIs);
     const weight = weights[cat.stat_id] ?? 0;
     const focus = focusMap?.[cat.stat_id] ?? 'neutral';
@@ -388,6 +393,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
       conceded,
       display: `${formatRate(cat.stat_id, expected)} ${cfg.label}${cat.stat_id === 3 ? '' : '/PA'}`,
       modifierHint,
+      knobs,
     });
 
     composite += weight * normalized;
@@ -450,6 +456,7 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
     netVsNeutral,
     tier,
     categories: contributions,
+    spShare: forecast.spShare,
     platoon,
     opportunity,
     weather,

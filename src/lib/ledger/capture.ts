@@ -274,15 +274,24 @@ export async function captureBatterSlate(
       pa: day.expectedPA,
       score: day.rating.score,
     };
-    // Per-stat modifier attribution: adjusted / talent-baseline rate ratio
-    // (park + platoon + opp SP + weather + order, combined). >1 = the
-    // matchup context boosted this stat above the player's neutral talent.
+    // Modifier attribution. `mods` = adjusted / talent-baseline ratio per
+    // stat (every knob combined) — the legacy combined dial. `knobs` (since
+    // 2026-09-01) = the same ratio decomposed per L2 knob, knob-first
+    // (`knobs.park.hr`, `knobs.pitcher.tb`, ...) mirroring the pitcher
+    // engine's `mults`. The fit layer needs the decomposition: with only
+    // the combined ratio, park / platoon / opposing-pitcher effects can't
+    // be separated no matter how much data accrues.
     const mods: Record<string, number> = {};
+    const knobs: Record<string, Record<string, number>> = {};
     for (const [key, statId] of BATTER_STAT_KEYS) {
       const cat = proj.byCategory.get(statId);
       if (cat) predicted[key] = cat.expectedCount;
       const rated = day.rating.categories.find(c => c.statId === statId);
       if (rated && rated.baseline > 1e-9) mods[key] = round3(rated.expected / rated.baseline);
+      for (const [knob, mult] of Object.entries(rated?.knobs ?? {})) {
+        if (typeof mult !== 'number' || !Number.isFinite(mult)) continue;
+        (knobs[knob] ??= {})[key] = round3(mult);
+      }
     }
     rows.push({
       gameDate,
@@ -304,6 +313,8 @@ export async function captureBatterSlate(
         parkFactor: day.parkFactor ?? null,
         weatherFlag: day.weatherFlag ?? null,
         mods,
+        knobs,
+        spShare: day.rating.spShare != null ? round3(day.rating.spShare) : null,
         // Joinability + candidate-confounder screen (2026-07, see
         // docs/forecast-verification.md#snapshot-context). On doubleheader
         // days these describe game 1 (the dedup map keeps the first

@@ -21,7 +21,10 @@ function* dates(from: string, to: string) {
 
 async function boxscoreTotals(gameDate: string) {
   const sched = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${gameDate}&gameType=R`).then(r => r.json());
-  const pks: number[] = (sched.dates ?? []).flatMap((d: { games: { gamePk: number }[] }) => d.games.map(g => g.gamePk));
+  // Postponed / cancelled entries stay on the schedule for their original date
+  // with no pitches; Savant has nothing for them, so don't report them as gaps.
+  const pks: number[] = (sched.dates ?? []).flatMap((d: { games: { gamePk: number; status: { detailedState: string } }[] }) =>
+    d.games.filter(g => !/Postponed|Cancelled|Suspended/.test(g.status.detailedState)).map(g => g.gamePk));
   const out = new Map<number, { pa: number; k: number; bb: number; hr: number; h: number }>();
   for (const pk of pks) {
     const box = await fetch(`https://statsapi.mlb.com/api/v1/game/${pk}/boxscore`).then(r => r.json());

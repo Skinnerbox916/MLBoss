@@ -88,6 +88,7 @@ If a model-layer function needs data, the orchestrator passes it in. The model l
 | **Cache + sessions** | Redis (`cache:*`, `user:*`, `token:*`) | Anything rebuildable from upstream APIs | Tiered TTLs via `withCache` (below); safe to flush by tier |
 | **Observations** | Redis (`obs:*`) | Small witnessed signals that decay to "no signal" | See [Observation stores](#observation-stores) |
 | **Durable ledger** | Postgres (Drizzle, `src/lib/db/`) | What can't be refetched and must accumulate: users + roles, per-user preferences, forecast snapshots + graded actuals | Migrations via `npm run db:generate` / `db:migrate`; schema is user-scoped (multi-tenant) from day one |
+| **Retro corpus** (2026-09) | Postgres, `statcast_events` | Raw Statcast pitch events pulled per game date (`src/lib/retro/statcast.ts`). *Refetchable*, so not ledger by the rubric — it lives in Postgres because as-of-date aggregation of the Savant inputs is a SQL problem, and a season is ~800k rows. Rebuildable from Savant; never read by engine code, only by the retro/fit pipeline (docs/forecast-verification.md) |
 
 Rule of thumb: if losing it means waiting for the world to repeat itself, it's ledger (or an `obs:` key when it's a small decaying signal); if you can refetch it, it's cache. Feature code never talks to `pg` directly — go through the modules in `src/lib/db/` (users, prefs) and `src/lib/ledger/` (forecast verification, see [forecast-verification.md](./forecast-verification.md)).
 

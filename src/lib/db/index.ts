@@ -11,6 +11,7 @@ export {
   userPrefs,
   forecastSnapshots,
   playerGameActuals,
+  statcastEvents,
   type UserRole,
 } from './schema';
 export { upsertUserOnLogin, roleFromEnv } from './users';

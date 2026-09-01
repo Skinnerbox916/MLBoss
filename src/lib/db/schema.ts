@@ -9,6 +9,8 @@ import {
   primaryKey,
   uniqueIndex,
   index,
+  smallint,
+  real,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -116,4 +118,66 @@ export const playerGameActuals = pgTable(
     fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.gameDate, t.mlbId] })],
+);
+
+/**
+ * Raw Statcast pitch events — the retro corpus. One row per pitch, pulled
+ * per game date from Savant's `statcast_search/csv` export. This is NOT
+ * ledger data: it is refetchable and carries no forecast, so it is neither
+ * immutable-by-contract nor first-write-wins in spirit — it is a rebuildable
+ * bulk dataset that lives in Postgres because as-of-date aggregation
+ * (every Savant leaderboard input the talent layer consumes, sliced to
+ * "through the day before the game") is a SQL problem, not a cache problem.
+ * See docs/data-architecture.md#the-three-storage-legs and
+ * docs/forecast-verification.md (retro).
+ *
+ * Columns are the subset the engine's Savant-derived inputs are built from
+ * (xwOBA / xBA / xSLG / xwOBAcon via the estimated_* fields + woba_value;
+ * K% / BB% via `events`; hard-hit + barrel via launch_speed /
+ * launch_speed_angle; whiff via `description`; velocity via release_speed
+ * by pitch_type). Anything else is re-pullable.
+ */
+export const statcastEvents = pgTable(
+  'statcast_events',
+  {
+    gamePk: integer('game_pk').notNull(),
+    gameDate: date('game_date').notNull(),
+    atBatNumber: integer('at_bat_number').notNull(),
+    pitchNumber: integer('pitch_number').notNull(),
+    inning: smallint('inning'),
+    inningTopbot: text('inning_topbot'),
+    batter: integer('batter').notNull(),
+    pitcher: integer('pitcher').notNull(),
+    stand: text('stand'),
+    pThrows: text('p_throws'),
+    homeTeam: text('home_team'),
+    awayTeam: text('away_team'),
+    pitchType: text('pitch_type'),
+    releaseSpeed: real('release_speed'),
+    description: text('description'),
+    /** PA-ending result (strikeout, walk, single, ...); null on non-terminal pitches. */
+    events: text('events'),
+    bbType: text('bb_type'),
+    launchSpeed: real('launch_speed'),
+    launchAngle: real('launch_angle'),
+    /** Savant batted-ball class; 6 = barrel. */
+    launchSpeedAngle: smallint('launch_speed_angle'),
+    estBa: real('est_ba'),
+    estWoba: real('est_woba'),
+    estSlg: real('est_slg'),
+    wobaValue: real('woba_value'),
+    wobaDenom: real('woba_denom'),
+    babipValue: real('babip_value'),
+    isoValue: real('iso_value'),
+    balls: smallint('balls'),
+    strikes: smallint('strikes'),
+    outsWhenUp: smallint('outs_when_up'),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.gamePk, t.atBatNumber, t.pitchNumber] }),
+    index('statcast_events_date').on(t.gameDate),
+    index('statcast_events_batter_date').on(t.batter, t.gameDate),
+    index('statcast_events_pitcher_date').on(t.pitcher, t.gameDate),
+  ],
 );

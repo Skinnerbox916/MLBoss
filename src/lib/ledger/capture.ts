@@ -413,7 +413,18 @@ function inBackground(memoKey: string, run: () => Promise<number>): void {
 export function capturePitcherSlateInBackground(gameDate: string, games: EnrichedGame[]): void {
   const lead = leadDaysFor(gameDate);
   if (lead < 0) return;
-  inBackground(`pitcher-start:${gameDate}:${lead}`, () => capturePitcherSlate(gameDate, games));
+  // Key the memo on how many capturable probables the slate carries, like
+  // the batter wrapper does with posted lineups. Probables fill in through
+  // the day (and can vanish entirely when the ESPN feed fails — Aug 2026);
+  // a zero-row "success" must not pin the date until the process restarts.
+  const probables = games.filter(g => PREGAME_STATUSES.has(g.status)).reduce(
+    (n, g) => n + (g.homeProbablePitcher?.talent ? 1 : 0) + (g.awayProbablePitcher?.talent ? 1 : 0),
+    0,
+  );
+  if (probables === 0) return;
+  inBackground(`pitcher-start:${gameDate}:${lead}:${probables}`, () =>
+    capturePitcherSlate(gameDate, games),
+  );
 }
 
 export function captureBatterSlateInBackground(gameDate: string, games: EnrichedGame[]): void {
@@ -503,6 +514,12 @@ export function capturePointsInBackground(
 ): void {
   const windowStart = analysis.days[0]?.date;
   if (!windowStart) return;
-  const memoKey = `points:${leagueKey}:${windowStart}:${leadDaysFor(windowStart)}`;
-  inBackground(memoKey, () => insertSnapshots(pointsSnapshotRows(leagueKey, analysis)));
+  // Row count in the memo key: the pitcher board can be empty while the
+  // batter board is full (no probables — ESPN outage, Aug 2026), and a
+  // batter-only capture must not pin the window against the pitchers that
+  // show up on the next request. Mapping rows is pure and cheap.
+  const rows = pointsSnapshotRows(leagueKey, analysis);
+  if (rows.length === 0) return;
+  const memoKey = `points:${leagueKey}:${windowStart}:${leadDaysFor(windowStart)}:${rows.length}`;
+  inBackground(memoKey, () => insertSnapshots(rows));
 }

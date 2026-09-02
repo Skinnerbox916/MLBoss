@@ -15,6 +15,7 @@
 
 import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import { externalFetchText } from './client';
+import { getAsOfContext } from './asOfContext';
 import type { StatcastBatter, StatcastPitcher } from './types';
 
 const SAVANT_BASE = 'https://baseballsavant.mlb.com';
@@ -120,6 +121,10 @@ async function savantFetch(url: string): Promise<string> {
 export async function fetchStatcastPitchers(
   season: number = new Date().getFullYear(),
 ): Promise<Map<number, StatcastPitcher>> {
+  // Retro run: the context's season comes from the as-of corpus aggregate,
+  // never from Savant's season-to-date leaderboard (which would leak the future).
+  const asOf = getAsOfContext();
+  if (asOf && season === asOf.season) return asOf.savantPitchers();
   // v2 = schema bumped when avgFastballVelo + runValuePer100 were added.
   const cacheKey = `${CACHE_CATEGORIES.STATIC.prefix}:savant:pitchers:v2:${season}`;
 
@@ -197,6 +202,8 @@ export async function fetchStatcastPitchers(
 export async function fetchStatcastBatters(
   season: number = new Date().getFullYear(),
 ): Promise<Map<number, StatcastBatter>> {
+  const asOf = getAsOfContext();
+  if (asOf && season === asOf.season) return asOf.savantBatters();
   const cacheKey = `${CACHE_CATEGORIES.STATIC.prefix}:savant:batters:${season}`;
 
   try {

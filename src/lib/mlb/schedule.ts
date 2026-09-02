@@ -58,13 +58,13 @@ interface RawLineupPlayer {
   };
 }
 
-interface RawGame {
+export interface RawGame {
   gamePk: number;
   gameDate: string;
   status: { detailedState: string };
   teams: {
-    home: { team: RawTeam };
-    away: { team: RawTeam };
+    home: { team: RawTeam; probablePitcher?: { id: number; fullName: string } };
+    away: { team: RawTeam; probablePitcher?: { id: number; fullName: string } };
   };
   venue?: RawVenue;
   weather?: RawWeather;
@@ -74,7 +74,7 @@ interface RawGame {
   };
 }
 
-interface RawScheduleResponse {
+export interface RawScheduleResponse {
   dates?: Array<{
     date: string;
     games: RawGame[];
@@ -118,7 +118,7 @@ function parseLineup(players: RawLineupPlayer[] | undefined): LineupEntry[] {
   }));
 }
 
-function parseGame(raw: RawGame): MLBGame {
+export function parseGame(raw: RawGame): MLBGame {
   const venueId = raw.venue?.id ?? 0;
   const park = getParkByVenueId(venueId);
 
@@ -359,11 +359,11 @@ function indexEspnPitchers(
  * name never resolves to an MLB id, in which case the row is fully degraded
  * (no stats/talent) and downstream treats the null hand as neutral.
  */
-function stubPitcher(name: string): ProbablePitcher {
+export function stubPitcher(name: string, mlbId = 0, throws: 'L' | 'R' | null = null): ProbablePitcher {
   return {
-    mlbId: 0,
+    mlbId,
     name,
-    throws: null,
+    throws,
     era: null,
     whip: null,
     wins: 0,
@@ -416,21 +416,16 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
   const hydrate = ['venue', 'weather', 'team', 'lineups'].join(',');
   const path = `/schedule?sportId=1&date=${date}&hydrate=${encodeURIComponent(hydrate)}`;
 
-  // Fetch MLB schedule + ESPN scoreboard + slate-wide context in parallel.
-  // ESPN is the source of truth for who's pitching; MLB owns the game shell.
+  // Fetch MLB schedule + ESPN scoreboard in parallel. ESPN is the source of
+  // truth for who's pitching; MLB owns the game shell.
   const currentYear = new Date().getFullYear();
-  const [raw, espn, savantMap, priorSavantMap, teamEraMap, staffSplitsResult] = await Promise.all([
+  const [raw, espn] = await Promise.all([
     mlbFetchSchedule<RawScheduleResponse>(path, date),
     fetchESPNScoreboard(date, date).catch(err => {
       console.error('ESPN scoreboard fetch failed; pitcher names will be missing:', err);
       return { events: [] };
     }),
-    fetchStatcastPitchers(currentYear),
-    fetchStatcastPitchers(currentYear - 1),
-    fetchTeamStaffEra(),
-    fetchTeamStaffSplits(),
   ]);
-  setLeagueSbAllowedPerIp(staffSplitsResult.leagueSbAllowedPerIp);
 
   // A well-formed response always carries a `dates` array; `dates: []` is
   // how the schedule API says "no games on this date" (off-days, all-star
@@ -461,10 +456,41 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
     }
   }
 
-  // Enrich each pitcher: resolve ESPN name → MLB ID, then run the
-  // documented enrichment pipeline (line + Savant + platoon + recent form)
-  // and stamp the canonical talent vector. `enrichPitcher` is a closure so
-  // it can access the slate-wide maps fetched above.
+  await enrichSlate(games, currentYear);
+
+  // Fire-and-forget: record any posted lineup spots so the forward-projection
+  // engine can apply them as priors for D+1+ where MLB hasn't posted lineups
+  // yet. No-op when arrays are empty (typical for future dates). See
+  // `lineupSpots.ts` for the cache shape and 7-day TTL.
+  void Promise.all(
+    games.flatMap(game => [
+      recordPostedLineup(game.homeLineup, date),
+      recordPostedLineup(game.awayLineup, date),
+    ]),
+  );
+
+  return games;
+}
+
+/**
+ * Enrich a parsed slate in place: resolve each probable's identity (when it
+ * arrived as a name-only stub), run the documented per-pitcher pipeline
+ * (line + Savant + platoon + recent form) and stamp the canonical talent
+ * vector; then attach team staff ERA + SP/RP splits for the batter SP/RP
+ * blend and the W-probability bullpen multiplier. Shared by the live
+ * `buildGameDay` and the retro slate builder (src/lib/retro/) so both run
+ * exactly the same enrichment — under an as-of context every fetch below
+ * resolves to inputs as they stood on that date (see asOfContext.ts).
+ */
+export async function enrichSlate(games: MLBGame[], season: number = new Date().getFullYear()): Promise<void> {
+  const [savantMap, priorSavantMap, teamEraMap, staffSplitsResult] = await Promise.all([
+    fetchStatcastPitchers(season),
+    fetchStatcastPitchers(season - 1),
+    fetchTeamStaffEra(season),
+    fetchTeamStaffSplits(season),
+  ]);
+  setLeagueSbAllowedPerIp(staffSplitsResult.leagueSbAllowedPerIp);
+
   const enrichPitcher = async (p: ProbablePitcher, teamAbbr: string) => {
     if (p.mlbId === 0) {
       const identity = await resolveMLBId(p.name, teamAbbr);
@@ -480,11 +506,11 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
     }
 
     const [line, overallEra, platoon, recentForm, seasonLines] = await Promise.all([
-      fetchPitcherFullLine(p.mlbId),
-      fetchPitcherOverallSeasonEra(p.mlbId),
-      fetchPitcherPlatoonSplits(p.mlbId),
-      fetchPitcherRecentForm(p.mlbId),
-      getPitcherSeasonLines(p.mlbId),
+      fetchPitcherFullLine(p.mlbId, season),
+      fetchPitcherOverallSeasonEra(p.mlbId, season),
+      fetchPitcherPlatoonSplits(p.mlbId, season),
+      fetchPitcherRecentForm(p.mlbId, undefined, season),
+      getPitcherSeasonLines(p.mlbId, season),
     ]);
     applyPitcherStatsLine(p, line);
     // Overlay the user-facing ERA with the overall (all-appearances) value.
@@ -527,19 +553,6 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
     game.homeTeam.staffSplits = staffSplitsResult.byTeam.get(game.homeTeam.mlbId);
     game.awayTeam.staffSplits = staffSplitsResult.byTeam.get(game.awayTeam.mlbId);
   }
-
-  // Fire-and-forget: record any posted lineup spots so the forward-projection
-  // engine can apply them as priors for D+1+ where MLB hasn't posted lineups
-  // yet. No-op when arrays are empty (typical for future dates). See
-  // `lineupSpots.ts` for the cache shape and 7-day TTL.
-  void Promise.all(
-    games.flatMap(game => [
-      recordPostedLineup(game.homeLineup, date),
-      recordPostedLineup(game.awayLineup, date),
-    ]),
-  );
-
-  return games;
 }
 
 /**

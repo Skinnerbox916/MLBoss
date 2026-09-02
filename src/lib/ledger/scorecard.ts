@@ -467,6 +467,8 @@ export async function buildScorecard(
   }
 
   const cards = engines.sort().map(engine => {
+    // Retro twins grade exactly like their live engine; only the key differs.
+    const base = engine.replace(/^retro-/, '') as ForecastEngine;
     const rawAll = rows.filter(r => r.engine === engine);
 
     // One row per (player, game/window, league): traffic re-captures the
@@ -486,7 +488,7 @@ export async function buildScorecard(
     let pendingActuals: JoinedRow[];
     let resolved: JoinedRow[];
 
-    if (engine === 'batter-week') {
+    if (base === 'batter-week') {
       future = [];
       pendingActuals = [];
       resolved = [];
@@ -514,8 +516,8 @@ export async function buildScorecard(
 
     const side: Side = engine.includes('batter') ? 'bat' : 'pit';
     const kind: 'pitcher-line' | 'batter-line' | 'points' =
-      engine === 'pitcher-start' ? 'pitcher-line'
-      : engine === 'batter-day' || engine === 'batter-week' ? 'batter-line'
+      base === 'pitcher-start' ? 'pitcher-line'
+      : base === 'batter-day' || base === 'batter-week' ? 'batter-line'
       : 'points';
     const isPlayed = (r: JoinedRow) =>
       side === 'pit' ? r.pitching != null && (r.pitching.gs ?? 0) > 0 : r.batting != null;
@@ -526,7 +528,7 @@ export async function buildScorecard(
     // the same appearance at different leads is the comparison, not a dupe.
     // (batter-week's window synthesis only ran on deduped rows, so it keeps
     // its post-dedupe view there.)
-    const playedAllLeads = engine === 'batter-week'
+    const playedAllLeads = base === 'batter-week'
       ? played
       : rawAll.filter(r => r.gameDate < today && r.status !== null && isPlayed(r));
     const playedSet = new Set(played);
@@ -542,7 +544,7 @@ export async function buildScorecard(
       : 0;
     const coverage = {
       capturedDays: dates.filter(d => d <= today).length,
-      spanDays: engine === 'batter-week'
+      spanDays: base === 'batter-week'
         ? (dates.length ? Math.floor(Math.max(rawSpanDays - 1, 0) / 7) + 1 : 0)
         : Math.max(rawSpanDays, 0),
     };
@@ -622,7 +624,7 @@ export async function buildScorecard(
     // ---- engine-specific views + findings ---------------------------------
 
     const minN =
-      engine === 'batter-week' ? 150 : kind === 'batter-line' ? 300 : kind === 'pitcher-line' ? 50 : 30;
+      base === 'batter-week' ? 150 : kind === 'batter-line' ? 300 : kind === 'pitcher-line' ? 50 : 30;
     findings.push(...biasFindings(engine, statGrades, minN));
     findings.push(...spreadFindings(engine, statGrades, minN));
 
@@ -631,11 +633,11 @@ export async function buildScorecard(
     // so the acceptable baseline is higher.)
     const dnpRate = resolved.length ? didNotPlay / resolved.length : 0;
     const [dnpMin, dnpWatch, dnpFlag] =
-      engine === 'batter-week' ? [100, 0.08, 0.15]
+      base === 'batter-week' ? [100, 0.08, 0.15]
       // points-batter-day predicts by SCHEDULE (team plays), not posted
       // lineup — routine rest days are expected, ~10-15% is the baseline
       // for a pool that includes part-timers, not a forecast miss.
-      : engine === 'points-batter-day' ? [300, 0.18, 0.28]
+      : base === 'points-batter-day' ? [300, 0.18, 0.28]
       : side === 'bat' ? [200, 0.03, 0.05]
       : [50, 0.1, 0.15];
     if (resolved.length >= dnpMin && dnpRate >= dnpWatch) {
@@ -647,7 +649,7 @@ export async function buildScorecard(
       });
     }
 
-    if (engine === 'pitcher-start') {
+    if (base === 'pitcher-start') {
       // Calibration views segment like headline grades do: a probability
       // recalibration resets its curve to post-change data instead of
       // re-flagging the miscalibration it just fixed (cohortRows keys off
@@ -704,7 +706,7 @@ export async function buildScorecard(
       }
     }
 
-    if (engine === 'batter-week') {
+    if (base === 'batter-week') {
       card.worstMisses = playerMisses(played, ['pa', 'tb'], 'bat', 3);
       // Ownership slice: does the playing-time model treat the FA pool
       // (Upgrade Targets) the same as rostered bats (Your Batters)? An
@@ -717,7 +719,7 @@ export async function buildScorecard(
       }
     }
 
-    if (engine === 'batter-day') {
+    if (base === 'batter-day') {
       // PA bias isolates the playing-time model; TB/K biases the rate model.
       card.worstMisses = playerMisses(played, ['pa', 'tb', 'k'], 'bat', 5);
       // Same 'score' cohort keying as the pitcher buckets; with no batter
@@ -766,7 +768,7 @@ export async function buildScorecard(
       }
     }
 
-    if (engine === 'points-pitcher-start') {
+    if (base === 'points-pitcher-start') {
       const ranked = valueRows.filter(v =>
         playedSet.has(v.row) && v.row.context.owned === false && typeof v.row.context.rank === 'number',
       );

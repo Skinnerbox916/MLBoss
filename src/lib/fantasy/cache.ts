@@ -1,4 +1,5 @@
 import { redis, redisUtils } from '@/lib/redis';
+import { getAsOfContext } from '@/lib/mlb/asOfContext';
 
 // ---------------------------------------------------------------------------
 // SCAN-based key matcher
@@ -235,6 +236,8 @@ export async function withCache<T>(
   ttl: number,
   fetchFn: () => Promise<T>,
 ): Promise<T> {
+  // Retro (as-of) runs never touch Redis — see src/lib/mlb/asOfContext.ts.
+  if (getAsOfContext()) return fetchFn();
   const cached = await getCachedResult<T>(key);
   if (cached !== null) {
     recordHit(key);
@@ -283,6 +286,7 @@ export async function withCacheGated<T>(
   fetchFn: () => Promise<T>,
   isAcceptable: (result: T) => boolean,
 ): Promise<T> {
+  if (getAsOfContext()) return fetchFn();
   const cached = await getCachedResult<T>(key);
   if (cached !== null) {
     recordHit(key);

@@ -32,7 +32,13 @@ export type ForecastEngine =
   | 'batter-day'
   | 'batter-week'
   | 'points-pitcher-start'
-  | 'points-batter-day';
+  | 'points-batter-day'
+  // Retro twins: the same engines run after the fact on as-of inputs
+  // (src/lib/retro/). Separate keys so they never pool with live captures.
+  | 'retro-pitcher-start'
+  | 'retro-batter-day';
+
+export const isRetroEngine = (engine: string): boolean => engine.startsWith('retro-');
 
 export interface SnapshotRow {
   gameDate: string; // YYYY-MM-DD
@@ -72,8 +78,10 @@ export async function insertSnapshots(rows: SnapshotRow[]): Promise<number> {
   if (rows.length === 0) return 0;
   const lead = new Map(rows.map(r => [r.gameDate, leadDaysFor(r.gameDate)]));
   // Past games can't be forecast — a "snapshot" written after the fact
-  // would poison the ledger with hindsight.
-  const valid = rows.filter(r => (lead.get(r.gameDate) ?? -1) >= 0);
+  // would poison the ledger with hindsight. Retro engines are the explicit
+  // exception: they ARE after-the-fact rebuilds, keyed separately, with a
+  // nominal lead of 0 (the concept doesn't apply to them).
+  const valid = rows.filter(r => isRetroEngine(r.engine) || (lead.get(r.gameDate) ?? -1) >= 0);
   if (valid.length === 0) return 0;
   const inserted = await getDb()
     .insert(forecastSnapshots)
@@ -84,7 +92,7 @@ export async function insertSnapshots(rows: SnapshotRow[]): Promise<number> {
         mlbId: r.mlbId,
         playerName: r.playerName,
         leagueKey: r.leagueKey ?? '',
-        leadDays: lead.get(r.gameDate)!,
+        leadDays: isRetroEngine(r.engine) ? 0 : lead.get(r.gameDate)!,
         predicted: r.predicted,
         context: r.context,
         modelVersion: MODEL_VERSION,
@@ -108,13 +116,23 @@ const PREGAME_STATUSES = new Set(['Scheduled', 'Pre-Game', 'Warmup', 'Delayed St
  * stamped probable on the slate. League-independent raw stat lines —
  * this is the engine-bias workhorse: ~15–30 starts captured per day.
  */
+export interface SlateCaptureOptions {
+  /** Engine key to stamp — the live default or its retro twin. */
+  engine?: 'pitcher-start' | 'retro-pitcher-start' | 'batter-day' | 'retro-batter-day';
+  /** Retro: the slate is historical, so every game is Final — skip the
+   *  pregame-only honesty guard (the as-of context supplies the honesty). */
+  includeFinal?: boolean;
+}
+
 export async function capturePitcherSlate(
   gameDate: string,
   games: EnrichedGame[],
+  opts: SlateCaptureOptions = {},
 ): Promise<number> {
+  const engine = (opts.engine ?? 'pitcher-start') as 'pitcher-start' | 'retro-pitcher-start';
   const rows: SnapshotRow[] = [];
   for (const game of games) {
-    if (!PREGAME_STATUSES.has(game.status)) continue;
+    if (!opts.includeFinal && !PREGAME_STATUSES.has(game.status)) continue;
     for (const isHome of [true, false]) {
       const pp = isHome ? game.homeProbablePitcher : game.awayProbablePitcher;
       if (!pp?.talent || !pp.mlbId) continue;
@@ -135,7 +153,7 @@ export async function capturePitcherSlate(
       const rating = getPitcherRating({ forecast, scoredCategories: DEFAULT_SCORED_CATS, focusMap: {} });
       rows.push({
         gameDate,
-        engine: 'pitcher-start',
+        engine,
         mlbId: pp.mlbId,
         playerName: pp.name,
         predicted: {
@@ -226,10 +244,12 @@ export const BATTER_STAT_KEYS: [string, number][] = [
 export async function captureBatterSlate(
   gameDate: string,
   games: EnrichedGame[],
+  opts: SlateCaptureOptions = {},
 ): Promise<number> {
+  const engine = (opts.engine ?? 'batter-day') as 'batter-day' | 'retro-batter-day';
   const byMlbId = new Map<number, ActiveBatter & { isHome: boolean; game: EnrichedGame }>();
   for (const game of games) {
-    if (!PREGAME_STATUSES.has(game.status)) continue;
+    if (!opts.includeFinal && !PREGAME_STATUSES.has(game.status)) continue;
     for (const isHome of [true, false]) {
       const lineup = isHome ? game.homeLineup : game.awayLineup;
       const team = isHome ? game.homeTeam : game.awayTeam;
@@ -295,7 +315,7 @@ export async function captureBatterSlate(
     }
     rows.push({
       gameDate,
-      engine: 'batter-day',
+      engine,
       mlbId: batter.mlbId,
       playerName: batter.name,
       predicted,

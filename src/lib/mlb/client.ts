@@ -1,4 +1,5 @@
 import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
+import { getAsOfContext } from './asOfContext';
 
 const MLB_API_BASE = 'https://statsapi.mlb.com/api/v1';
 
@@ -190,6 +191,12 @@ async function fetchWithRetry(
  */
 export async function mlbFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const url = new URL(`${MLB_API_BASE}${path}`);
+  // Retro (as-of) runs may rewrite or synthesize the response — see asOfContext.ts.
+  const ctx = getAsOfContext();
+  if (ctx) {
+    const hit = await ctx.interceptMlbStats(url, u => fetchWithRetry(u, opts));
+    if (hit !== undefined) return hit as T;
+  }
   return (await fetchWithRetry(url, opts)) as T;
 }
 

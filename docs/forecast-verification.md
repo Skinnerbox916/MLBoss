@@ -114,6 +114,27 @@ Actual fantasy points for the points engines are computed by `src/lib/ledger/act
 
 The single global `MODEL_VERSION` string would otherwise over-segment — bumping it for a batter tune would reset the clock on unrelated pitcher stats. The manifest is what prevents that: it tells the scorecard exactly which metrics a bump invalidated, so everything else keeps compounding. The one legitimate deletion is *buggy* data (a capture defect, garbage inputs) — a surgical integrity cleanup, never a routine version bump.
 
+## Retro: as-of-date forecasts from the Statcast corpus
+
+The ledger only sees days the app was open, and it lost most of Aug 2026 to two upstream outages ([history.md](./history.md)). A per-knob fit (above) needs tens of thousands of graded rows, which live traffic won't supply for a season. **Retro** rebuilds forecasts for past dates from inputs *as they stood the morning of the game* — no future leakage — so a whole season becomes fit data. Michael's constraint: no modeling without the Savant inputs, so the retro path had to recover those as-of too.
+
+Module home: `src/lib/retro/`. Storage: `statcast_events` (Postgres; a rebuildable bulk corpus, **not** ledger data — see [data-architecture.md](./data-architecture.md#the-three-storage-legs)). Nothing in `src/lib/retro/` is imported by engine code.
+
+**Why Savant is recoverable as-of.** The talent layer reads Savant's *season* leaderboards (`src/lib/mlb/savant.ts`), which exist only as season-to-date totals — a July forecast rebuilt from them today would include August. Savant's `statcast_search/csv` export returns every pitch for a date range with the fields those leaderboards are built from (`estimated_woba/ba/slg_using_speedangle`, `launch_speed/angle`, `launch_speed_angle` (6 = barrel), `description`, `pitch_type` + `release_speed`, `delta_run_exp`, hands). Owning the events lets us aggregate them through any date.
+
+Pieces, in pipeline order:
+
+| Piece | Where | What it does | Validation |
+|---|---|---|---|
+| Puller | `pullStatcastDay` (`statcast.ts`); `scripts/retro-pull-statcast.ts <from> [to]` | One game date of raw pitches → `statcast_events` (upsert — Savant revises estimates after the fact). Reconciles each game's PA/K/BB/HR/H against the MLB box score as it runs. Postponed entries are skipped. | Jul + Aug 2026: every game exact once `truncated_pa` (an at-bat cut off by an inning-ending baserunning out) is excluded from PA |
+| Formulas | `scripts/retro-validate-aggregates.ts <batter\|pitcher> <from> <to>` | Per-player aggregates over a window vs Savant's own per-player summary for the same window | Counts exact; xwOBA \|diff\| ≈ 0.001, xBA/xSLG ≈ 0.002; K%/BB%/hard-hit%/barrel rate to displayed precision. Conventions: BB includes IBB; whiffs include foul tips; hard-hit% is over *tracked* batted balls; xwOBA = `est_woba` on tracked BIP else actual `woba_value`, over Savant's `woba_denom` |
+| xERA | `fetchXeraMapping` / `xeraFromXwoba` (`xera.ts`); `scripts/retro-xera-mapping.ts` | Savant's xERA formula is unpublished, but on the season pitcher leaderboard it is a smooth function of xwOBA alone. Fit a cubic per season (run-environment scale) and apply it to as-of xwOBA | 2026: rmse 0.004 ERA in-sample (PA ≥ 50), hold-out rmse 0.03; residual uncorrelated with PA, xSLG, xBA |
+| As-of aggregator | `pitchersAsOf` / `battersAsOf` (`asOf.ts`); `scripts/retro-asof-check.ts <asOf>` | `StatcastPitcher` / `StatcastBatter` rows — the exact shape `savant.ts` produces — from events **strictly before** `asOf`. Returns `coverage` (window seen, `seasonComplete`) so a partial corpus is never mistaken for season-to-date. `era` stays null (not derivable from pitches; the engine takes actual ERA from MLB stat lines) | As of 2026-08-10 vs Savant summary through Aug 9: all fields match to the tolerances above; 0 players with PA past the cutoff |
+
+Pull cadence: month-sized runs inside the prod container (`docker exec <app> npx tsx scripts/retro-pull-statcast.ts 2026-07-01 2026-07-31`, ~3 min); dev takes a `copy … to stdout with csv` from prod rather than a second Savant pull. Corpus status and remaining months: the session memory note `project_retro_corpus`.
+
+Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. Still to build: the retro capture command (engines run on as-of inputs for a past slate) and the scorecard's retro segment; the golden test is **2026-08-09**, the last day both live engines captured cleanly — retro forecasts for that slate should land close to the live snapshots once the season corpus is complete.
+
 ## Operating it
 
 1. Browse the app normally — the streaming/lineup pages write snapshots through as a side effect. `/admin/forecast` → "Capture today's slate" covers days nobody opened the app.

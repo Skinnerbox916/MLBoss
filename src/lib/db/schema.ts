@@ -172,6 +172,14 @@ export const statcastEvents = pgTable(
     balls: smallint('balls'),
     strikes: smallint('strikes'),
     outsWhenUp: smallint('outs_when_up'),
+    /** Change in run expectancy on the pitch, batting-team perspective
+     *  (positive = good for the offense). Summed ×100 / pitches it is
+     *  Savant's pitcher run value per 100 (lower = better pitcher). */
+    deltaRunExp: real('delta_run_exp'),
+    /** Times the batter's lineup slot has come up vs this pitcher (1 = first PA). */
+    nThruOrderPitcher: smallint('n_thruorder_pitcher'),
+    pitcherDaysSincePrevGame: smallint('pitcher_days_since_prev_game'),
+    batterDaysSincePrevGame: smallint('batter_days_since_prev_game'),
     fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

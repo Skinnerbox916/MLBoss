@@ -40,7 +40,7 @@ async function main() {
   for (const day of dates(from, to)) {
     const t0 = Date.now();
     const res = await pullStatcastDay(day);
-    console.log(`${day}: ${(res.csvBytes / 1e6).toFixed(1)} MB, ${res.parsedRows} pitches parsed, ${res.inserted} inserted (${res.skipped} skipped), ${res.games} games, ${res.plateAppearances} PA — ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    console.log(`${day}: ${(res.csvBytes / 1e6).toFixed(1)} MB, ${res.parsedRows} pitches parsed, ${res.inserted} upserted (${res.skipped} skipped), ${res.games} games, ${res.plateAppearances} PA — ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     const ours = await eventGameTotals(day);
     const box = await boxscoreTotals(day);
     let mism = 0;

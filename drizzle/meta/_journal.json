@@ -15,6 +15,13 @@
       "when": 1788298078497,
       "tag": "0001_sad_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788365250405,
+      "tag": "0002_certain_marten_broadcloak",
+      "breakpoints": true
     }
   ]
 }

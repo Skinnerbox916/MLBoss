@@ -25,7 +25,8 @@ const REQUIRED_COLUMNS = [
   'release_speed', 'description', 'events', 'bb_type', 'launch_speed', 'launch_angle',
   'launch_speed_angle', 'estimated_ba_using_speedangle', 'estimated_woba_using_speedangle',
   'estimated_slg_using_speedangle', 'woba_value', 'woba_denom', 'babip_value', 'iso_value',
-  'balls', 'strikes', 'outs_when_up',
+  'balls', 'strikes', 'outs_when_up', 'delta_run_exp', 'n_thruorder_pitcher',
+  'pitcher_days_since_prev_game', 'batter_days_since_prev_game',
 ] as const;
 
 export function statcastSearchUrl(gameDate: string): string {
@@ -95,6 +96,8 @@ export function toEventRow(r: Record<string, string>): StatcastEventInsert | nul
     estSlg: num(r.estimated_slg_using_speedangle),
     wobaValue: num(r.woba_value), wobaDenom: num(r.woba_denom), babipValue: num(r.babip_value), isoValue: num(r.iso_value),
     balls: int(r.balls), strikes: int(r.strikes), outsWhenUp: int(r.outs_when_up),
+    deltaRunExp: num(r.delta_run_exp), nThruOrderPitcher: int(r.n_thruorder_pitcher),
+    pitcherDaysSincePrevGame: int(r.pitcher_days_since_prev_game), batterDaysSincePrevGame: int(r.batter_days_since_prev_game),
   };
 }
 
@@ -104,6 +107,7 @@ export interface PullResult {
   parsedRows: number;
   /** Rows dropped for a missing identity column (should be 0). */
   skipped: number;
+  /** Rows written (inserted or refreshed — the pull is an upsert). */
   inserted: number;
   games: number;
   plateAppearances: number;
@@ -128,8 +132,17 @@ export async function pullStatcastDay(gameDate: string): Promise<PullResult> {
   const db = getDb();
   let inserted = 0;
   const BATCH = 500;
+  // Upsert, not ignore: the corpus is rebuildable, Savant revises estimated
+  // fields after the fact, and a re-pull must backfill columns added later.
+  const updatable = Object.fromEntries(
+    Object.entries(statcastEvents)
+      .filter(([k, c]) => typeof c === 'object' && c != null && 'name' in c
+        && !['gamePk', 'atBatNumber', 'pitchNumber', 'fetchedAt'].includes(k))
+      .map(([k]) => [k, sql.raw(`excluded.${(statcastEvents as unknown as Record<string, { name: string }>)[k].name}`)]),
+  );
   for (let i = 0; i < rows.length; i += BATCH) {
-    const res = await db.insert(statcastEvents).values(rows.slice(i, i + BATCH)).onConflictDoNothing()
+    const res = await db.insert(statcastEvents).values(rows.slice(i, i + BATCH))
+      .onConflictDoUpdate({ target: [statcastEvents.gamePk, statcastEvents.atBatNumber, statcastEvents.pitchNumber], set: updatable })
       .returning({ pk: statcastEvents.gamePk });
     inserted += res.length;
   }

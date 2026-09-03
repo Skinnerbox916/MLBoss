@@ -82,13 +82,20 @@ function invert(A: number[][]): number[][] | null {
 async function main() {
   const engine = process.argv[2] ?? 'retro-batter-day';
   const minRows = Number(process.argv[3] ?? 500);
+  // Optional slice: 'home' / 'away'. The park knob is the reason this exists —
+  // a talent baseline built from season stats already contains roughly half
+  // that player's home park, so applying the full park factor at home
+  // double-counts it. If that is what is happening, the fitted park
+  // coefficient should sit near 1.0 on the road and well below it at home.
+  const slice = process.argv[4] as 'home' | 'away' | undefined;
   const res = await getDb().execute(sql`
     select s.predicted, s.context, a.batting, a.pitching
     from forecast_snapshots s join player_game_actuals a on a.game_date = s.game_date and a.mlb_id = s.mlb_id
     where s.engine = ${engine} and a.status = 'played'
       and (case when ${engine} like '%batter%' then a.batting is not null else a.pitching is not null end)`);
-  const rows = res.rows as { predicted: Record<string, number>; context: Record<string, unknown>; batting: Record<string, number> | null; pitching: Record<string, number> | null }[];
-  console.log(`${engine}: ${rows.length} graded rows\n`);
+  let rows = res.rows as { predicted: Record<string, number>; context: Record<string, unknown>; batting: Record<string, number> | null; pitching: Record<string, number> | null }[];
+  if (slice) rows = rows.filter(r => (r.context.isHome === true) === (slice === 'home'));
+  console.log(`${engine}${slice ? ` [${slice}]` : ''}: ${rows.length} graded rows\n`);
   console.log(`  a knob coefficient of 1.00 means correctly scaled; 0.50 means only half the applied swing is justified\n`);
 
   for (const stat of STATS) {

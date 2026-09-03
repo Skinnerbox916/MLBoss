@@ -182,7 +182,18 @@ Bold = differs from 1.00 at p < 0.05. Read together with the scorecard's over-sp
 - **Talent is over-spread for batted-ball stats (0.82) and badly so for R/RBI (0.52)**, while K and BB are well calibrated (0.96, 0.99) — the stats where the box score measures the skill directly.
 - **Lineup-spot run context is too weak** for runs (1.57).
 
-**The pitcher side is not identifiable yet.** Pitcher snapshots store one multiplier per knob for the whole start rather than per stat, so `platoon` and `opp` are near-collinear and return standard errors of ±10 or worse. Only the talent slope (IP 1.53, K 0.91, BB 0.79, ER 0.56, HR 0.48) and `bullpen` are usable. Per-stat pitcher attribution, mirroring the batter `knobs` shape, is the prerequisite for fitting the rest.
+**The park knob is two different problems, and splitting home from away separates them** (`retro-knob-fit.ts <engine> <minRows> home|away`):
+
+| | TB | H | HR | R | RBI | K | BB |
+|---|---|---|---|---|---|---|---|
+| home | 0.58 | 0.47 | 0.19 | 0.85 | 0.83 | 0.43 | 0.34 |
+| away | 1.40 | 1.03 | 0.64 | 1.83 | 1.92 | 0.45 | 0.65 |
+
+For the batted-ball and run stats the home coefficient is far below 1 and the away coefficient at or above it. That is the signature of **double-counting**: the talent baseline is built from season stats that already contain roughly half of the player's home park, so applying the full park factor at home charges for it twice, while on the road the baseline is near-neutral for that venue and the full factor is warranted. The engine has hit this exact class of bug before — the pitcher velocity multiplier was fixed to 1.0 in 2026-05 for the same reason, because velocity trend already fed the talent layer's regime probe. Park-neutralising the baseline is the corresponding fix here, and it is a talent-layer change, not a modifier re-scale. **K and BB are a separate problem**: low both home and away (0.43/0.45, 0.34/0.65), which is straightforward over-application of a small, noisy factor that wants regressing toward 100.
+
+**Park data itself is not the gap.** `parks.ts` already carries Savant's Statcast park factors comprehensively — overall wOBA, HR, BB and SO each with left/right handedness splits, plus 2B, 3B, BACON, xBACON and HardHit, on a 3-year rolling window (`scripts/scrape-park-factors.mjs`).
+
+**The pitcher side is not identifiable yet.** Pitcher snapshots store one multiplier per knob for the whole start rather than per stat, so `platoon` and `opp` are near-collinear and return standard errors of ±10 or worse. Only the talent slope (IP 1.53, K 0.91, BB 0.79, ER 0.56, HR 0.48) and `bullpen` are usable. Per-stat pitcher attribution, mirroring the batter `knobs` shape, is the prerequisite for fitting the rest. Two things make that harder than the batter case: the pitcher modifiers barely move at all (over 4,166 starts `opp` spans 0.950–1.044, `park` 0.905–1.075, `platoon` 0.966–1.029), so there is little variance to fit against, and `velocity` is a deliberate constant 1.0 — it was neutered in 2026-05 because velocity trend already feeds the talent layer's regime probe, so a composite multiplier on top would double-count.
 
 Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. The scorecard grades `retro-*` engines exactly like their live twins (kind derived from the key with the prefix stripped) but as separate sections. Still to build: bulk retro capture over the season gap (Aug 10 → 31) and the per-knob fit that reads live + retro rows together.
 

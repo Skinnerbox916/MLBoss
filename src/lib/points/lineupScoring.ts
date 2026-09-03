@@ -10,6 +10,8 @@ import { toBatterSeasonStats } from '@/lib/mlb/adapters';
 import { batterPointsValue } from './pointsValue';
 import { adjustedBatterPointsPerPA } from './matchupAdjust';
 import { expectedPAperGame } from '@/lib/projection/batterTeam';
+import { platoonHookOf } from '@/lib/mlb/paBySpot';
+import { facingHandFrom } from '@/lib/mlb/platoon';
 import type { ScoringProfile } from '@/lib/fantasy/scoringProfile';
 import type { PlayerStatLine } from '@/lib/mlb/types';
 import type { MatchupContext } from '@/lib/mlb/analysis';
@@ -45,7 +47,10 @@ export function batterPointsScore(
     return { today: 0, perGame: v.pointsPerGame, weekly: v.weeklyPoints, matchup: noMatchup };
   }
   const adj = adjustedBatterPointsPerPA(stats, profile, opts.context ?? null, opts.battingOrder);
-  const today = adj.pointsPerPA * expectedPAperGame(opts.battingOrder) * opts.gameCount;
+  // Volume moves with the platoon side too — the batter with the edge on the
+  // starter is the pinch-hit candidate late (see paBySpot.ts PLATOON_HOOK).
+  const hook = platoonHookOf(stats.bats, facingHandFrom(opts.context?.opposingPitcher?.throws));
+  const today = adj.pointsPerPA * expectedPAperGame(opts.battingOrder, hook) * opts.gameCount;
   return {
     today,
     perGame: v.pointsPerGame,

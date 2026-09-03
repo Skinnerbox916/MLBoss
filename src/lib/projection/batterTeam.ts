@@ -28,7 +28,8 @@
  */
 
 import { getBatterRating, type BatterRating } from '@/lib/mlb/batterRating';
-import { expectedPAperGame } from '@/lib/mlb/paBySpot';
+import { expectedPAperGame, platoonHookOf } from '@/lib/mlb/paBySpot';
+import { facingHandFrom } from '@/lib/mlb/platoon';
 import type { Focus } from '@/lib/rating/focus';
 import { resolveMatchup } from '@/lib/mlb/analysis';
 import type { EnrichedGame, BatterSeasonStats } from '@/lib/mlb/types';
@@ -253,8 +254,13 @@ export function projectBatterPlayer(
       battingOrder: spotUsed,
     });
 
-    // Per-game PA × game count for the day.
-    const gamePA = expectedPAperGame(spotUsed);
+    // Per-game PA × game count for the day. The platoon side matters to
+    // VOLUME as well as rate: a batter with the edge on the starter is the
+    // one lifted for a pinch hitter when the same-hand reliever appears.
+    const gamePA = expectedPAperGame(
+      spotUsed,
+      platoonHookOf(stats?.bats, facingHandFrom(context.opposingPitcher?.throws)),
+    );
     const dayPA = gamePA * teamGames.length;
     weeklyPA += dayPA;
 

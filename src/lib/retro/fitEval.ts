@@ -133,3 +133,125 @@ export function benjaminiHochberg(ps: number[]): number[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Poisson regression — the count-model workhorse for the per-knob fits
+// ---------------------------------------------------------------------------
+
+/** Invert a square matrix by solving against each basis vector. */
+function invert(A: number[][]): number[][] | null {
+  const n = A.length;
+  const cols: number[][] = [];
+  for (let j = 0; j < n; j++) {
+    const e = new Array(n).fill(0);
+    e[j] = 1;
+    const c = solve(A, e);
+    if (!c) return null;
+    cols.push(c);
+  }
+  return Array.from({ length: n }, (_, i) => cols.map(c => c[i]));
+}
+
+export interface PoissonFit {
+  beta: number[];
+  se: number[];
+}
+
+/**
+ * Poisson log-link regression by IRLS (Newton on the exact Hessian, which
+ * for a Poisson GLM is Xᵀ diag(μ) X). `X` is row-major and must carry its
+ * own intercept column. Returns coefficients and their standard errors
+ * from the inverse information matrix.
+ *
+ * The counting stats this repo grades (H, HR, K, BB, TB per game) are
+ * small non-negative integers, so a log-link count model is the right
+ * likelihood; OLS on them would weight a 4-TB game like a 0-TB one.
+ *
+ * `offset` is a per-row term entering the linear predictor with a FIXED
+ * coefficient of 1 — the exposure a rate model is quoted against (log PA,
+ * log innings, log expected-count). Passing exposure as a design column
+ * instead would let the fit rescale it, which is a different model.
+ */
+export function poissonFit(X: number[][], y: number[], offset?: number[]): PoissonFit | null {
+  const k = X[0].length;
+  const off = (i: number) => offset?.[i] ?? 0;
+  let beta = new Array(k).fill(0);
+  beta[0] = Math.log(Math.max(y.reduce((a, b) => a + b, 0) / y.length, 1e-3));
+  for (let iter = 0; iter < 60; iter++) {
+    const H = Array.from({ length: k }, () => new Array(k).fill(0));
+    const g = new Array(k).fill(0);
+    for (let i = 0; i < X.length; i++) {
+      const mu = Math.exp(Math.min(X[i].reduce((s, v, j) => s + v * beta[j], 0) + off(i), 20));
+      const r = y[i] - mu;
+      for (let a = 0; a < k; a++) {
+        g[a] += r * X[i][a];
+        for (let b = 0; b < k; b++) H[a][b] += mu * X[i][a] * X[i][b];
+      }
+    }
+    const step = solve(H, g);
+    if (!step) return null;
+    beta = beta.map((b, j) => b + step[j]);
+    if (Math.max(...step.map(Math.abs)) < 1e-10) break;
+  }
+  const H = Array.from({ length: k }, () => new Array(k).fill(0));
+  for (let i = 0; i < X.length; i++) {
+    const row = X[i];
+    const mu = Math.exp(Math.min(row.reduce((s, v, j) => s + v * beta[j], 0) + off(i), 20));
+    for (let a = 0; a < k; a++) for (let b = 0; b < k; b++) H[a][b] += mu * row[a] * row[b];
+  }
+  const inv = invert(H);
+  return inv ? { beta, se: inv.map((r, i) => Math.sqrt(Math.abs(r[i]))) } : null;
+}
+
+/** Poisson log-likelihood of `y` under fitted means `mu` (constant terms
+ *  dropped — only differences between models are meaningful). */
+export function poissonLogLik(y: number[], mu: number[]): number {
+  let ll = 0;
+  for (let i = 0; i < y.length; i++) ll += y[i] * Math.log(Math.max(mu[i], 1e-12)) - mu[i];
+  return ll;
+}
+
+/**
+ * Binomial (logistic) regression by IRLS. `y[i]` successes out of `n[i]`
+ * trials; `X` carries its own intercept; `offset` enters the linear
+ * predictor with a fixed coefficient of 1.
+ *
+ * The offset is what makes this the right tool for a conditional
+ * comparison. To ask "how does A's rate differ from B's, within a player",
+ * take y = A's count, n = A+B, and offset = log(exposureA / exposureB): the
+ * player's own overall rate cancels out of the likelihood entirely, so no
+ * per-player parameter and no noisy reference rate is needed. Every player
+ * contributes at the weight his sample earns, however small.
+ */
+export function binomialFit(X: number[][], y: number[], n: number[], offset?: number[]): PoissonFit | null {
+  const k = X[0].length;
+  const off = (i: number) => offset?.[i] ?? 0;
+  let beta = new Array(k).fill(0);
+  for (let iter = 0; iter < 100; iter++) {
+    const H = Array.from({ length: k }, () => new Array(k).fill(0));
+    const g = new Array(k).fill(0);
+    for (let i = 0; i < X.length; i++) {
+      const eta = X[i].reduce((s, v, j) => s + v * beta[j], 0) + off(i);
+      const p = 1 / (1 + Math.exp(-Math.max(-30, Math.min(30, eta))));
+      const w = n[i] * p * (1 - p);
+      const r = y[i] - n[i] * p;
+      for (let a = 0; a < k; a++) {
+        g[a] += r * X[i][a];
+        for (let b = 0; b < k; b++) H[a][b] += w * X[i][a] * X[i][b];
+      }
+    }
+    const step = solve(H, g);
+    if (!step) return null;
+    beta = beta.map((b, j) => b + step[j]);
+    if (Math.max(...step.map(Math.abs)) < 1e-10) break;
+  }
+  const H = Array.from({ length: k }, () => new Array(k).fill(0));
+  for (let i = 0; i < X.length; i++) {
+    const eta = X[i].reduce((s, v, j) => s + v * beta[j], 0) + off(i);
+    const p = 1 / (1 + Math.exp(-Math.max(-30, Math.min(30, eta))));
+    const w = n[i] * p * (1 - p);
+    for (let a = 0; a < k; a++) for (let b = 0; b < k; b++) H[a][b] += w * X[i][a] * X[i][b];
+  }
+  const inv = invert(H);
+  return inv ? { beta, se: inv.map((r, i) => Math.sqrt(Math.abs(r[i]))) } : null;
+}

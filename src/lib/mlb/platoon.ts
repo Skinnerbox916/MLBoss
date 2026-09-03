@@ -20,8 +20,7 @@
  * large, year-to-year sticky splits — while BABIP/AVG carry a small
  * population effect and HR/FB is ~flat (the HR-rate gap is contact-shape:
  * more grounders same-handed, not a HR-skill split). Per-cat `PRIOR`
- * reflects this: K/BB regress faster (trust the player sooner), AVG/power
- * lean population longer.
+ * reflects how fast a category's own split earns trust; power is slowest.
  *
  * SWITCH HITTERS are not a special case. Their population target is ~1.0
  * (they always turn to the platoon-advantage side, so no same-hand
@@ -47,10 +46,21 @@
  *              "easier to run" bump lives in batterForecast.ts.
  *
  * Estimated rows are deliberately conservative. The per-cat PRIOR values
- * are anchored to The Book's ~1000-PA OPS-split baseline, shaded by the
- * K/BB-sticky vs power-noisy finding — refine when clean per-cat split
- * stabilization numbers are sourced. See docs/history.md "2026-05 —
- * Per-category platoon (Bayesian)".
+ * are anchored to The Book's ~1000-PA OPS-split baseline. See
+ * docs/history.md "2026-05 — Per-category platoon (Bayesian)".
+ *
+ * TWO STEPS SIT BETWEEN THE SOURCED TABLE AND THE APPLIED MULTIPLIER
+ * (2026-09, from 37k graded retro batter-days — see
+ * docs/forecast-verification.md#the-platoon-knob):
+ *
+ *   1. MIX NORMALISATION. Each row is a set of vs-hand ratios against the
+ *      batter's OWN overall rate, so over a league-typical schedule it must
+ *      average to 1.0 or the row smuggles in a level bias on every batter of
+ *      that hand. Most sourced rows already do to within 0.7%; the RHB walk
+ *      row was 2.7% low, which under-forecast walks for ~70% of the league.
+ *      Normalising is not a tuning knob — it makes the row a pure tilt.
+ *   2. TILT SCALE. The retro cohort delivers a measured fraction of each
+ *      row's claimed tilt. See PLATOON_TILT_SCALE.
  */
 
 import type { BatterSeasonStats } from './types';
@@ -77,16 +87,63 @@ const PLATOON_COMPONENT: Record<number, ComponentRow> = {
   13: { L: { L: 0.960, R: 1.015 }, R: { L: 1.030, R: 0.980 } }, // RBI (estimated, wOBA-level)
 };
 
-/** Per-cat regression prior (PA of population weight). K/BB sticky →
- *  smaller prior (trust the player's own split sooner); AVG slow; power
- *  slowest. Anchored to The Book's ~1000-PA OPS-split baseline. */
+/**
+ * Share of each row's sourced tilt that the retro cohort actually delivers,
+ * measured on 37,167 graded batter-days over the 2026 season with plate
+ * appearances controlled and identified off the batter-hand × pitcher-hand
+ * interaction only. 1.0 = apply the sourced split as written.
+ *
+ * Values are deliberately shaded toward 1.0 from the point estimates, which
+ * were K 0.42–0.55, BB 1.25–1.40, and 0.65–0.83 across TB/H/HR/R/RBI. Every
+ * one of those is below (above, for BB) 1.0 in both halves of the season and
+ * under two independent estimators, which is what earns the change; the
+ * magnitudes are one season, which is why they are not taken at face value.
+ * Rationale and the full evidence:
+ * docs/forecast-verification.md#the-platoon-knob
+ */
+const PLATOON_TILT_SCALE: Record<number, number> = {
+  21: 0.60,                    // K — the sourced LHB split is ~2x too wide at game level
+  18: 1.25,                    // BB — the only row the cohort says is too timid
+  3: 0.80, 8: 0.80,            // AVG, H
+  7: 0.80, 13: 0.80,           // R, RBI
+  23: 0.80, 12: 0.80,          // TB, HR
+};
+
+/** League share of plate appearances taken against LHP — the mix each row is
+ *  normalised over. Measured on the 2026 Statcast corpus (29.5%). */
+const LEAGUE_LHP_PA_SHARE = 0.295;
+
+/** Per-cat regression prior (PA of population weight), anchored to The Book's
+ *  ~1000-PA OPS-split baseline. K and BB used to sit at 450 on the grounds
+ *  that their splits are stickier and so earn the player's own number sooner;
+ *  the retro cohort put that deviation-from-population term at 0.31±0.21 (K)
+ *  and 0.08±0.22 (BB) where 1.0 would mean fully justified, so the special
+ *  case is gone and they regress at the default. Power is still slower. */
 const PLATOON_PRIOR: Record<number, number> = {
-  21: 450, 18: 450,            // K, BB — sticky/fast
+  21: 1000, 18: 1000,          // K, BB
   3: 1000, 8: 1000,            // AVG, H
   7: 1000, 13: 1000,           // R, RBI
   23: 1300, 12: 1500,          // TB, HR — power, noisy/slow
 };
 const DEFAULT_PRIOR = 1000;
+
+/**
+ * Turn one sourced {vsL, vsR} pair into the multiplier actually applied:
+ * re-centre it so a league-typical schedule averages to 1.0 (a pure tilt, no
+ * level bias), then scale the remaining tilt by `scale`.
+ */
+function centredTilt(side: { L: number; R: number }, facingHand: Hand, scale: number): number {
+  const centre =
+    LEAGUE_LHP_PA_SHARE * Math.log(side.L) + (1 - LEAGUE_LHP_PA_SHARE) * Math.log(side.R);
+  return Math.exp((Math.log(side[facingHand]) - centre) * scale);
+}
+
+/** The population vs-hand target for one category. Switch hitters never reach
+ *  here (their target is 1.0); a category with no row returns neutral. */
+function populationTarget(statId: number, bats: 'L' | 'R', facingHand: Hand): number {
+  const row = PLATOON_COMPONENT[statId];
+  return row ? centredTilt(row[bats], facingHand, PLATOON_TILT_SCALE[statId] ?? 1.0) : 1.0;
+}
 
 /** Observed per-cat split for the hand being faced. */
 export interface ObservedSplit {
@@ -117,7 +174,7 @@ export function platoonFactor(
   const row = PLATOON_COMPONENT[statId];
   // Switch hitters have no population same-hand penalty → target 1.0, and
   // their observed split (their off-/main-stance talent) regresses to it.
-  const popRatio = bats === 'S' ? 1.0 : row ? row[bats][facingHand] : 1.0;
+  const popRatio = bats === 'S' ? 1.0 : row ? populationTarget(statId, bats, facingHand) : 1.0;
   if (!row && bats !== 'S') return 1.0; // cat has no platoon profile (e.g. SB)
 
   let regressed = popRatio;
@@ -145,12 +202,15 @@ export function platoonSummaryFactor(
   facingHand: Hand | null,
 ): number | null {
   if (!facingHand || (bats !== 'L' && bats !== 'R')) return null;
-  // wOBA-level same/opposite tilt; LHB carry the wider spread.
+  // wOBA-level same/opposite tilt; LHB carry the wider spread. Centred and
+  // scaled the same way the per-cat rows are — it stands in for the
+  // batted-ball/run family, so it takes that family's tilt scale and the
+  // headline never claims more than the categories underneath it apply.
   const TABLE: ComponentRow = {
     L: { L: 0.955, R: 1.020 },
     R: { L: 1.030, R: 0.975 },
   };
-  return TABLE[bats][facingHand];
+  return centredTilt(TABLE[bats], facingHand, PLATOON_TILT_SCALE[23]);
 }
 
 /** Resolve the hand the batter is facing from the SP's throwing hand.

@@ -66,7 +66,7 @@ import {
 } from './categoryBaselines';
 import { getWeatherScore, getWeatherFlag, type MatchupContext } from './analysis';
 import { platoonSummaryFactor, facingHandFrom } from './platoon';
-import { paOpportunityRatio } from './paBySpot';
+import { paOpportunityRatio, platoonHookOf, type PlatoonHook } from './paBySpot';
 import { buildBatterForecast, type BatterModifierKnobs } from './batterForecast';
 import { focusToCategoryWeights, type Focus } from '@/lib/rating/focus';
 
@@ -197,9 +197,12 @@ function buildPlatoonMultiplier(
  * Batting-order → PA opportunity multiplier: the canonical PA-by-spot
  * curve as a ratio vs the unknown-order baseline, so the rating and the
  * projection volume can never disagree on what a lineup spot is worth.
+ * `hook` carries the platoon side, because a batter with the edge on the
+ * starter is the one lifted for a pinch hitter late and banks fewer PA —
+ * volume, not rate, so it does not double-count the per-cat platoon factor.
  * Curve + sources: docs/projection.md#pa-by-lineup-spot
  */
-function buildOpportunityMultiplier(battingOrder: number | null): RatingMultiplier {
+function buildOpportunityMultiplier(battingOrder: number | null, hook: PlatoonHook): RatingMultiplier {
   const known = battingOrder !== null && battingOrder >= 1 && battingOrder <= 9;
   if (!known) {
     return {
@@ -210,7 +213,7 @@ function buildOpportunityMultiplier(battingOrder: number | null): RatingMultipli
       available: false,
     };
   }
-  const mult = paOpportunityRatio(battingOrder!);
+  const mult = paOpportunityRatio(battingOrder!, hook);
   const pct = Math.round((mult - 1) * 1000) / 10;
   const summary = battingOrder! <= 2 ? 'Top of the order'
                 : battingOrder! <= 5 ? 'Middle of the order'
@@ -332,7 +335,10 @@ export function getBatterRating(args: BatterRatingArgs): BatterRating {
   const stats = asBatterStats(args.stats);
 
   const platoon = buildPlatoonMultiplier(stats, context);
-  const opportunity = buildOpportunityMultiplier(battingOrder);
+  const opportunity = buildOpportunityMultiplier(
+    battingOrder,
+    platoonHookOf(stats?.bats, facingHandFrom(context?.opposingPitcher?.throws)),
+  );
   const weather = buildWeatherMultiplier(context);
 
   if (!context || !stats || scoredCategories.length === 0) {

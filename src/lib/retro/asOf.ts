@@ -49,6 +49,9 @@ export interface AsOfResult<T> {
 }
 
 export interface AggRow {
+  /** Opposing hand this row is restricted to — only set when `aggregateWindow`
+   *  was asked to split by it; undefined means the row pools both hands. */
+  hand?: 'L' | 'R';
   id: number; pa: number; ab: number; bip: number; so: number; bb: number;
   ubb: number; hbp: number; s1: number; s2: number; s3: number; hr: number; sf: number;
   xwoba: number | null; wobaGeneric: number | null; xba: number | null; xslg: number | null;
@@ -62,14 +65,41 @@ export interface AggRow {
  * conventions the as-of rows are built on rather than re-deriving them —
  * `truncated_pa` exclusion, IBB in BB, foul tips as whiffs, hard-hit over
  * all batted balls, xwOBA over Savant's `woba_denom`.
+ *
+ * `byOpposingHand` splits each player into one row per hand faced (batters by
+ * the pitcher's `p_throws`, pitchers by the batter's `stand`) and stamps
+ * `hand`. That is the platoon-split view; everything else is identical.
+ *
+ * `vsStarterOnly` keeps only plate appearances against the game's STARTING
+ * pitcher (the first arm each side sends out). A platoon study needs it: a
+ * shielded batter meets his weak hand mostly through relief specialists
+ * brought in to beat him, an everyday batter mostly through a starter, and
+ * comparing the two conflates the batter's split with the quality of arm he
+ * happened to face. The slate surfaces forecast a batter against a STARTER.
  */
 export async function aggregateWindow(
   kind: 'batter' | 'pitcher',
   from: string,
   toExclusive: string,
+  opts: { byOpposingHand?: boolean; vsStarterOnly?: boolean } = {},
 ): Promise<AggRow[]> {
   const db = getDb();
   const who = sql.raw(kind);
+  const oppHand = kind === 'batter' ? sql.raw('p_throws') : sql.raw('stand');
+  const handCol = opts.byOpposingHand ? sql`, ${oppHand} as hand` : sql``;
+  const handGroup = opts.byOpposingHand ? sql`, ${oppHand}` : sql``;
+  const handFilter = opts.byOpposingHand ? sql`and ${oppHand} in ('L','R')` : sql``;
+  // A side's starter is whoever threw its first at-bat of the game.
+  const starterCte = opts.vsStarterOnly
+    ? sql`, st as (
+        select distinct on (game_pk, inning_topbot) game_pk, inning_topbot, pitcher
+        from statcast_events
+        where game_date >= ${from} and game_date < ${toExclusive}
+        order by game_pk, inning_topbot, at_bat_number, pitch_number)`
+    : sql``;
+  const starterFilter = opts.vsStarterOnly
+    ? sql`where exists (select 1 from st where st.game_pk = e.game_pk and st.inning_topbot = e.inning_topbot and st.pitcher = e.pitcher)`
+    : sql``;
   const res = await db.execute(sql`
     with e as (
       select *,
@@ -79,9 +109,9 @@ export async function aggregateWindow(
         (events in ('single','double','triple','home_run')) as is_hit,
         case events when 'single' then 1 when 'double' then 2 when 'triple' then 3 when 'home_run' then 4 else 0 end as tb
       from statcast_events
-      where game_date >= ${from} and game_date < ${toExclusive}
-    )
-    select ${who} as id,
+      where game_date >= ${from} and game_date < ${toExclusive} ${handFilter}
+    )${starterCte}
+    select ${who} as id${handCol},
       count(*)::int as pitches,
       count(*) filter (where is_pa)::int as pa,
       count(*) filter (where is_ab)::int as ab,
@@ -115,10 +145,11 @@ export async function aggregateWindow(
       count(*) filter (where description in ('swinging_strike','swinging_strike_blocked','missed_bunt','foul_tip','foul','hit_into_play','foul_bunt','bunt_foul_tip'))::int as swings,
       avg(release_speed) filter (where pitch_type in (${sql.join(FASTBALL_TYPES.map(t => sql`${t}`), sql`, `)})) as fb_velo,
       sum(delta_run_exp) as run_exp
-    from e group by 1`);
+    from e ${starterFilter} group by 1${handGroup}`);
   return (res.rows as Record<string, unknown>[]).map(r => {
     const n = (k: string) => (r[k] == null ? null : Number(r[k]));
     return {
+      ...(r.hand === 'L' || r.hand === 'R' ? { hand: r.hand } : {}),
       id: Number(r.id), pitches: n('pitches')!, pa: n('pa')!, ab: n('ab')!, bip: n('bip')!, so: n('so')!, bb: n('bb')!,
       ubb: n('ubb')!, hbp: n('hbp')!, s1: n('s1')!, s2: n('s2')!, s3: n('s3')!, hr: n('hr')!, sf: n('sf')!,
       xwoba: n('xwoba'), wobaGeneric: n('woba_generic'), xba: n('xba'), xslg: n('xslg'), xwobacon: n('xwobacon'), hardhit: n('hardhit'),

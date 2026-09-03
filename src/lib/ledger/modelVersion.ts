@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.07.25.2';
+export const MODEL_VERSION = '2026.09.03.2';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -101,6 +101,43 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       'discrimination buckets built on it) segments at this bump.',
     touched: [
       { engine: 'pitcher-start', stats: ['score'] },
+    ],
+  },
+  {
+    version: '2026.09.03',
+    date: '2026-09-03',
+    summary:
+      'Batter platoon recalibrated against 37,167 graded retro batter-days (docs/history.md ' +
+      '"2026-09 — Batter platoon recalibrated; the knob was never inert"). Each PLATOON_COMPONENT row is ' +
+      'now re-centred on the league PA mix so it carries a pure tilt and no level bias (the RHB walk row ' +
+      'was 2.7% low), then scaled to the tilt the cohort delivers: K 0.60, BB 1.25, TB/H/HR/R/RBI 0.80. ' +
+      'The K/BB regression priors go 450 -> 1000, dropping the "sticky splits earn the player\'s own ' +
+      'number sooner" special case the data did not support. Touches every batter category that has a ' +
+      'platoon row, so every batter engine segments; SB has no row and pitcher engines are untouched.',
+    touched: [
+      { engine: 'batter-day', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'k', 'tb', 'score'] },
+      { engine: 'batter-week', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'k', 'tb', 'score'] },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'k', 'tb', 'score'] },
+    ],
+  },
+  {
+    version: '2026.09.03.2',
+    date: '2026-09-03',
+    summary:
+      'Batter PA model re-fit from 36,651 graded starter-games, up from the 708 the starter share was ' +
+      'originally fit on (docs/history.md "2026-09 — The platoon hook: batter PA volume moves with the ' +
+      'matchup"). Adds PLATOON_HOOK: a starter WITH the platoon edge on the opposing starter is the one ' +
+      'lifted for a pinch hitter when the same-hand reliever appears, and banks 1.5% fewer PA at the top ' +
+      'of the order rising to ~7% at the bottom. STARTER_SHARE is re-fit on the un-hooked population ' +
+      '(it had the average hook baked into its slope) and the no-spot fallback moves 4.00 -> 3.95. PA ' +
+      'volume scales every batter counting stat and the rating\'s opportunity multiplier, so every ' +
+      'batter engine and every stat segments.',
+    touched: [
+      { engine: 'batter-day', stats: '*' },
+      { engine: 'batter-week', stats: '*' },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'retro-batter-day', stats: '*' },
     ],
   },
 ];

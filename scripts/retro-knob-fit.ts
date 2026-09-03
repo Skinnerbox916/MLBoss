@@ -13,6 +13,18 @@
  * further than the outcomes justify, and the fitted value is the fraction of
  * the current swing that the data actually supports.
  *
+ * EXPOSURE: every batter knob is a multiplier on a per-PA RATE, but the row
+ * being graded is a per-game COUNT — rate × a plate-appearance forecast that
+ * belongs to a different model (the lineup-spot PA model). Grading the rate
+ * dial on the count charges it for the PA model's error, and the two are not
+ * independent: platoon-advantaged bats are the ones lifted for a pinch
+ * hitter, so they collect ~4% FEWER PA than the spot model says, which
+ * cancels the rate gain the platoon knob correctly predicted. So when the
+ * snapshot and the actual both carry PA, the fit carries log(actual PA /
+ * forecast PA) as a control and the coefficients read as rate calibration.
+ * Pass `count` to get the uncontrolled view back. See
+ * docs/forecast-verification.md#per-knob-calibration-fit.
+ *
  * IDENTIFIABILITY: the batter decomposition works because each knob applies
  * a DIFFERENT multiplier per stat, so the columns vary independently. The
  * pitcher side stores one multiplier per knob for the whole start
@@ -21,63 +33,17 @@
  * must not be read. Only the pitcher talent slope and `bullpen` are usable
  * at present; separating the rest needs per-stat pitcher attribution.
  *
- *   npx tsx scripts/retro-knob-fit.ts [engine=retro-batter-day] [minRows=500]
+ *   npx tsx scripts/retro-knob-fit.ts [engine] [minRows] [home|away] [count]
  */
 import { config } from 'dotenv';
 config({ path: '.env.local' });
 
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
+import { poissonFit } from '@/lib/retro/fitEval';
 
 const STATS = ['tb', 'h', 'hr', 'r', 'rbi', 'k', 'bb', 'sb', 'ip', 'er', 'pa'];
 const KNOBS = ['pitcher', 'park', 'weather', 'order', 'platoon', 'hand', 'teamSb', 'opp', 'velocity', 'bullpen'];
-
-/** Poisson IRLS with an arbitrary design matrix; returns coefficients + SEs. */
-function poissonFit(X: number[][], y: number[]): { beta: number[]; se: number[] } | null {
-  const k = X[0].length;
-  let beta = new Array(k).fill(0);
-  beta[0] = Math.log(Math.max(y.reduce((a, b) => a + b, 0) / y.length, 1e-3));
-  for (let iter = 0; iter < 60; iter++) {
-    const H = Array.from({ length: k }, () => new Array(k).fill(0));
-    const g = new Array(k).fill(0);
-    for (let i = 0; i < X.length; i++) {
-      const eta = X[i].reduce((s, v, j) => s + v * beta[j], 0);
-      const mu = Math.exp(Math.min(eta, 20));
-      const r = y[i] - mu;
-      for (let a = 0; a < k; a++) {
-        g[a] += r * X[i][a];
-        for (let b = 0; b < k; b++) H[a][b] += mu * X[i][a] * X[i][b];
-      }
-    }
-    const step = solve(H, g);
-    if (!step) return null;
-    beta = beta.map((b, j) => b + step[j]);
-    if (Math.max(...step.map(Math.abs)) < 1e-10) break;
-  }
-  const H = Array.from({ length: k }, () => new Array(k).fill(0));
-  for (const row of X) {
-    const mu = Math.exp(Math.min(row.reduce((s, v, j) => s + v * beta[j], 0), 20));
-    for (let a = 0; a < k; a++) for (let b = 0; b < k; b++) H[a][b] += mu * row[a] * row[b];
-  }
-  const inv = invert(H);
-  return inv ? { beta, se: inv.map((r, i) => Math.sqrt(Math.abs(r[i]))) } : null;
-}
-
-function solve(A: number[][], b: number[]): number[] | null {
-  const n = A.length, M = A.map((r, i) => [...r, b[i]]);
-  for (let i = 0; i < n; i++) {
-    let p = i; for (let r = i + 1; r < n; r++) if (Math.abs(M[r][i]) > Math.abs(M[p][i])) p = r;
-    if (Math.abs(M[p][i]) < 1e-12) return null;
-    [M[i], M[p]] = [M[p], M[i]];
-    for (let r = 0; r < n; r++) { if (r === i) continue; const f = M[r][i] / M[i][i]; for (let c = i; c <= n; c++) M[r][c] -= f * M[i][c]; }
-  }
-  return M.map((r, i) => r[n] / r[i]);
-}
-function invert(A: number[][]): number[][] | null {
-  const n = A.length, cols: number[][] = [];
-  for (let j = 0; j < n; j++) { const e = new Array(n).fill(0); e[j] = 1; const c = solve(A, e); if (!c) return null; cols.push(c); }
-  return Array.from({ length: n }, (_, i) => cols.map(c => c[i]));
-}
 
 async function main() {
   const engine = process.argv[2] ?? 'retro-batter-day';
@@ -87,7 +53,9 @@ async function main() {
   // that player's home park, so applying the full park factor at home
   // double-counts it. If that is what is happening, the fitted park
   // coefficient should sit near 1.0 on the road and well below it at home.
-  const slice = process.argv[4] as 'home' | 'away' | undefined;
+  const flags = new Set(process.argv.slice(4));
+  const slice = flags.has('home') ? 'home' : flags.has('away') ? 'away' : undefined;
+  const rateBasis = !flags.has('count');
   const res = await getDb().execute(sql`
     select s.predicted, s.context, a.batting, a.pitching
     from forecast_snapshots s join player_game_actuals a on a.game_date = s.game_date and a.mlb_id = s.mlb_id
@@ -95,7 +63,14 @@ async function main() {
       and (case when ${engine} like '%batter%' then a.batting is not null else a.pitching is not null end)`);
   let rows = res.rows as { predicted: Record<string, number>; context: Record<string, unknown>; batting: Record<string, number> | null; pitching: Record<string, number> | null }[];
   if (slice) rows = rows.filter(r => (r.context.isHome === true) === (slice === 'home'));
-  console.log(`${engine}${slice ? ` [${slice}]` : ''}: ${rows.length} graded rows\n`);
+  // Exposure control — see EXPOSURE above. Only available where both sides
+  // carry PA; without it the knobs are graded on the count.
+  const paOf = (r: (typeof rows)[number]) => {
+    const act = (r.batting ?? r.pitching)?.pa, pred = r.predicted?.pa;
+    return act != null && pred != null && act > 0 && pred > 0 ? Math.log(act / pred) : null;
+  };
+  const hasPA = rateBasis && rows.filter(r => paOf(r) != null).length >= rows.length * 0.9;
+  console.log(`${engine}${slice ? ` [${slice}]` : ''}: ${rows.length} graded rows — ${hasPA ? 'RATE basis (PA exposure controlled)' : 'COUNT basis (no PA control)'}\n`);
   console.log(`  a knob coefficient of 1.00 means correctly scaled; 0.50 means only half the applied swing is justified\n`);
 
   for (const stat of STATS) {
@@ -123,7 +98,9 @@ async function main() {
       if (act == null || pred == null || mods == null || !kn || pred <= 0 || mods <= 0) continue;
       const neutral = pred / mods;
       if (!(neutral > 0)) continue;
-      const row = [1, Math.log(neutral), ...knobsFor.map(k => Math.log(kn[k]?.[stat] ?? 1))];
+      const pa = hasPA ? paOf(r) : null;
+      if (hasPA && pa == null) continue;
+      const row = [1, Math.log(neutral), ...knobsFor.map(k => Math.log(kn[k]?.[stat] ?? 1)), ...(pa != null ? [pa] : [])];
       if (row.some(v => !Number.isFinite(v))) continue;
       X.push(row); y.push(act);
     }
@@ -139,7 +116,7 @@ async function main() {
     }
     const dropped = knobsFor.filter((_, j) => !keep.includes(j));
     const usedKnobs = keep.map(j => knobsFor[j]);
-    const Xk = X.map(r => [r[0], r[1], ...keep.map(j => r[j + 2])]);
+    const Xk = X.map(r => [r[0], r[1], ...keep.map(j => r[j + 2]), ...(hasPA ? [r[r.length - 1]] : [])]);
     if (Xk.length < minRows || usedKnobs.length === 0) { console.log(`  ${stat.padEnd(4)} n=${Xk.length} (skipped${dropped.length ? `; constant: ${dropped.join(',')}` : ''})`); continue; }
     const fit = poissonFit(Xk, y);
     if (!fit) { console.log(`  ${stat.padEnd(4)} fit failed`); continue; }

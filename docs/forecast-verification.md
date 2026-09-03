@@ -134,6 +134,9 @@ Pieces, in pipeline order:
 
 Pull cadence: month-sized runs inside the prod container (`docker exec <app> npx tsx scripts/retro-pull-statcast.ts 2026-07-01 2026-07-31`, ~3 min); dev takes a `copy … to stdout with csv` from prod rather than a second Savant pull. Corpus: the full 2026 regular season from Mar 25 (~615k pitches, 2,084 games, every game reconciled). Keep it current with a daily one-day pull. Status detail: the session memory note `project_retro_corpus`.
 
+| Per-knob fit + knob studies | `scripts/retro-knob-fit.ts`, `scripts/retro-platoon-diagnose.ts`; Poisson IRLS in `retro/fitEval.ts` | Estimate a calibration coefficient per L2 knob per stat over the graded cohort, on the rate basis. `retro-platoon-diagnose.ts` is the per-knob deep dive: population-vs-player decomposition, interaction-only identification, usage and exposure splits, and a train/holdout time validation | See [Per-knob calibration fit](#per-knob-calibration-fit-2026-09-full-season-retro-cohort) |
+| PA model re-fit | `scripts/retro-pa-model-fit.ts` | Re-fits `paBySpot.ts` from the graded ledger: the starter share per lineup spot, and the platoon hook on top of it. Runs against the live `batter-day` cohort too, as an independent sample | See [projection.md](./projection.md#pa-by-lineup-spot) |
+| Corpus-only studies | `scripts/retro-statcast-value.ts`, `scripts/retro-statcast-rigor.ts`, `scripts/retro-platoon-usage-check.ts` | Questions about baseball rather than about the engine, answered from `statcast_events` with no forecast in the loop — far quieter than a residual, and available for any season the corpus covers | Permutation nulls, cross-validation and BH correction in `retro/fitEval.ts` |
 | Retro capture | `retroCaptureDay` (`retro/capture.ts`) + the as-of seam `src/lib/mlb/asOfContext.ts` + interceptor `retro/mlbAsOf.ts`; `scripts/retro-capture.ts <date> [to]`, `scripts/retro-compare.ts <date>` | Runs the **unchanged** engines on a past slate. Under the as-of context: Redis is bypassed entirely; Savant comes from the corpus aggregate; MLB season totals become date ranges through D−1; game logs are sliced; the starter line is summed from the sliced log; platoon splits (player and team) come from the corpus (R/RBI/SB aren't PA events → those platoon ratios fall back to the population prior); team SP/RP role lines come from the corpus (starter = first pitcher of the game) with team-level as-of ERA and SB. Prior-season, identity and schedule requests pass through; any other `stats=` request logs `[retro] pass-through` so leakage is visible. The slate itself is the completed date's schedule: its probables are the actual starters, plus posted lineups and observed weather, then the shared `enrichSlate` | **Golden test, 2026-08-09** (retro vs live lead-0 rows): pitchers K corr 1.000 (mean \|diff\| 0.004), ERA 0.02, xwOBA 0.001, IP/PA exact. Batters where both saw the same starter (72 rows): every stat corr ≥ 0.994, mean \|diff\| ≤ 0.01, combined modifiers agree to 0.002. The other 72 rows differ because ESPN's Aug 9 probables were wrong in 8 of 15 games — the churn the live DNP finding counts |
 
 ### What the corpus says about Statcast's contribution
@@ -164,38 +167,86 @@ Two slate traps the retro pass exposed, now guarded in `capture.ts` (`isGradable
 
 With 37,167 graded retro batter-days carrying `context.knobs`, `scripts/retro-knob-fit.ts` fits `actual ~ Poisson(exp(a + b·log(neutral) + Σ c_k·log(knob_k)))`, where `neutral` is the talent-only count. Calibrated means b = 1 and every c_k = 1; c_k = 0.5 means only half the applied swing is justified. This is the fine dial the combined `mods` ratio could never give.
 
+**Exposure: read a rate dial on the rate basis.** Every batter knob multiplies a per-**PA rate**, but the row being graded is a per-game **count** — that rate times a plate-appearance forecast belonging to a different model (the lineup-spot PA model). Grading the rate dial on the count charges it for the PA model's error, and the two are not independent: platoon-advantaged bats are the ones lifted for a pinch hitter, so they collect ~4% fewer PA than the spot model says, which cancels the rate gain the knob correctly predicted (the full mechanism is under [the platoon knob](#the-platoon-knob)). So the fit carries `log(actual PA / forecast PA)` as a control wherever both sides record PA, and the table below is on that **rate basis**. `count` restores the uncontrolled view.
+
+The gap between the two bases is itself a finding, and it splits the knobs into two kinds:
+
+- **Batter-specific knobs (platoon, lineup spot).** The count basis is simply wrong for these — the PA distortion is a confounder, driven by the same lineup-card decision as the rate effect. Platoon reads 0.01 to −0.46 on the count basis and 0.48 to 1.03 on the rate basis. Read the rate basis.
+- **Run-environment knobs (park, opposing pitcher, weather).** These genuinely *do* move team PA — a better park or a worse pitcher means the lineup bats more — and the spot model models none of it. So their count-basis coefficient is inflated by a PA-model gap, not by a well-scaled multiplier. Park reads 1.01 on the count basis and 0.58 on the rate basis for TB; the multiplier is over-applied by more than the count fit admits, and separately the PA model should respond to run environment and doesn't.
+
 | | talent b | opposing pitcher | park | platoon | order |
 |---|---|---|---|---|---|
-| TB | 0.82 | **0.70** | 1.01 | **0.01** | — |
-| H | 0.82 | **0.50** | 0.76 | **−0.42** | — |
-| HR | 0.81 | 0.86 | **0.43** | **0.43** | — |
-| R | **0.52** | **0.70** | 1.32 | **−0.43** | **1.57** |
-| RBI | **0.52** | **0.74** | **1.36** | **−0.46** | 1.24 |
-| K | 0.96 | **0.72** | **0.47** | **0.65** | — |
-| BB | 0.99 | **0.70** | **0.47** | **0.58** | — |
+| TB | 0.92 | **0.53** | **0.58** | **0.73** | — |
+| H | 0.96 | **0.36** | **0.34** | **0.53** | — |
+| HR | 0.84 | 0.76 | **0.42** | 0.81 | — |
+| R | **0.67** | **0.41** | 0.77 | 1.03 | 1.35 |
+| RBI | **0.65** | **0.42** | 0.75 | 0.82 | 0.95 |
+| K | 1.02 | **0.77** | **0.52** | **0.48** | — |
+| BB | 1.03 | **0.64** | **0.37** | 0.82 | — |
 
 Bold = differs from 1.00 at p < 0.05. Read together with the scorecard's over-spread slopes, which are the same story from the outcome side:
 
-- **The platoon modifier carries no signal at game level** (≈0, negative on several stats). It is the first thing to investigate — either it is mis-keyed or the regressed vs-hand split does not survive to a single game.
-- **The opposing-pitcher modifier should be scaled to roughly 70%** of its current swing, consistently across six stats.
-- **Park is stat-dependent, not a single dial.** Its HR and K/BB applications are roughly half as strong as they should be applied (c ≈ 0.43–0.47 means the engine moves them ~2× too far), while its run/RBI application is if anything too weak (1.32–1.36).
-- **Talent is over-spread for batted-ball stats (0.82) and badly so for R/RBI (0.52)**, while K and BB are well calibrated (0.96, 0.99) — the stats where the box score measures the skill directly.
-- **Lineup-spot run context is too weak** for runs (1.57).
+- **The opposing-pitcher modifier is the worst-scaled knob on the page** — 0.36–0.77, so roughly half its swing is justified. This is a bigger correction than the count basis suggested (0.50–0.86) and it is consistent across every stat.
+- **Park is over-applied on every stat** (0.34–0.77), not stat-dependent as the count basis implied. See the home/away split below for why.
+- **Talent is well calibrated for the stats the box score measures directly** (K 1.02, BB 1.03, H 0.96, TB 0.92) and badly over-spread for R/RBI (0.65). Most of what looked like a talent problem on the count basis (TB 0.82, H 0.82) was PA-model error.
+- **Platoon is not the dead knob it appeared to be.** [Its own section](#the-platoon-knob) is below.
+- **Lineup-spot run context** is close on both stats (1.35 / 0.95) once PA is controlled; the 1.57 on the count basis was the spot model's PA error re-entering through the same column.
 
 **The park knob is two different problems, and splitting home from away separates them** (`retro-knob-fit.ts <engine> <minRows> home|away`):
 
 | | TB | H | HR | R | RBI | K | BB |
 |---|---|---|---|---|---|---|---|
-| home | 0.58 | 0.47 | 0.19 | 0.85 | 0.83 | 0.43 | 0.34 |
-| away | 1.40 | 1.03 | 0.64 | 1.83 | 1.92 | 0.45 | 0.65 |
+| home | 0.33 | 0.24 | 0.17 | 0.57 | 0.50 | 0.46 | 0.18 |
+| away | 0.75 | 0.40 | 0.60 | 0.96 | 1.00 | 0.51 | 0.58 |
 
-For the batted-ball and run stats the home coefficient is far below 1 and the away coefficient at or above it. That is the signature of **double-counting**: the talent baseline is built from season stats that already contain roughly half of the player's home park, so applying the full park factor at home charges for it twice, while on the road the baseline is near-neutral for that venue and the full factor is warranted. The engine has hit this exact class of bug before — the pitcher velocity multiplier was fixed to 1.0 in 2026-05 for the same reason, because velocity trend already fed the talent layer's regime probe. Park-neutralising the baseline is the corresponding fix here, and it is a talent-layer change, not a modifier re-scale. **K and BB are a separate problem**: low both home and away (0.43/0.45, 0.34/0.65), which is straightforward over-application of a small, noisy factor that wants regressing toward 100.
+For the batted-ball and run stats the home coefficient is a fraction of the away one — away reaches 0.96 / 1.00 on R and RBI and roughly doubles the home value on TB and HR. That is the signature of **double-counting**: the talent baseline is built from season stats that already contain roughly half of the player's home park, so applying the full park factor at home charges for it twice, while on the road the baseline is near-neutral for that venue and the full factor is warranted. The engine has hit this exact class of bug before — the pitcher velocity multiplier was fixed to 1.0 in 2026-05 for the same reason, because velocity trend already fed the talent layer's regime probe. Park-neutralising the baseline is the corresponding fix here, and it is a talent-layer change, not a modifier re-scale. **K and BB are a separate problem**: low both home and away, which is straightforward over-application of a small, noisy factor that wants regressing toward 100.
 
 **Park data itself is not the gap.** `parks.ts` already carries Savant's Statcast park factors comprehensively — overall wOBA, HR, BB and SO each with left/right handedness splits, plus 2B, 3B, BACON, xBACON and HardHit, on a 3-year rolling window (`scripts/scrape-park-factors.mjs`).
 
-**The pitcher side is not identifiable yet.** Pitcher snapshots store one multiplier per knob for the whole start rather than per stat, so `platoon` and `opp` are near-collinear and return standard errors of ±10 or worse. Only the talent slope (IP 1.53, K 0.91, BB 0.79, ER 0.56, HR 0.48) and `bullpen` are usable. Per-stat pitcher attribution, mirroring the batter `knobs` shape, is the prerequisite for fitting the rest. Two things make that harder than the batter case: the pitcher modifiers barely move at all (over 4,166 starts `opp` spans 0.950–1.044, `park` 0.905–1.075, `platoon` 0.966–1.029), so there is little variance to fit against, and `velocity` is a deliberate constant 1.0 — it was neutered in 2026-05 because velocity trend already feeds the talent layer's regime probe, so a composite multiplier on top would double-count.
+**The pitcher side is not identifiable yet.** Pitcher snapshots store one multiplier per knob for the whole start rather than per stat, so `platoon` and `opp` are near-collinear and return standard errors of ±10 or worse. Only the talent slope and `bullpen` are usable. Per-stat pitcher attribution, mirroring the batter `knobs` shape, is the prerequisite for fitting the rest. Two things make that harder than the batter case: the pitcher modifiers barely move at all (over 4,166 starts `opp` spans 0.950–1.044, `park` 0.905–1.075, `platoon` 0.966–1.029), so there is little variance to fit against, and `velocity` is a deliberate constant 1.0 — it was neutered in 2026-05 because velocity trend already feeds the talent layer's regime probe, so a composite multiplier on top would double-count.
+
+#### The platoon knob
+
+`scripts/retro-platoon-diagnose.ts` is the worked example of how to interrogate one knob, and the reason the exposure control above exists. Decisions and rejected alternatives: [history.md](./history.md#2026-09--batter-platoon-recalibrated-the-knob-was-never-inert-and-the-per-knob-fit-was-mis-specified).
+
+On the count basis the knob read as inert — 0.01 (TB), −0.42 (H), −0.46 (RBI) — with independent variation (log-multiplier SD 0.035–0.055) that predicted nothing, and no collinearity with the opposing-pitcher knob to blame (correlation 0.011). The mechanism turned out to be the lineup card. A batter with the platoon advantage is the one his manager lifts when the opposing bullpen brings a same-hand arm, so he banks 4–8% **fewer** PA than the spot model forecasts (LB/RHP 0.970, RB/LHP 0.958 actual÷forecast PA) while the disadvantaged batter, who is a full-time player by definition, banks slightly more (LB/LHP 1.009). Same decision on both sides of the ledger, so the PA loss cancels the rate gain and the count fit reads zero. The volume half is now modelled too — `PLATOON_HOOK` in [paBySpot.ts](../src/lib/mlb/paBySpot.ts), re-fit with `scripts/retro-pa-model-fit.ts` ([history.md](./history.md#2026-09--the-platoon-hook-batter-pa-volume-moves-with-the-matchup)); rate and volume are separate outputs, so carrying both is not double-counting.
+
+Three things the script does that the combined fit cannot, each with a different fix attached:
+
+1. **Grade per PA** — model-free cell tilts on a `Σactual / Σ(rate × actual PA)` basis, and the regression control above.
+2. **Decompose** the applied multiplier into the population table `popTarget(bats, facingHand)` and the batter's own deviation from it. They fail independently. The deviation term fits at 0.31±0.21 (K) and 0.08±0.22 (BB) — the player's own regressed vs-hand split earns almost none of the movement it is given, which is what took the K/BB priors from 450 to 1000.
+3. **Identify off the interaction only.** Park factors are split by batter hand too, so a batter-hand *main* effect is shared between the park and platoon columns. Free dummies for batter hand and pitcher hand leave platoon identified purely by the hand × hand interaction, which is the only thing it claims.
+
+Ruled out along the way: **dilution** (the multiplier is applied to the whole game, but the corpus says a batter spends only 0.68–0.89 of his PAs facing the starter's hand — discounting the table by each row's true share pushes the coefficients past 1.0 rather than onto it, so the sourced per-PA numbers are already, coincidentally, day-level); and **survivorship** (managers benching the platoon-disadvantaged does not explain it — the table works *better*, not worse, for the bats that get sat down).
+
+What the cohort delivers against what each row claims, as the hand × hand interaction contrast:
+
+| | TB | H | HR | R | RBI | K | BB |
+|---|---|---|---|---|---|---|---|
+| table claims | 0.853 | 0.897 | 0.773 | 0.900 | 0.900 | 1.272 | 0.798 |
+| cohort delivers | 0.920 | 0.971 | 0.829 | 0.951 | 0.979 | 1.107 | 0.754 |
+
+The shipped calibration (`PLATOON_TILT_SCALE` in [platoon.ts](../src/lib/mlb/platoon.ts)) is K 0.60, BB 1.25, everything else 0.80, applied on top of a row that is first re-centred on the league PA mix so it carries no level bias — the RHB walk row averaged 0.973 over a typical schedule, under-forecasting walks for ~70% of the league. Re-grading the same cohort against the shipped table: TB 0.99, H 0.81, HR 1.06, R 1.26, RBI 0.99, K 0.88, BB 1.13 — not one differs from 1.00 at p < 0.05, and the held-out second half agrees (0.35–1.19, every SE spanning 1.00).
+
+**Heterogeneity by manager usage is real, and it is the largest thing left in the batter model.** Split the cohort by how far a batter is shielded from his weak hand (his own share of PA against it, over the league's) and the table is delivered at ~0.2–0.4× for everyday bats and ~1.8–3.2× for shielded ones. Through engine residuals that did not survive a time split, and it was left out. Asked of the corpus directly it replicates cleanly — see [the usage check](#does-manager-usage-predict-split-size) below. The engine holds the input in spirit (`paVsL` / `paVsR`) but not cleanly enough to use yet.
 
 Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. The scorecard grades `retro-*` engines exactly like their live twins (kind derived from the key with the prefix stripped) but as separate sections. Still to build: bulk retro capture over the season gap (Aug 10 → 31) and the per-knob fit that reads live + retro rows together.
+
+### Does manager usage predict split size?
+
+`scripts/retro-platoon-usage-check.ts` asks the platoon-heterogeneity question of the pitch corpus instead of the engine's residuals, which is both cheaper and cleaner — no forecasts, no talent layer, no as-of machinery, so nothing but the batter is in the comparison. Window A measures **shield** (the batter's own share of PA against his weak hand over the league's share for his stance); window B, strictly later, measures his split. The estimator is conditional — same-hand count out of same-plus-opposite count with `log(PA_same / PA_opp)` as the offset — so the batter's own overall rate cancels out of the likelihood and no reference rate is needed. That is what lets the whole league contribute: a right-handed batter's opposite hand is LHP, only ~32% of his plate appearances, and any design needing a well-measured opposite-hand *rate* quietly discards him.
+
+Restricted to plate appearances against **starting** pitchers, which is the only case the slate surfaces forecast — same-hand ÷ opposite-hand rate, shielded (shield < 0.80) against everyone else:
+
+| split date | TB | H | HR | K | BB |
+|---|---|---|---|---|---|
+| 2026-05-25 | 0.903 → **0.637** | 0.942 → **0.772** | 0.827 → **0.282** | 1.130 → 1.199 | 0.771 → 0.784 |
+| 2026-06-25 | 0.914 → **0.671** | 0.957 → **0.813** | 0.825 → **0.350** | 1.109 → 1.203 | 0.810 → 0.800 |
+| 2026-07-20 | 0.934 → **0.687** | 0.986 → **0.850** | 0.818 → **0.268** | 1.113 → 1.264 | 0.732 → 0.720 |
+
+Bold = permutation p ≤ 0.015 against a 200-draw null with shield reshuffled among batters of the same stance. **15 of 45 tests survive Benjamini–Hochberg at 5%.** K and BB show nothing at any split — the same division the knob fit found, and the expected one: the strikeout and walk platoon effect is mechanical and applies to everyone, while contact quality is a skill managers can see and roster around.
+
+Three things had to be right, and each was wrong in the earlier attempt: the effect is a **tail** below shield ≈ 0.80 rather than a ramp (threshold sensitivity is monotone, TB −0.456 / −0.309 / −0.221 at cuts of 0.75 / 0.80 / 0.85, so it is a gradient in the tail and not a knife edge); the outcome has to be a within-batter comparison rather than a forecast residual; and the estimator has to condition rather than divide. The confound that would have made it unusable — a shielded batter meets his weak hand mostly through a relief specialist brought in to beat him — is ruled out by the starters-only restriction *increasing* the effect. Decisions and the conversion needed before it can be applied: [history.md](./history.md#2026-09--manager-usage-predicts-platoon-split-size-the-effect-is-a-tail-not-a-ramp).
 
 ## Operating it
 

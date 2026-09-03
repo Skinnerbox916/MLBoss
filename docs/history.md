@@ -8,6 +8,89 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — Manager usage predicts platoon-split size; the effect is a tail, not a ramp
+
+`scripts/retro-platoon-usage-check.ts`. The question left open by the [platoon recalibration](#2026-09--batter-platoon-recalibrated-the-knob-was-never-inert-and-the-per-knob-fit-was-mis-specified): does how a manager uses a batter predict how large that batter's platoon split really is? Asked of the pitch corpus directly rather than of the engine's residuals — no forecasts, no talent layer, no as-of machinery, so nothing but the batter is in the comparison.
+
+**Design.** Window A (before a split date) measures **shield**: the batter's own share of PA against his weak hand over the league's share for his stance, shrunk toward league-typical by 60 PA. Window B (after it) measures the split. The model is conditional — same-hand count out of same-plus-opposite count, with `log(PA_same / PA_opp)` as the offset — so the batter's own overall rate cancels out of the likelihood. That matters more than it looks: a right-handed batter's opposite hand is LHP, only ~32% of his plate appearances, so any design that needs a well-measured opposite-hand *rate* silently discards most of the league. Switch hitters are out of scope (no weak hand to be shielded from).
+
+**Result, restricted to plate appearances against STARTING pitchers, which is the only case the slate surfaces forecast.** Same-hand rate ÷ opposite-hand rate, shielded (shield < 0.80) vs everyone else:
+
+| split date | TB | H | HR | K | BB |
+|---|---|---|---|---|---|
+| 2026-05-25 | 0.903 → **0.637** | 0.942 → **0.772** | 0.827 → **0.282** | 1.130 → 1.199 | 0.771 → 0.784 |
+| 2026-06-25 | 0.914 → **0.671** | 0.957 → **0.813** | 0.825 → **0.350** | 1.109 → 1.203 | 0.810 → 0.800 |
+| 2026-07-20 | 0.934 → **0.687** | 0.986 → **0.850** | 0.818 → **0.268** | 1.113 → 1.264 | 0.732 → 0.720 |
+
+Bold = permutation p ≤ 0.015. **15 of 45 tests survive Benjamini–Hochberg at 5%** — every TB and HR tail test in both views, plus H under the starters-only restriction, at all three split dates. K and BB show nothing (p 0.17–0.91), the same split the engine-residual study found: the strikeout and walk platoon effect is a mechanical pitch-shape effect that applies to everyone, while contact quality is a skill that varies and that managers can see.
+
+**Why this succeeded where the earlier attempt failed**, in order of how much each mattered:
+
+1. **The shape.** The effect is concentrated below shield ≈ 0.80 and is flat above it. A linear ramp across the whole range is a weak test of a tail, and that is what the earlier fit used. A one-degree-of-freedom tail indicator finds it immediately. Threshold sensitivity is monotone and not a knife edge (TB coefficient −0.456 at <0.75, −0.309 at <0.80, −0.221 at <0.85).
+2. **The outcome.** A within-batter same-vs-opposite comparison in the corpus is far quieter than the residual of a full forecast, which carries the talent layer's error and every other knob's.
+3. **The estimator.** Conditioning on the batter's own two-cell total removes the need for a reference rate, so the whole league contributes rather than the left-handed half.
+
+**Guards, all of which had to come back clean.** A 200-draw permutation null (shield reshuffled among batters of the same stance) — the coefficients this design produces from nothing sit at |b| ≤ 0.10–0.47 at the 95th percentile, against observed −0.31 to −1.12. And the confound that would have made the finding unusable: a shielded batter meets his weak hand mostly through a relief specialist brought in to beat him, an everyday batter mostly through a starter, so the gap could have been the arm rather than the batter. Restricting **both** to starting pitchers makes the effect *larger* (TB −0.247 → −0.309, HR −0.727 → −0.858 at the middle split), not smaller. The effect lives in exactly the matchup the app forecasts.
+
+**Not yet shipped.** The engine has the input in spirit (`paVsL` / `paVsR`) but not cleanly: `resolveHand` in [players.ts](../src/lib/mlb/players.ts) substitutes the *prior season's* PA count when the current side is under 50 PA, which would corrupt a usage ratio. A current-season hand-PA mix needs plumbing onto `BatterSeasonStats` first. Convert carefully when it is: the corpus quotes same-hand ÷ **opposite**-hand, while `PLATOON_COMPONENT` is same-hand ÷ **overall**, and the two differ by the batter's own mix (`same/overall = t / (w·t + 1 − w)`) — which is precisely the quantity that varies across the population under test.
+
+**Don't reintroduce:** testing a heterogeneity hypothesis with a linear term without first looking at the bucket table for the shape, or through engine residuals when the corpus can answer it within-player.
+
+---
+
+## 2026-09 — The platoon hook: batter PA volume moves with the matchup
+
+The forecast ledger says a batter with the platoon edge on the opposing starter banks **fewer plate appearances than his lineup spot implies** — 1.5% fewer at the top of the order, ~7% fewer at the bottom. The batter without the edge banks slightly more, and a switch hitter, who is never platoon-lifted, banks the most of all. Those three groups separating in exactly that order is the mechanism naming itself: the edge batter is the one pinch-hit for when the opposing bullpen brings a same-hand arm, and the bottom of the order is where managers substitute freely.
+
+| | edge (gets hooked) | no edge (stays in) | switch (never hooked) | spread |
+|---|---|---|---|---|
+| retro cohort, 36,651 starter-games | 0.970 | 1.009 | 1.012 | 1.041 |
+| — train / holdout | 0.970 / 0.968 | 1.009 / 1.010 | 1.008 / 1.021 | 1.040 / 1.043 |
+| live `batter-day` cohort, 2,916 | 0.960 | 0.996 | 1.009 | 1.037 |
+| by spot: 1–3 / 4–6 / 7–9 | 0.980 / 0.975 / 0.947 | 0.998 / 1.018 / 1.011 | 0.997 / 1.020 / 1.019 | 1.018 / 1.044 / 1.067 |
+
+(actual PA ÷ forecast PA; doubleheaders excluded, since the snapshot describes game 1 and the actual sums both.)
+
+**This is the other half of [the platoon story](#2026-09--batter-platoon-recalibrated-the-knob-was-never-inert-and-the-per-knob-fit-was-mis-specified).** The same lineup-card decision that raises a batter's rate lowers his volume, and in a per-game count the two very nearly cancel — which is exactly why the platoon knob read as inert until PA was controlled for. Rate and volume are separate outputs, so modelling both is not double-counting; modelling neither made the whole effect invisible.
+
+**What shipped** (MODEL_VERSION 2026.09.03.2, [paBySpot.ts](../src/lib/mlb/paBySpot.ts)): the model goes from `slot PA × starter share` to `slot PA × starter share × platoon hook`.
+
+- `PLATOON_HOOK` — a 9-element table, what an edge starter keeps at each spot (0.985 → 0.934). `platoonHookOf(bats, facingHand)` resolves it; switch hitters and unknown hands are `held` and `null` respectively, and `null` takes the population average (51.4% of posted starters hold the edge) so a week-long horizon or an unposted probable behaves exactly as before.
+- `STARTER_SHARE` **re-fit on the un-hooked population**. The old curve was a linear ramp fit on 708 starter-games with no platoon term, so most of its slope down the order *was* the hook, counted once for everybody. Separating them makes the share flatter (0.978 → 0.942) and it is no longer monotone across spots 1–4 — that residual is drift in the 2016 slot table's shape, which this factor has always absorbed. Only the product is calibrated.
+- `PA_PER_GAME_NO_SPOT` 4.00 → 3.95, holding its deliberate ~1.7% gap below the (now lower) starter-basis slot mean so `paOpportunityRatio` is unchanged in aggregate.
+- Wired wherever the opposing hand is known: `projectBatterPlayer`, the L3 rating's opportunity multiplier, and the points day score. Left neutral on multi-day horizons (`resolveBatterVolume`, `LineupManager`'s game-count estimate), which is what the population average is for.
+- Net effect on the population-average level: **−1.2%** on every batter counting forecast. The previous model over-forecast PA by 1.1% on the retro cohort and 2.1% on the live one, both far outside their standard errors.
+
+**Verification.** Tables fit on dates through 2026-07-16 and scored on the held-out remainder: edge 0.999 ± 0.003, held 1.004 ± 0.002, all 1.001 ± 0.002 — against 0.968 / 1.013 / 0.990 for the model they replace. The 4.5-point gap between the two populations collapses to 0.5. Re-fit or re-check with `npx tsx scripts/retro-pa-model-fit.ts` (pass `batter-day` for the independent live cohort).
+
+**Don't reintroduce:** (a) a spot-only starter-share curve — its slope is mostly a platoon effect and fitting it without a platoon term buries a 4% error in an average; (b) the assumption that a matchup knob only moves rates. Volume is a manager's decision, and managers respond to the same matchup the model does.
+
+---
+
+## 2026-09 — Batter platoon recalibrated; the knob was never inert (and the per-knob fit was mis-specified)
+
+The per-knob fit over 37,167 graded retro batter-days read the batter platoon multiplier as **dead**: coefficients of 0.01 (TB), −0.42 (H), −0.43 (R), −0.46 (RBI) against a calibrated 1.00, and a bucketed check where batters the knob flagged as having a good matchup beat their pure-talent forecast by exactly as much as batters it flagged as having a bad one. Collinearity with the opposing-pitcher knob was ruled out (log-multiplier correlation 0.011), as was a dead column (SD 0.035–0.055). The obvious read was that the regressed vs-hand split does not survive to a single game, and the obvious next move was to delete it.
+
+**That read was an artefact of the fit, not a property of the knob.** `retro-knob-fit.ts` regressed a per-game **count**. Every batter knob is a multiplier on a per-PA **rate**; the count is that rate times a plate-appearance forecast owned by a different model (the lineup-spot PA model). Grading the rate dial on the count charges it for the PA model's error — and the two are not independent. Platoon-**advantaged** bats are exactly the ones a manager lifts when the opposing bullpen brings a same-hand arm, so they collect 4–8% **fewer** PA than the spot model says (LB/RHP 0.970, RB/LHP 0.958 actual/forecast PA) while platoon-disadvantaged bats collect slightly more (LB/LHP 1.009). It is the same lineup-card decision on both sides of the ledger, so the PA loss cancels the rate gain almost exactly, and the count fit reads zero.
+
+Carrying `log(actual PA / forecast PA)` as a control moves the platoon coefficient from ≈0 to 0.65–1.40 and also un-slanders the talent layer (TB 0.82 → 0.92, H 0.82 → 0.96, K 0.96 → 1.02, BB 0.99 → 1.03). The **park** and **opposing-pitcher** conclusions move the other way and their split is itself informative: those knobs genuinely do move team PA (a better park, a worse pitcher → the lineup bats more), a channel the spot model ignores entirely, so their count-basis coefficient was inflated by a PA-model gap rather than by a well-scaled multiplier. Both readings now live in the tool (`count` flag) and the doc says which knob to read on which basis. Full evidence: [forecast-verification.md](./forecast-verification.md#the-platoon-knob); reproduce with `scripts/retro-platoon-diagnose.ts`.
+
+**What shipped** (MODEL_VERSION 2026.09.03, [platoon.ts](../src/lib/mlb/platoon.ts)):
+
+- **Mix normalisation.** Each `PLATOON_COMPONENT` row is a set of ratios against the batter's own overall rate, so over a league-typical schedule it has to average to 1.0 or it applies a level bias to every batter of that hand. Most rows already did to within 0.7%; the RHB walk row averaged 0.973, quietly under-forecasting walks for ~70% of the league. The row is now re-centred on the league PA-vs-LHP share (0.295, measured on the corpus) before use. This is not a tuning knob — it makes the row a pure tilt.
+- **Per-stat tilt scale** (`PLATOON_TILT_SCALE`): K 0.60, BB 1.25, TB/H/HR/R/RBI 0.80. The sourced K row (LHB 26.9% vs LHP / 22.4% vs RHP) claims an interaction of 1.272 where the cohort delivers 1.107 — roughly twice the split that survives to a game, concentrated in the LHB row. BB is the only row the data calls too timid. Values are shaded toward 1.0 from point estimates of 0.42–0.55 (K), 1.25–1.40 (BB) and 0.65–0.83 (the rest), each of which held in both halves of the season under two independent estimators.
+- **K/BB regression priors 450 → 1000.** The 2026-05 design gave K and BB a faster prior on the reasoning that their splits are stickier and so earn the player's own number sooner. Splitting the applied multiplier into a population component and the player's deviation from it put that deviation at 0.31±0.21 (K) and 0.08±0.22 (BB) — the two tightest estimates available, both far below the 1.0 that would justify it. The special case is gone; power still regresses slower.
+
+**Held back at the time, then confirmed: a usage-aware platoon scaler.** The single largest effect in the data is heterogeneity by how a manager uses the batter. Splitting the cohort by the batter's own share of PA against his weak hand, relative to the league's, the population table is delivered at ~0.2–0.4× for everyday bats and ~1.8–3.2× for shielded ones — with an obvious mechanism (managers platoon the players who have splits, so usage is a revealed-preference read on split size that beats a 120-PA vs-hand rate). The engine already holds both halves of the input as `paVsL` / `paVsR`.
+
+It failed the time split **as tested**, and both reasons turned out to be the test rather than the effect. Fitting `u(shield) = c1 + c2·(1 − shield)` on dates through 2026-07-16 and carrying it onto later dates, the scaled column fit at 0.58 (TB) against the flat table's 0.59 — no better. The form-free version failed the same way: a shielded-vs-everyday gap of 2.31 ± 0.62 in train and 0.55 ± 0.69 in holdout. So it was left out, with a second season named as the test that would settle it.
+
+A second season was not what it needed. See [2026-09 — Manager usage predicts platoon-split size](#2026-09--manager-usage-predicts-platoon-split-size-the-effect-is-a-tail-not-a-ramp): the effect is a **tail**, not a ramp, and a linear term through mostly-flat data with a kink at one end is a weak test of it; and grading it through engine residuals buries a clean within-batter comparison under the noise of the talent layer and every other knob. Asked of the corpus directly, in the shape the data actually has, it replicates at every split date with permutation p ≤ 0.015. **The standing lesson is the narrow one: don't ship a scaler whose functional form was never checked against the shape of the effect.**
+
+**Don't reintroduce:** (a) reading a batter knob's calibration off the raw count fit — always check the rate basis first, and treat a large gap between the two as a finding about the PA model; (b) the argument that the platoon knob carries no game-level signal, on the strength of the count-basis table; (c) a `PLATOON_COMPONENT` row whose league-mix average is not 1.0.
+
+---
+
 ## 2026-07 — Next-week matchup projections stopped assuming both rosters stand pat
 
 Next-week pitcher columns were pure current-roster projections on both sides. In a league where the top manager adds 3.2 starters a week and the bottom one adds none, that compared a streamer's roster to a stand-pat roster and called it a matchup forecast — the user's own 83 projected IP understated his week by ~15, and an opponent who streams was invisible. Streaming entered the pipeline in exactly one place, `streamCapacity`, which is my-side-only by construction (it models a lever, not a prediction) and never touches displayed values.

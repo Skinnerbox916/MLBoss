@@ -160,6 +160,30 @@ Two slate traps the retro pass exposed, now guarded in `capture.ts` (`isGradable
 - **The All-Star game is `gameType` 'A'.** It has announced starters and a posted lineup, so it parses exactly like a normal slate — but its stats never appear in a regular-season game log, so every row it produces grades as a DNP. The ledger now admits only `gameType` 'R' (or absent, meaning the source didn't say).
 - **A suspended game resumed later is listed under BOTH dates.** It belongs to its `officialDate`, which is where the corpus and the MLB game logs file it; captured under the other date it is a duplicate that can never be graded.
 
+### Per-knob calibration fit (2026-09, full-season retro cohort)
+
+With 37,167 graded retro batter-days carrying `context.knobs`, `scripts/retro-knob-fit.ts` fits `actual ~ Poisson(exp(a + b·log(neutral) + Σ c_k·log(knob_k)))`, where `neutral` is the talent-only count. Calibrated means b = 1 and every c_k = 1; c_k = 0.5 means only half the applied swing is justified. This is the fine dial the combined `mods` ratio could never give.
+
+| | talent b | opposing pitcher | park | platoon | order |
+|---|---|---|---|---|---|
+| TB | 0.82 | **0.70** | 1.01 | **0.01** | — |
+| H | 0.82 | **0.50** | 0.76 | **−0.42** | — |
+| HR | 0.81 | 0.86 | **0.43** | **0.43** | — |
+| R | **0.52** | **0.70** | 1.32 | **−0.43** | **1.57** |
+| RBI | **0.52** | **0.74** | **1.36** | **−0.46** | 1.24 |
+| K | 0.96 | **0.72** | **0.47** | **0.65** | — |
+| BB | 0.99 | **0.70** | **0.47** | **0.58** | — |
+
+Bold = differs from 1.00 at p < 0.05. Read together with the scorecard's over-spread slopes, which are the same story from the outcome side:
+
+- **The platoon modifier carries no signal at game level** (≈0, negative on several stats). It is the first thing to investigate — either it is mis-keyed or the regressed vs-hand split does not survive to a single game.
+- **The opposing-pitcher modifier should be scaled to roughly 70%** of its current swing, consistently across six stats.
+- **Park is stat-dependent, not a single dial.** Its HR and K/BB applications are roughly half as strong as they should be applied (c ≈ 0.43–0.47 means the engine moves them ~2× too far), while its run/RBI application is if anything too weak (1.32–1.36).
+- **Talent is over-spread for batted-ball stats (0.82) and badly so for R/RBI (0.52)**, while K and BB are well calibrated (0.96, 0.99) — the stats where the box score measures the skill directly.
+- **Lineup-spot run context is too weak** for runs (1.57).
+
+**The pitcher side is not identifiable yet.** Pitcher snapshots store one multiplier per knob for the whole start rather than per stat, so `platoon` and `opp` are near-collinear and return standard errors of ±10 or worse. Only the talent slope (IP 1.53, K 0.91, BB 0.79, ER 0.56, HR 0.48) and `bullpen` are usable. Per-stat pitcher attribution, mirroring the batter `knobs` shape, is the prerequisite for fitting the rest.
+
 Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. The scorecard grades `retro-*` engines exactly like their live twins (kind derived from the key with the prefix stripped) but as separate sections. Still to build: bulk retro capture over the season gap (Aug 10 → 31) and the per-knob fit that reads live + retro rows together.
 
 ## Operating it

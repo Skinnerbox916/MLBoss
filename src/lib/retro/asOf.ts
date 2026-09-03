@@ -48,7 +48,7 @@ export interface AsOfResult<T> {
   coverage: AsOfCoverage;
 }
 
-interface AggRow {
+export interface AggRow {
   id: number; pa: number; ab: number; bip: number; so: number; bb: number;
   ubb: number; hbp: number; s1: number; s2: number; s3: number; hr: number; sf: number;
   xwoba: number | null; wobaGeneric: number | null; xba: number | null; xslg: number | null;
@@ -56,7 +56,18 @@ interface AggRow {
   fb_velo: number | null; pitches: number; run_exp: number | null;
 }
 
-async function aggregate(kind: 'batter' | 'pitcher', season: number, asOf: string): Promise<{ rows: AggRow[]; coverage: AsOfCoverage }> {
+/**
+ * Per-player aggregates over an arbitrary window `[from, toExclusive)`.
+ * Exported so studies (predictiveness, reliability) reuse the exact
+ * conventions the as-of rows are built on rather than re-deriving them —
+ * `truncated_pa` exclusion, IBB in BB, foul tips as whiffs, hard-hit over
+ * all batted balls, xwOBA over Savant's `woba_denom`.
+ */
+export async function aggregateWindow(
+  kind: 'batter' | 'pitcher',
+  from: string,
+  toExclusive: string,
+): Promise<AggRow[]> {
   const db = getDb();
   const who = sql.raw(kind);
   const res = await db.execute(sql`
@@ -68,7 +79,7 @@ async function aggregate(kind: 'batter' | 'pitcher', season: number, asOf: strin
         (events in ('single','double','triple','home_run')) as is_hit,
         case events when 'single' then 1 when 'double' then 2 when 'triple' then 3 when 'home_run' then 4 else 0 end as tb
       from statcast_events
-      where game_date >= ${`${season}-01-01`} and game_date < ${asOf}
+      where game_date >= ${from} and game_date < ${toExclusive}
     )
     select ${who} as id,
       count(*)::int as pitches,
@@ -105,11 +116,7 @@ async function aggregate(kind: 'batter' | 'pitcher', season: number, asOf: strin
       avg(release_speed) filter (where pitch_type in (${sql.join(FASTBALL_TYPES.map(t => sql`${t}`), sql`, `)})) as fb_velo,
       sum(delta_run_exp) as run_exp
     from e group by 1`);
-  const cov = await db.execute(sql`
-    select min(game_date)::text as f, max(game_date)::text as t, count(distinct game_date)::int as d
-    from statcast_events where game_date >= ${`${season}-01-01`} and game_date < ${asOf}`);
-  const c = cov.rows[0] as { f: string | null; t: string | null; d: number };
-  const rows = (res.rows as Record<string, unknown>[]).map(r => {
+  return (res.rows as Record<string, unknown>[]).map(r => {
     const n = (k: string) => (r[k] == null ? null : Number(r[k]));
     return {
       id: Number(r.id), pitches: n('pitches')!, pa: n('pa')!, ab: n('ab')!, bip: n('bip')!, so: n('so')!, bb: n('bb')!,
@@ -118,6 +125,18 @@ async function aggregate(kind: 'batter' | 'pitcher', season: number, asOf: strin
       barrels: n('barrels')!, whiffs: n('whiffs')!, swings: n('swings')!, fb_velo: n('fb_velo'), run_exp: n('run_exp'),
     } satisfies AggRow;
   });
+}
+
+/** As-of wrapper: the season through the day before `asOf`, plus coverage. */
+async function aggregate(kind: 'batter' | 'pitcher', season: number, asOf: string): Promise<{ rows: AggRow[]; coverage: AsOfCoverage }> {
+  const from = `${season}-01-01`;
+  const [rows, cov] = await Promise.all([
+    aggregateWindow(kind, from, asOf),
+    getDb().execute(sql`
+      select min(game_date)::text as f, max(game_date)::text as t, count(distinct game_date)::int as d
+      from statcast_events where game_date >= ${from} and game_date < ${asOf}`),
+  ]);
+  const c = cov.rows[0] as { f: string | null; t: string | null; d: number };
   return {
     rows,
     coverage: {

@@ -28,9 +28,16 @@ const FINAL_STATES = /^(Final|Game Over|Completed Early)/;
  *  the live slate. Must be called inside an as-of context. */
 export async function buildRetroSlate(date: string, season: number): Promise<MLBGame[]> {
   const raw = await mlbFetch<RawScheduleResponse>(
-    `/schedule?sportId=1&date=${date}&hydrate=${encodeURIComponent('venue,weather,team,lineups,probablePitcher')}`,
+    `/schedule?sportId=1&date=${date}&gameType=R&hydrate=${encodeURIComponent('venue,weather,team,lineups,probablePitcher')}`,
   );
-  const rawGames = (raw.dates?.[0]?.games ?? []).filter(g => FINAL_STATES.test(g.status.detailedState));
+  const rawGames = (raw.dates?.[0]?.games ?? []).filter(g =>
+    FINAL_STATES.test(g.status.detailedState)
+    // A suspended game resumed on a later day is listed under BOTH dates but
+    // belongs to its official one — where the corpus and the MLB game logs
+    // file it. Without this it is captured twice and the copy on the wrong
+    // date can never be graded.
+    && (g.officialDate == null || g.officialDate === date),
+  );
   const ids = rawGames.flatMap(g => [g.teams.home.probablePitcher?.id, g.teams.away.probablePitcher?.id]).filter((v): v is number => !!v);
   const hands = new Map<number, 'L' | 'R'>();
   if (ids.length) {

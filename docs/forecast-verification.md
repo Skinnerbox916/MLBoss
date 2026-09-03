@@ -155,6 +155,11 @@ Statcast metrics and box-score metrics are **complementary, not rival** — they
 
 Read these as relative contributions, not a predictive ceiling: absolute R² is low because a half-season outcome is itself noisy, n is 120–220 players per split, and this is one season. The defensible implication for the talent layer is narrow — batter rate/value priors should anchor on the Statcast component rather than the outcome rate, batter K and HR should keep both, and **nothing about the pitcher blend is supported either way**.
 
+Two slate traps the retro pass exposed, now guarded in `capture.ts` (`isGradableGame`) and in the retro slate query, and worth knowing because both look like ordinary games:
+
+- **The All-Star game is `gameType` 'A'.** It has announced starters and a posted lineup, so it parses exactly like a normal slate — but its stats never appear in a regular-season game log, so every row it produces grades as a DNP. The ledger now admits only `gameType` 'R' (or absent, meaning the source didn't say).
+- **A suspended game resumed later is listed under BOTH dates.** It belongs to its `officialDate`, which is where the corpus and the MLB game logs file it; captured under the other date it is a duplicate that can never be graded.
+
 Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. The scorecard grades `retro-*` engines exactly like their live twins (kind derived from the key with the prefix stripped) but as separate sections. Still to build: bulk retro capture over the season gap (Aug 10 → 31) and the per-knob fit that reads live + retro rows together.
 
 ## Operating it

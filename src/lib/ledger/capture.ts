@@ -112,6 +112,16 @@ export async function insertSnapshots(rows: SnapshotRow[]): Promise<number> {
 const PREGAME_STATUSES = new Set(['Scheduled', 'Pre-Game', 'Warmup', 'Delayed Start']);
 
 /**
+ * Only regular-season games are gradable. The All-Star game is `gameType`
+ * 'A' and is a real trap: its "probable starters" and posted lineup look
+ * exactly like a normal slate, so without this guard an exhibition lands in
+ * the ledger and is graded against a game log that (rightly) never counts
+ * it. Games with no `gameType` are admitted — the field is optional and its
+ * absence means the source didn't say, not that the game is exhibition.
+ */
+const isGradableGame = (g: { gameType?: string }) => g.gameType == null || g.gameType === 'R';
+
+/**
  * Snapshot the L2 game forecast (`buildGameForecast`) for every talent-
  * stamped probable on the slate. League-independent raw stat lines —
  * this is the engine-bias workhorse: ~15–30 starts captured per day.
@@ -132,6 +142,7 @@ export async function capturePitcherSlate(
   const engine = (opts.engine ?? 'pitcher-start') as 'pitcher-start' | 'retro-pitcher-start';
   const rows: SnapshotRow[] = [];
   for (const game of games) {
+    if (!isGradableGame(game)) continue;
     if (!opts.includeFinal && !PREGAME_STATUSES.has(game.status)) continue;
     for (const isHome of [true, false]) {
       const pp = isHome ? game.homeProbablePitcher : game.awayProbablePitcher;
@@ -249,6 +260,7 @@ export async function captureBatterSlate(
   const engine = (opts.engine ?? 'batter-day') as 'batter-day' | 'retro-batter-day';
   const byMlbId = new Map<number, ActiveBatter & { isHome: boolean; game: EnrichedGame }>();
   for (const game of games) {
+    if (!isGradableGame(game)) continue;
     if (!opts.includeFinal && !PREGAME_STATUSES.has(game.status)) continue;
     for (const isHome of [true, false]) {
       const lineup = isHome ? game.homeLineup : game.awayLineup;

@@ -122,6 +122,9 @@ export interface TeamStaffSplits {
 export interface MLBGame {
   gamePk: number;
   gameDate: string;             // ISO datetime
+  /** MLB game type: 'R' regular season, 'A' All-Star, 'S' spring, postseason
+   *  'F'/'D'/'L'/'W'. Absent when the source didn't supply it. */
+  gameType?: string;
   status: string;               // 'Scheduled', 'In Progress', 'Final', etc.
   homeTeam: {
     mlbId: number;

@@ -61,6 +61,11 @@ interface RawLineupPlayer {
 export interface RawGame {
   gamePk: number;
   gameDate: string;
+  /** 'R' regular season, 'A' All-Star, 'S' spring, 'F'/'D'/'L'/'W' postseason. */
+  gameType?: string;
+  /** The date the game officially belongs to. Differs from the queried date
+   *  for a suspended game resumed later — MLB lists it under both. */
+  officialDate?: string;
   status: { detailedState: string };
   teams: {
     home: { team: RawTeam; probablePitcher?: { id: number; fullName: string } };
@@ -125,6 +130,7 @@ export function parseGame(raw: RawGame): MLBGame {
   return {
     gamePk: raw.gamePk,
     gameDate: raw.gameDate,
+    gameType: raw.gameType,
     status: raw.status.detailedState,
     homeTeam: {
       mlbId: raw.teams.home.team.id,

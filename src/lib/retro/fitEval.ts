@@ -54,7 +54,9 @@ export function cvR2(X: number[][], y: number[], folds = 5): number {
   let sse = 0, sst = 0;
   for (let f = 0; f < folds; f++) {
     const trX: number[][] = [], trY: number[] = [], teX: number[][] = [], teY: number[] = [];
-    for (let i = 0; i < n; i++) (i % folds === f ? (teX.push(X[i]), teY.push(y[i])) : (trX.push(X[i]), trY.push(y[i])));
+    for (let i = 0; i < n; i++) {
+      if (i % folds === f) { teX.push(X[i]); teY.push(y[i]); } else { trX.push(X[i]); trY.push(y[i]); }
+    }
     const coef = ols(trX, trY);
     if (!coef) return NaN;
     for (let i = 0; i < teY.length; i++) { sse += (teY[i] - predict(coef, teX[i])) ** 2; sst += (teY[i] - meanAll) ** 2; }

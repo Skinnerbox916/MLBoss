@@ -44,8 +44,7 @@ export async function GET(request: Request) {
 
     // Cache the assembled analysis so the dashboard / roster / lineup-pitchers
     // tab don't each re-run the full pipeline. Semi-dynamic (5 min): roster +
-    // FA pool shift with transactions; the optimize-week route busts this key
-    // after it writes a lineup. Per-user-scoped via the team key.
+    // FA pool shift with transactions. Per-user-scoped via the team key.
     const analysis = await withCache(
       `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:points-team:${leagueKey}:${teamKey}:${week}:${weekBounds?.end ?? 'legacy'}${includeFA ? '' : ':fa0'}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttl,

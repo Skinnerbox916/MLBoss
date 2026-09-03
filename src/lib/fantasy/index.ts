@@ -60,7 +60,6 @@ export { getTeamStatsSeason, getTeamStatsWeek } from './teamStats';
 export {
   getTeamRoster,
   getTeamRosterByDate,
-  setTeamRoster,
   getLeagueRosterPositions,
 } from './roster';
 

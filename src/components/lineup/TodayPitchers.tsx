@@ -5,7 +5,6 @@ import { FiWind, FiChevronDown, FiAlertTriangle } from 'react-icons/fi';
 import Icon from '@/components/Icon';
 import Badge from '@/components/ui/Badge';
 import Panel from '@/components/ui/Panel';
-import { Text } from '@/components/typography';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
 import ScoreBreakdownPanel from '@/components/shared/ScoreBreakdownPanel';
 import { useFantasyContext, useLeagueWeekBounds } from '@/lib/hooks/useFantasyContext';
@@ -15,10 +14,8 @@ import { useCorrectedMatchupAnalysis } from '@/lib/hooks/useCorrectedMatchupAnal
 import { useMatchupHeader } from '@/lib/hooks/useMatchupHeader';
 import { useCategoryWeights } from '@/lib/hooks/useCategoryWeights';
 import { useRoster } from '@/lib/hooks/useRoster';
-import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { useGameDay } from '@/lib/hooks/useGameDay';
 import { useTeamOffense } from '@/lib/hooks/useTeamOffense';
-import { optimizePitcherWeek } from '@/lib/lineup/optimizePitcherWeek';
 import {
   tierColor, weatherIcon, hasWeatherData, renderPitcherStatLine,
   normalizeTeamAbbr, isPitcher, isLikelySamePlayer,
@@ -245,12 +242,8 @@ interface TodayPitchersProps {
 export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
   const { leagueKey } = useFantasyContext();
   const weekBounds = useLeagueWeekBounds(leagueKey);
-  const { roster, isLoading: rosterLoading, mutate: mutateRoster } = useRoster(teamKey, date);
-  const { positions: rosterPositions } = useRosterPositions(leagueKey);
+  const { roster, isLoading: rosterLoading } = useRoster(teamKey, date);
   const { games, isLoading: gamesLoading } = useGameDay(date);
-
-  const [weekRunning, setWeekRunning] = useState(false);
-  const [weekStatus, setWeekStatus] = useState<string | null>(null);
 
   // Pitcher-side focus mirrors the streaming page: defaults from
   // `analyzeMatchup`, user can override per-pill or reset. Plumbing this
@@ -350,34 +343,6 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
-  const handleOptimizePitcherWeek = useCallback(async () => {
-    if (!teamKey) return;
-    const today = new Date().toISOString().slice(0, 10);
-    setWeekRunning(true);
-    setWeekStatus('Starting…');
-    try {
-      const result = await optimizePitcherWeek(
-        today,
-        { teamKey, weekEnd: weekBounds?.end, rosterPositions },
-        (dateStr, i, total) => {
-          setWeekStatus(`Optimizing ${dateStr} (${i + 1}/${total})…`);
-        },
-      );
-      const saved = result.days.filter(d => d.saved).length;
-      const noop = result.days.filter(d => !d.saved && !d.error).length;
-      const parts: string[] = [];
-      if (saved > 0) parts.push(`${saved} saved`);
-      if (noop > 0) parts.push(`${noop} already optimal`);
-      if (result.failed > 0) parts.push(`${result.failed} failed`);
-      setWeekStatus(parts.join(' · ') || 'No changes needed');
-      mutateRoster();
-    } catch (e) {
-      setWeekStatus(`Failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-    } finally {
-      setWeekRunning(false);
-    }
-  }, [teamKey, weekBounds, rosterPositions, mutateRoster]);
-
   const isLoading = rosterLoading || gamesLoading;
 
   return (
@@ -403,23 +368,9 @@ export default function TodayPitchers({ teamKey, date }: TodayPitchersProps) {
         title="Starting Today"
         action={
           <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleOptimizePitcherWeek}
-                disabled={weekRunning}
-                className="px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed whitespace-nowrap"
-                title="Ensure all probable starters are active for every remaining day this fantasy week (Mon–Sun)"
-              >
-                {weekRunning ? 'Optimizing…' : 'Optimize Week'}
-              </button>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {starters.length} starter{starters.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-            {weekStatus && (
-              <Text variant="caption">{weekStatus}</Text>
-            )}
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {starters.length} starter{starters.length !== 1 ? 's' : ''}
+            </span>
             <p className="text-[10px] text-muted-foreground italic mt-1">
               Probable pitchers confirmed ~2–4 days out by MLB
             </p>

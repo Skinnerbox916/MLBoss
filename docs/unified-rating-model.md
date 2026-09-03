@@ -521,6 +521,5 @@ If a pitcher seems mis-rated:
 ## Related implementation notes
 
 - [pitching/scoring.ts](../src/lib/pitching/scoring.ts) — UI-shaped wrapper (`scorePitcher`) that converts `(ProbablePitcher, MLBGame)` → `PitcherStreamingRating` for the streaming board's per-start breakdown panel. Distinct from `getPitcherRating(forecast)` in `pitching/rating.ts`. Don't introduce a third scorer; extend one of the existing ones.
-- [lineup/optimizeWeek.ts](../src/lib/lineup/optimizeWeek.ts) — calls `getBatterRating` with the unified `MatchupContext` to score every batter for every day of the week, then runs `optimizeLineup` to assign roster slots. See [projection.md](./projection.md).
 - [projection/batterTeam.ts](../src/lib/projection/batterTeam.ts) and [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) — forward projection engines that consume `getBatterRating` and `getPitcherRating` per-day/per-start and aggregate across the matchup week or pickup window. See [projection.md](./projection.md).
 - [components/shared/ScoreBreakdownPanel.tsx](../src/components/shared/ScoreBreakdownPanel.tsx) — single breakdown component. Renders 4 sections: Category Fit, Composite Multipliers, Context (already in cats above), Sample (confidence band). On the streaming pitcher board it stacks once per probable start when a row is expanded.

@@ -275,20 +275,6 @@ interface YahooAPIResponse<T> {
 }
 
 /**
- * Minimal XML escaper for values we interpolate into write-request bodies.
- * Yahoo player_keys and position codes are ASCII-safe in practice, but we
- * still escape defensively so a future odd value can't break the payload.
- */
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-/**
  * Normalize Yahoo's variable team-logos shape to a flat `[{ size, url }]`
  * array.
  *
@@ -552,67 +538,6 @@ export class YahooFantasyAPI {
         throw error;
       }
       throw new Error('Unknown error occurred during API request');
-    }
-  }
-
-  /**
-   * Make an authenticated write request to the Yahoo Fantasy API.
-   * Yahoo's write endpoints require XML bodies and do NOT accept `format=json`
-   * on the URL (even though reads can). The response is still JSON when the
-   * Accept header asks for it.
-   */
-  private async writeXml<T>(
-    endpoint: string,
-    method: 'PUT' | 'POST' | 'DELETE',
-    xmlBody?: string,
-  ): Promise<T> {
-    const accessToken = await this.getValidAccessToken();
-    const url = `${this.baseUrl}${endpoint}`;
-
-    const response = await fetch(url, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/json',
-        'Content-Type': 'application/xml',
-      },
-      body: xmlBody,
-    });
-
-    if (!response.ok) {
-      const rawBody = await response.text().catch(() => '');
-      // Yahoo write errors come back as XML with a <description> element.
-      // Pull it out so the caller gets a human-readable reason instead of
-      // a pile of namespaced XML.
-      const xmlDescription = rawBody.match(/<description>([^<]*)<\/description>/)?.[1]?.trim();
-
-      let errorMessage: string;
-      if (xmlDescription) {
-        errorMessage = xmlDescription;
-      } else if (response.status === 401) {
-        errorMessage = 'Authentication failed — token may be invalid';
-      } else if (response.status === 403) {
-        errorMessage = 'Access forbidden — scope may be missing fspt-w';
-      } else if (response.status === 429) {
-        errorMessage = 'Rate limit exceeded for Yahoo Fantasy API';
-      } else {
-        errorMessage = `Yahoo Fantasy write error: ${response.status}`;
-      }
-
-      console.error('Yahoo Fantasy write failed:', { endpoint, method, status: response.status, body: rawBody });
-      // Attach the original HTTP status so callers can branch on it.
-      const err = new Error(errorMessage) as Error & { status?: number };
-      err.status = response.status;
-      throw err;
-    }
-
-    // Some write endpoints return 201 with an empty body — return {} in that case.
-    const text = await response.text();
-    if (!text) return {} as T;
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      return {} as T;
     }
   }
 
@@ -1812,42 +1737,6 @@ export class YahooFantasyAPI {
       });
     }
     return result;
-  }
-
-  /**
-   * Set the full roster for a team on a given date.
-   * Yahoo requires the ENTIRE roster to be sent in one PUT — partial updates
-   * that would temporarily produce an illegal lineup are rejected. Callers
-   * should pass every player currently on the team with their target slot.
-   *
-   * @param teamKey  e.g. '458.l.123456.t.1'
-   * @param date     YYYY-MM-DD — day the lineup applies to
-   * @param players  full list of { player_key, position } for every rostered player
-   */
-  async setRoster(
-    teamKey: string,
-    date: string,
-    players: Array<{ player_key: string; position: string }>,
-  ): Promise<void> {
-    const playerXml = players
-      .map(
-        (p) =>
-          `<player><player_key>${escapeXml(p.player_key)}</player_key>` +
-          `<position>${escapeXml(p.position)}</position></player>`,
-      )
-      .join('');
-
-    const body =
-      `<?xml version="1.0"?>` +
-      `<fantasy_content>` +
-      `<roster>` +
-      `<coverage_type>date</coverage_type>` +
-      `<date>${escapeXml(date)}</date>` +
-      `<players>${playerXml}</players>` +
-      `</roster>` +
-      `</fantasy_content>`;
-
-    await this.writeXml<unknown>(`/team/${teamKey}/roster`, 'PUT', body);
   }
 
   // =========================================================================

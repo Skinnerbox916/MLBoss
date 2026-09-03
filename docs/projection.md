@@ -16,9 +16,7 @@ Aggregation of per-game rating outputs over a time window. The window is usually
 | `projectRelieverPlayer` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Per-week rollup of L2 `buildReliefWeekForecast` (expected appearances, IP, K, BB, HR) spread into the per-cat projection map | pitcher (RP) |
 | `projectPitcherTeam` | [projection/pitcherTeam.ts](../src/lib/projection/pitcherTeam.ts) | Team-wide pitcher-cat totals — routes by `talent.role`, sums SP + RP into one `byCategory` map and reports separate `weeklySpIp` / `weeklyRpIp` / `weeklyIp` totals | pitcher |
 | `slotAware` / `streamingValue` | [projection/slotAware.ts](../src/lib/projection/slotAware.ts) | Per-FA week-long upgrade margin over the user's optimal baseline lineup | batter |
-| `optimizeWeek` | [lineup/optimizeWeek.ts](../src/lib/lineup/optimizeWeek.ts) | Per-day lineup-slot assignment for the user's batters over the matchup week | batter |
-| `optimizePitcherWeek` | [lineup/optimizePitcherWeek.ts](../src/lib/lineup/optimizePitcherWeek.ts) | Per-day pitcher slot decisions over the matchup week | pitcher |
-| `assignStarters` | [roster/depth.ts](../src/lib/roster/depth.ts) | Per-day backtracking solver that assigns roster slots given multi-position eligibility. Called by `optimizeWeek` and `slotAware`. | batter |
+| `assignStarters` | [roster/depth.ts](../src/lib/roster/depth.ts) | Per-day backtracking solver that assigns roster slots given multi-position eligibility. Called by `optimizeLineup` and `slotAware`. | batter |
 
 ## Architecture
 
@@ -125,7 +123,7 @@ Per-team rates are computed server-side at `GET /api/league/[leagueKey]/stream-r
 | Streaming page (batter tab) | `useWeekBatterScores` + slot-aware | `slotAware` + `streamCatImpact` per FA | FA rank by contested-category impact: net cat deltas vs the displaced starter, pivotality-weighted |
 | Streaming page (pitcher tab) | `useWeekPitcherScores` + `usePitcherStreamImpact` | `projectPitcherPlayer` + `streamPitcherCatImpact` per FA | FA rank by contested-category impact: net K/W/QS/IP added + ERA/WHIP shift vs the team's projected week, pivotality-weighted. Two-start weeks score ~2× (pure-addition). Per-start rating survives as the by-day scouting signal + day-pill scores |
 | Game Plan card (both sides) | `useCorrectedMatchupAnalysis` | `projectBatterTeam` + `projectPitcherTeam` × my + opp | Corrected matchup margin = MTD + projection blend mid-week; pure projection on the Sunday pivot (`targetWeek: 'next'`) |
-| Lineup page (Batters tab) | `optimizeWeek` | per-day `assignStarters` | Optimal slot assignment per day for the rest of the matchup week |
+| Lineup page (Batters tab) | `optimizeLineup` | `assignStarters` | Optimal slot assignment for the selected day (advisory — the user sets the lineup in Yahoo) |
 | Dashboard | `useCorrectedMatchupAnalysis` | (same as Game Plan) | Leverage bar uses corrected margins |
 
 ## Projection API routes

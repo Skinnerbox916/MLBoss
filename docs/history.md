@@ -91,6 +91,25 @@ A second season was not what it needed. See [2026-09 — Manager usage predicts 
 
 ---
 
+## 2026-09 — Yahoo write access removed: MLBoss became read-only
+
+Yahoo's new Sports API grants read scopes only. The app's entire write surface was a single endpoint — `PUT /team/{team_key}/roster` — so this removed lineup setting and nothing else. Adds, drops, waiver claims and trades were never implemented; every suggestion on `/streaming`, `/roster` and `/dashboard` was already advisory.
+
+**Deleted:**
+
+- `writeXml` / `setRoster` / `escapeXml` in [yahoo-fantasy-api.ts](../src/lib/yahoo-fantasy-api.ts), `setTeamRoster` in [fantasy/roster.ts](../src/lib/fantasy/roster.ts) — the only path to a Yahoo mutation.
+- `PUT /api/fantasy/lineup` and `POST /api/points/optimize-week` routes.
+- `lineup/optimizeWeek.ts`, `lineup/optimizePitcherWeek.ts`, `points/optimizeWeek.ts` — three multi-day optimize-and-save loops. Each existed **only** to write: its optimizer output had no display surface, so with the write leg gone there was nothing left to render. `datesThroughEndOfWeek`, `fetchRoster`, `fetchGames`, `matchProbablePitchers` and `computePitcherStartOverrides` died with them (no other consumers).
+- The "Optimize Week" / "Set Next Week's Lineup" buttons on the lineup page (batters and both pitcher tabs), and "Save Lineup" in `LineupGrid`.
+
+**Kept:** `LineupGrid`'s click-to-move editing and its "Optimize Lineup" button. Those were always local state — the optimizer ([lineup/optimize.ts](../src/lib/lineup/optimize.ts), Hungarian `optimizeLineup`) rearranges the grid in place and Reset clears it. That is now the page's product: it shows the target lineup so the user can key it into Yahoo. The engines behind the scores (`getBatterRating`, `computeSitPlan`, points day scores) are untouched.
+
+**Left alone deliberately:** the OAuth scope is still `openid fspt-w` ([yahoo-oauth.ts](../src/lib/auth/yahoo-oauth.ts)). Yahoo still grants it and login works; narrowing to `fspt-r` would invalidate live tokens and force a re-consent for no functional gain. Narrow it the next time a re-login is required anyway.
+
+Don't reintroduce: any `writeXml`-shaped helper or a "save this plan to Yahoo" button. The API cannot accept it — a write path would fail at runtime, not at build. If Yahoo restores write scopes, restore from this commit rather than rebuilding the week loops from scratch.
+
+---
+
 ## 2026-07 — Next-week matchup projections stopped assuming both rosters stand pat
 
 Next-week pitcher columns were pure current-roster projections on both sides. In a league where the top manager adds 3.2 starters a week and the bottom one adds none, that compared a streamer's roster to a stand-pat roster and called it a matchup forecast — the user's own 83 projected IP understated his week by ~15, and an opponent who streams was invisible. Streaming entered the pipeline in exactly one place, `streamCapacity`, which is my-side-only by construction (it models a lever, not a prediction) and never touches displayed values.

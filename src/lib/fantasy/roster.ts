@@ -1,5 +1,5 @@
 import { YahooFantasyAPI, RosterEntry } from '@/lib/yahoo-fantasy-api';
-import { withCache, CACHE_CATEGORIES, invalidateCachePattern } from './cache';
+import { withCache, CACHE_CATEGORIES } from './cache';
 
 /**
  * Get team roster (today) with caching.
@@ -38,20 +38,4 @@ export async function getLeagueRosterPositions(
     CACHE_CATEGORIES.STATIC.ttl,
     () => new YahooFantasyAPI(userId).getLeagueRosterPositions(leagueKey),
   );
-}
-
-/**
- * Set the full roster for a team on a given date and invalidate any cached
- * roster entries for that team so subsequent reads reflect the new state.
- */
-export async function setTeamRoster(
-  userId: string,
-  teamKey: string,
-  date: string,
-  players: Array<{ player_key: string; position: string }>,
-): Promise<void> {
-  await new YahooFantasyAPI(userId).setRoster(teamKey, date, players);
-
-  // Bust every cached variant for this team: today's roster and any dated roster.
-  await invalidateCachePattern(`${CACHE_CATEGORIES.DYNAMIC.prefix}:roster:${teamKey}`);
 }

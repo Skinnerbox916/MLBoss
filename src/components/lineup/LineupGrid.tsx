@@ -203,7 +203,6 @@ interface LineupGridProps {
   teamKey?: string;
   date: string;
   rosterPositions?: RosterPositionSlot[];
-  onSaved?: () => void;
   getPlayerScore?: (player: RosterEntry) => number;
   /** When true, "Optimize" may leave a starting slot empty rather than fill
    *  it with a negative-score player. Set when the endgame sit plan has
@@ -219,7 +218,6 @@ export default function LineupGrid({
   teamKey,
   date,
   rosterPositions,
-  onSaved,
   getPlayerScore,
   allowEmptyOnOptimize = false,
 }: LineupGridProps) {
@@ -231,14 +229,11 @@ export default function LineupGrid({
   // Local position overrides (player_key → new position). Empty = unchanged.
   const [overrides, setOverrides] = useState<Map<string, string>>(new Map());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Reset local edits when the roster identity changes (date switch or SWR revalidate).
   useEffect(() => {
     setOverrides(new Map());
     setSelectedKey(null);
-    setError(null);
   }, [roster, date, teamKey]);
 
   const displaySlots = useMemo(
@@ -315,7 +310,6 @@ export default function LineupGrid({
   const handleReset = useCallback(() => {
     setOverrides(new Map());
     setSelectedKey(null);
-    setError(null);
   }, []);
 
   const handleOptimize = useCallback(() => {
@@ -327,39 +321,8 @@ export default function LineupGrid({
     if (newOverrides.size > 0) {
       setOverrides(newOverrides);
       setSelectedKey(null);
-      setError(null);
     }
   }, [getPlayerScore, mode, slots, roster, allowEmptyOnOptimize]);
-
-  const handleSave = useCallback(async () => {
-    if (!teamKey || !dirty) return;
-    setSaving(true);
-    setError(null);
-    try {
-      // Yahoo requires the FULL roster in one PUT. Send every rostered player
-      // with their resolved position (original or overridden).
-      const players = roster.map(p => ({
-        player_key: p.player_key,
-        position: overrides.get(p.player_key) ?? p.selected_position,
-      }));
-      const res = await fetch('/api/fantasy/lineup', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamKey, date, players }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      setOverrides(new Map());
-      setSelectedKey(null);
-      onSaved?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save lineup');
-    } finally {
-      setSaving(false);
-    }
-  }, [teamKey, dirty, roster, overrides, date, onSaved]);
 
   if (isLoading) {
     return (
@@ -430,37 +393,25 @@ export default function LineupGrid({
       })}
 
       {editable && (
-        <div className="pt-2 border-t border-border-muted space-y-2">
-          {error && <p className="text-xs text-error">{error}</p>}
+        <div className="pt-2 border-t border-border-muted flex items-center gap-2">
           {mode === 'batting' && getPlayerScore && (
             <button
               type="button"
               onClick={handleOptimize}
-              disabled={saving}
-              className="w-full px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed"
+              className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors"
             >
               Optimize Lineup
             </button>
           )}
-          <div className="flex items-center gap-2">
+          {dirty && (
             <button
               type="button"
-              onClick={handleSave}
-              disabled={!dirty || saving}
-              className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold bg-accent text-white disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed hover:bg-accent/90 transition-colors"
+              onClick={handleReset}
+              className="px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground border border-border-muted hover:border-border transition-colors"
             >
-              {saving ? 'Saving…' : dirty ? 'Save Lineup' : 'No changes'}
+              Reset
             </button>
-            {dirty && !saving && (
-              <button
-                type="button"
-                onClick={handleReset}
-                className="px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground border border-border-muted hover:border-border transition-colors"
-              >
-                Reset
-              </button>
-            )}
-          </div>
+          )}
         </div>
       )}
     </div>

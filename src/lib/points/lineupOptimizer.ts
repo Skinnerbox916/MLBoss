@@ -30,8 +30,8 @@ interface SlotDef {
   group: 'batting' | 'pitching' | 'reserve';
 }
 
-/** Expand a roster-position template into one SlotDef per slot. Mirrors
- *  `optimizeWeek.buildBattingSlots`. Exported for the week-write optimizer. */
+/** Expand a roster-position template into one SlotDef per slot.
+ *  Exported for the streaming week-sum solver. */
 export function buildBattingSlots(template: RosterPositionSlot[]): SlotDef[] {
   const slots: SlotDef[] = [];
   for (const entry of template) {

@@ -289,9 +289,8 @@ Leagues whose lineups lock for the week (Yahoo `weekly_deadline` ≠ ''/'intrada
 - **Window** = the full next Mon–Sun (a pickup can't play sooner). ESPN's projected starters cover ~80–100% of pitcher slots 9 days out, so full-next-week start counts — including two-start weeks — are real, not just posted probables.
 - **Coverage** = idle slot-days of the optimal *week-sum* lineup (one Hungarian solve over rate × all next week's games — schedule density is part of every bat's value). An idle day is a baked-in zero, not a pluggable hole.
 - **Batter value** = one week-sum marginal re-solve per FA (`totalGain`), with `gameDays` chips showing his schedule instead of per-day plug marginals. A 7-game mediocre bat correctly outranks a 6-game better one when the marginal says so.
-- **Lineup write** = `optimizePointsWeekly` ([optimizeWeek.ts](../src/lib/points/optimizeWeek.ts)): one optimization, one `setTeamRoster` dated the next week’s first day. The `/api/points/optimize-week` route branches on the server-derived cadence.
 
-The `cadence` query param on `/api/points/streaming` overrides detection for smoke testing. **The weekly roster WRITE path is not yet validated against a live weekly league** (no test league available); the first weekly-league user is the validation path.
+The `cadence` query param on `/api/points/streaming` overrides detection for smoke testing. The plan is advisory only — MLBoss no longer writes lineups to Yahoo (see [history.md](history.md) "2026-09 — Yahoo write access removed").
 
 ## What lives elsewhere
 

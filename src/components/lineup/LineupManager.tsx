@@ -22,7 +22,6 @@ import { isInjured } from '@/lib/lineup/optimize';
 import { getMatchupWeekDays, weekRangeLabel } from '@/lib/dashboard/weekRange';
 import { expectedPAperGame } from '@/lib/projection/batterTeam';
 import GamePlanPanel from '@/components/shared/GamePlanPanel';
-import { optimizeWeek } from '@/lib/lineup/optimizeWeek';
 import DatePicker from './DatePicker';
 import PositionFilter from './PositionFilter';
 import RosterList from './RosterList';
@@ -59,7 +58,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   // Active league (primary, or whatever the switcher selected). `leagueMode`
   // is the scoring family (categories | points); the `mode` prop is the
   // batting/pitching side.
-  const { teamKey, leagueKey, mode: leagueMode, scoringType, lineupCadence, weekBounds, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
+  const { teamKey, leagueKey, mode: leagueMode, scoringType, weekBounds, isLoading: ctxLoading, isError: ctxError } = useActiveLeague();
   const isPoints = leagueMode === 'points';
   // Per-stat point weights for client-side points scoring (points mode only).
   const { profile: pointsProfile } = useScoringProfile(leagueKey, scoringType, isPoints);
@@ -67,7 +66,7 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
 
   // Yahoo roster for the selected date
-  const { roster, isLoading: rosterLoading, isError: rosterError, mutate: mutateRoster } = useRoster(teamKey, selectedDate);
+  const { roster, isLoading: rosterLoading, isError: rosterError } = useRoster(teamKey, selectedDate);
 
   // League roster slot template (positions + counts) — drives the LineupGrid.
   const { positions: rosterPositions } = useRosterPositions(leagueKey);
@@ -322,75 +321,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
     [isPoints, pointsScoreFor, getPlayerScore, satKeys],
   );
 
-  // Optimize-week state. Runs the optimizer for every remaining day in the
-  // current fantasy week (Mon–Sun) so the user can't forget mid-week.
-  const [weekRunning, setWeekRunning] = useState(false);
-  const [weekStatus, setWeekStatus] = useState<string | null>(null);
-
-  const handleOptimizeWeek = useCallback(async () => {
-    if (!teamKey || mode !== 'batting') return;
-    const today = todayStr();
-    const start = selectedDate < today ? today : selectedDate;
-    setWeekRunning(true);
-    setWeekStatus('Starting…');
-
-    // Points mode: the optimize+write loop runs server-side (points scoring
-    // lives server-side), so we POST and report the per-day result.
-    if (isPoints) {
-      try {
-        const res = await fetch('/api/points/optimize-week', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ teamKey, leagueKey, scoringType }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-        const saved = body.days.filter((d: { saved: boolean }) => d.saved).length;
-        const noop = body.days.filter((d: { saved: boolean; error?: string }) => !d.saved && !d.error).length;
-        const parts: string[] = [];
-        if (saved > 0) parts.push(`${saved} saved`);
-        if (noop > 0) parts.push(`${noop} already optimal`);
-        if ((body.failed ?? 0) > 0) parts.push(`${body.failed} failed`);
-        setWeekStatus(parts.join(' · ') || 'No changes needed');
-        mutateRoster();
-      } catch (e) {
-        setWeekStatus(`Failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-      } finally {
-        setWeekRunning(false);
-      }
-      return;
-    }
-
-    try {
-      const result = await optimizeWeek(
-        start,
-        {
-          teamKey,
-          weekEnd: weekBounds?.end,
-          rosterPositions,
-          scoredBatterCategories,
-          categoryWeights: batterCategoryWeights,
-          getPlayerLine,
-        },
-        (date, i, total) => {
-          setWeekStatus(`Optimizing ${date} (${i + 1}/${total})…`);
-        },
-      );
-      const noopDays = result.days.filter(d => d.saved === false && !d.error).length;
-      const savedDays = result.days.filter(d => d.saved).length;
-      const parts: string[] = [];
-      if (savedDays > 0) parts.push(`${savedDays} saved`);
-      if (noopDays > 0) parts.push(`${noopDays} already optimal`);
-      if (result.failed > 0) parts.push(`${result.failed} failed`);
-      setWeekStatus(parts.join(' · ') || 'No changes needed');
-      mutateRoster();
-    } catch (e) {
-      setWeekStatus(`Failed: ${e instanceof Error ? e.message : 'unknown error'}`);
-    } finally {
-      setWeekRunning(false);
-    }
-  }, [teamKey, mode, selectedDate, rosterPositions, scoredBatterCategories, batterCategoryWeights, getPlayerLine, mutateRoster, isPoints, leagueKey, scoringType, weekBounds]);
-
   const isLoading = ctxLoading || rosterLoading;
   const isError = ctxError || rosterError;
 
@@ -402,35 +332,11 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
   const listHeading = mode === 'pitching' ? 'Pitchers' : 'Batters';
   const gridHeading = mode === 'pitching' ? 'Current Staff' : 'Current Lineup';
 
-  const showWeekButton = mode === 'batting' && !!teamKey;
-  // Weekly-cadence points leagues lock lineups Monday: the server writes ONE
-  // week-sum-optimal lineup dated next Monday instead of a per-day loop.
-  const isWeeklyPoints = isPoints && lineupCadence === 'weekly';
-  const weekButton = showWeekButton ? (
-    <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        onClick={handleOptimizeWeek}
-        disabled={weekRunning}
-        className="px-3 py-2 rounded-lg text-sm font-semibold bg-success/90 text-white hover:bg-success transition-colors disabled:bg-border-muted disabled:text-muted-foreground disabled:cursor-not-allowed whitespace-nowrap"
-        title={isWeeklyPoints
-          ? 'Lineups lock for the week — set the optimal lineup for next Mon–Sun'
-          : 'Optimize lineup for every remaining day this fantasy week (Mon–Sun)'}
-      >
-        {weekRunning ? 'Optimizing…' : isWeeklyPoints ? "Set Next Week's Lineup" : 'Optimize Week'}
-      </button>
-      {weekStatus && (
-        <Text variant="caption">{weekStatus}</Text>
-      )}
-    </div>
-  ) : null;
-
   return (
     <div className={embedded ? 'space-y-4' : 'p-6 space-y-4'}>
-      {/* Header row: title + date picker + optimize-week */}
+      {/* Header row: title + date picker */}
       {embedded ? (
         <div className="flex flex-wrap items-start justify-end gap-3">
-          {weekButton}
           <DatePicker selected={selectedDate} onSelect={setSelectedDate} />
         </div>
       ) : (
@@ -440,7 +346,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
             <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
           </div>
           <div className="flex flex-wrap items-start gap-3">
-            {weekButton}
             <DatePicker selected={selectedDate} onSelect={setSelectedDate} />
           </div>
         </div>
@@ -543,7 +448,6 @@ export default function LineupManager({ mode = 'batting', embedded = false }: Li
               teamKey={teamKey}
               date={selectedDate}
               rosterPositions={rosterPositions}
-              onSaved={() => mutateRoster()}
               getPlayerScore={gridGetPlayerScore}
               allowEmptyOnOptimize={satKeys.size > 0}
             />

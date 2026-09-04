@@ -10,9 +10,18 @@
  * lineups, and the observed weather — so retro cannot see scratches, late
  * lineup changes or forecast-weather error. That is why its rows carry their
  * own engine keys and never pool with live captures.
- * docs/forecast-verification.md#retro
+ *
+ * Retro rows are reconstructions, not observations: everything they are
+ * computed from (the corpus, the MLB game logs, the engine code) is still
+ * here, so re-running a date REPLACES that date's rows for the engines run
+ * (upsert on the identity in `insertSnapshots`, then a sweep of rows this
+ * run did not touch) and stamps the current MODEL_VERSION. Live rows are
+ * never touched by this path — every delete below is scoped to a
+ * `retro-*` engine key by the type. docs/forecast-verification.md#retro
  */
 
+import { and, eq, lt } from 'drizzle-orm';
+import { getDb, forecastSnapshots } from '@/lib/db';
 import { mlbFetch } from '@/lib/mlb/client';
 import { runWithAsOfContext } from '@/lib/mlb/asOfContext';
 import { enrichSlate, parseGame, stubPitcher, type RawScheduleResponse } from '@/lib/mlb/schedule';
@@ -57,23 +66,49 @@ export async function buildRetroSlate(date: string, season: number): Promise<MLB
   return games;
 }
 
+export type RetroSide = 'pitcher' | 'batter';
+type RetroEngine = 'retro-pitcher-start' | 'retro-batter-day';
+const RETRO_ENGINE: Record<RetroSide, RetroEngine> = { pitcher: 'retro-pitcher-start', batter: 'retro-batter-day' };
+
 export interface RetroCaptureResult {
   date: string; games: number; probables: number; probablesWithTalent: number;
-  lineups: number; pitcherRows: number; batterRows: number; ms: number;
+  lineups: number; pitcherRows: number; batterRows: number;
+  /** Rows for this date + engine that an earlier run wrote and this run did
+   *  not — identities the current build no longer produces — removed. */
+  staleRemoved: number; ms: number;
 }
 
-export async function retroCaptureDay(date: string): Promise<RetroCaptureResult> {
+/** Remove this date's rows for a retro engine that predate `since` — i.e.
+ *  that this run did not write. Only called after the run wrote at least one
+ *  row for the engine, so a failed rebuild never empties a date. */
+async function sweepStale(date: string, engine: RetroEngine, since: Date): Promise<number> {
+  const gone = await getDb()
+    .delete(forecastSnapshots)
+    .where(and(eq(forecastSnapshots.gameDate, date), eq(forecastSnapshots.engine, engine), lt(forecastSnapshots.capturedAt, since)))
+    .returning({ id: forecastSnapshots.id });
+  return gone.length;
+}
+
+export async function retroCaptureDay(date: string, sides: RetroSide[] = ['pitcher', 'batter']): Promise<RetroCaptureResult> {
   const t0 = Date.now();
+  const since = new Date(t0);
   const ctx = await createAsOfContext(date);
   return runWithAsOfContext(ctx, async () => {
     const games = await buildRetroSlate(date, ctx.season);
     const enriched = games.map(g => ({ ...g, park: getParkByVenueId(g.venue.mlbId) ?? null }));
     const probables = enriched.flatMap(g => [g.homeProbablePitcher, g.awayProbablePitcher]).filter((p): p is NonNullable<typeof p> => !!p);
-    const pitcherRows = await capturePitcherSlate(date, enriched, { engine: 'retro-pitcher-start', includeFinal: true });
-    const batterRows = await captureBatterSlate(date, enriched, { engine: 'retro-batter-day', includeFinal: true });
+    let pitcherRows = 0, batterRows = 0, staleRemoved = 0;
+    if (sides.includes('pitcher')) {
+      pitcherRows = await capturePitcherSlate(date, enriched, { engine: RETRO_ENGINE.pitcher, includeFinal: true });
+      if (pitcherRows > 0) staleRemoved += await sweepStale(date, RETRO_ENGINE.pitcher, since);
+    }
+    if (sides.includes('batter')) {
+      batterRows = await captureBatterSlate(date, enriched, { engine: RETRO_ENGINE.batter, includeFinal: true });
+      if (batterRows > 0) staleRemoved += await sweepStale(date, RETRO_ENGINE.batter, since);
+    }
     return {
       date, games: enriched.length, probables: probables.length, probablesWithTalent: probables.filter(p => p.talent).length,
-      lineups: enriched.filter(g => g.homeLineup.length && g.awayLineup.length).length, pitcherRows, batterRows, ms: Date.now() - t0,
+      lineups: enriched.filter(g => g.homeLineup.length && g.awayLineup.length).length, pitcherRows, batterRows, staleRemoved, ms: Date.now() - t0,
     };
   });
 }

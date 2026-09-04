@@ -25,13 +25,17 @@
  * Pass `count` to get the uncontrolled view back. See
  * docs/forecast-verification.md#per-knob-calibration-fit.
  *
- * IDENTIFIABILITY: the batter decomposition works because each knob applies
- * a DIFFERENT multiplier per stat, so the columns vary independently. The
- * pitcher side stores one multiplier per knob for the whole start
- * (`context.mults`), which makes `platoon` and `opp` near-collinear — their
- * fitted coefficients come back with standard errors of ±10 or worse and
- * must not be read. Only the pitcher talent slope and `bullpen` are usable
- * at present; separating the rest needs per-stat pitcher attribution.
+ * PITCHERS: since 2026-09-04 pitcher rows carry the same per-stat shape
+ * (`knobs.opp.k`, `knobs.park.hr`, ...; `mods.<stat>` = their product) and
+ * exposure is batters faced, so the same fit reads them. Before that they
+ * carried one breakdown-UI scalar per knob for the whole start
+ * (`context.mults`), which the fit fell back to; those columns were
+ * unreadable by construction — `platoon` and `opp` are both linear in the
+ * same OPS-vs-hand scalar (log correlation 0.999), and platoon / velocity /
+ * bullpen never touch a graded stat at all. The `mults` fallback is kept so
+ * old live rows still run, but its coefficients must not be read; run the
+ * fit on rows that carry `knobs`. The two volume stats (pa, ip) are the
+ * exposure itself, so they are always fitted on the count basis.
  *
  *   npx tsx scripts/retro-knob-fit.ts [engine] [minRows] [home|away] [count]
  */
@@ -66,7 +70,8 @@ async function main() {
   // Exposure control — see EXPOSURE above. Only available where both sides
   // carry PA; without it the knobs are graded on the count.
   const paOf = (r: (typeof rows)[number]) => {
-    const act = (r.batting ?? r.pitching)?.pa, pred = r.predicted?.pa;
+    const line = r.batting ?? r.pitching;
+    const act = line?.pa ?? line?.battersFaced, pred = r.predicted?.pa;
     return act != null && pred != null && act > 0 && pred > 0 ? Math.log(act / pred) : null;
   };
   const hasPA = rateBasis && rows.filter(r => paOf(r) != null).length >= rows.length * 0.9;
@@ -74,32 +79,39 @@ async function main() {
   console.log(`  a knob coefficient of 1.00 means correctly scaled; 0.50 means only half the applied swing is justified\n`);
 
   for (const stat of STATS) {
+    // The volume stats ARE the exposure — controlling them on themselves
+    // would be tautological, so they read on the count basis regardless.
+    const control = hasPA && stat !== 'pa' && stat !== 'ip';
     const knobsFor = KNOBS.filter(k => {
       let seen = 0;
       for (const r of rows) {
-        const kn = (r.context.knobs as Record<string, Record<string, number>> | undefined)?.[k]?.[stat]
-          ?? (r.context.mults as Record<string, number> | undefined)?.[k];
+        // A row that carries `knobs` is read from `knobs` alone — its `mults`
+        // are breakdown-UI scalars, not applied multipliers.
+        const knobs = r.context.knobs as Record<string, Record<string, number>> | undefined;
+        const kn = knobs ? knobs[k]?.[stat] : (r.context.mults as Record<string, number> | undefined)?.[k];
         if (kn != null) seen++;
       }
       return seen >= rows.length * 0.9;
     });
     const X: number[][] = [], y: number[] = [];
     for (const r of rows) {
-      const act = (r.batting ?? r.pitching)?.[stat];
+      const line = r.batting ?? r.pitching;
+      // Pitcher exposure is recorded as battersFaced on the actual line.
+      const act = stat === 'pa' ? line?.pa ?? line?.battersFaced : line?.[stat];
       const pred = r.predicted[stat];
       const mults = r.context.mults as Record<string, number> | undefined;
       const mods = (r.context.mods as Record<string, number> | undefined)?.[stat]
         ?? (mults ? Object.values(mults).reduce((a, v) => a * v, 1) : undefined);
-      // Batter snapshots decompose per stat (context.knobs.<knob>.<stat>);
-      // pitcher snapshots carry one multiplier per knob for the whole start
-      // (context.mults.<knob>), which applies to every stat alike.
+      // Rows decompose per stat (context.knobs.<knob>.<stat>). Legacy
+      // pitcher rows (pre-2026-09-04) only carry one breakdown scalar per
+      // knob (context.mults.<knob>) — see PITCHERS in the header.
       const kn = (r.context.knobs as Record<string, Record<string, number>> | undefined)
         ?? (r.context.mults ? Object.fromEntries(Object.entries(r.context.mults as Record<string, number>).map(([k, v]) => [k, { [stat]: v }])) : undefined);
       if (act == null || pred == null || mods == null || !kn || pred <= 0 || mods <= 0) continue;
       const neutral = pred / mods;
       if (!(neutral > 0)) continue;
-      const pa = hasPA ? paOf(r) : null;
-      if (hasPA && pa == null) continue;
+      const pa = control ? paOf(r) : null;
+      if (control && pa == null) continue;
       const row = [1, Math.log(neutral), ...knobsFor.map(k => Math.log(kn[k]?.[stat] ?? 1)), ...(pa != null ? [pa] : [])];
       if (row.some(v => !Number.isFinite(v))) continue;
       X.push(row); y.push(act);
@@ -116,7 +128,7 @@ async function main() {
     }
     const dropped = knobsFor.filter((_, j) => !keep.includes(j));
     const usedKnobs = keep.map(j => knobsFor[j]);
-    const Xk = X.map(r => [r[0], r[1], ...keep.map(j => r[j + 2]), ...(hasPA ? [r[r.length - 1]] : [])]);
+    const Xk = X.map(r => [r[0], r[1], ...keep.map(j => r[j + 2]), ...(control ? [r[r.length - 1]] : [])]);
     if (Xk.length < minRows || usedKnobs.length === 0) { console.log(`  ${stat.padEnd(4)} n=${Xk.length} (skipped${dropped.length ? `; constant: ${dropped.join(',')}` : ''})`); continue; }
     const fit = poissonFit(Xk, y);
     if (!fit) { console.log(`  ${stat.padEnd(4)} fit failed`); continue; }
@@ -125,7 +137,7 @@ async function main() {
       const flag = Math.abs(c - 1) > 1.96 * se ? '*' : ' ';
       return `${k} ${c.toFixed(2)}±${se.toFixed(2)}${flag}`;
     });
-    console.log(`  ${stat.padEnd(4)} n=${String(Xk.length).padStart(6)}  talent ${fit.beta[1].toFixed(2)}±${fit.se[1].toFixed(2)}  │ ${parts.join('  ')}${dropped.length ? `  (constant, dropped: ${dropped.join(',')})` : ''}`);
+    console.log(`  ${stat.padEnd(4)} n=${String(Xk.length).padStart(6)}  talent ${fit.beta[1].toFixed(2)}±${fit.se[1].toFixed(2)}  │ ${parts.join('  ')}${dropped.length ? `  (constant, dropped: ${dropped.join(',')})` : ''}${hasPA && !control ? '  [count basis]' : ''}`);
   }
   console.log(`\n  * = differs from 1.00 at p<0.05`);
   process.exit(0);

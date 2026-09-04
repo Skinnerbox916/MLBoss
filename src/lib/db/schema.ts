@@ -58,9 +58,15 @@ export const userPrefs = pgTable(
 
 /**
  * Forecast ledger — what a model predicted, frozen at capture time.
- * Rows are immutable and first-write-wins per identity: a snapshot is an
- * observation of model output whose inputs (probables, park, weather,
+ * Live rows are immutable and first-write-wins per identity: a snapshot is
+ * an observation of model output whose inputs (probables, park, weather,
  * talent state) drift daily and can never be reconstructed later.
+ *
+ * `retro-*` engines are the exception: their rows are RECONSTRUCTIONS from
+ * the rebuildable `statcast_events` corpus, so a re-run replaces the row
+ * under the same identity (upsert in `src/lib/ledger/capture.ts`). Nothing
+ * in the schema distinguishes the two — the engine-key prefix does. See
+ * docs/data-architecture.md#the-three-storage-legs.
  *
  * `leagueKey` is '' for league-independent engines (raw stat-line
  * forecasts); set when the prediction depends on a league's scoring

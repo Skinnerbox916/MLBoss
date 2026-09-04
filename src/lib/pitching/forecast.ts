@@ -118,6 +118,41 @@ export interface GameForecast {
      *  wParts`) rather than through this multiplier. */
     bullpen: ContextMultiplier;
   };
+  /** Per-stat modifier attribution — see `PitcherModifierKnobs`. */
+  knobs: PitcherModifierKnobs;
+}
+
+/** The forecast quantities a knob can touch: per-PA rates (k/bb/hr/h), the
+ *  per-9 ERA rate (er) and the two volume terms (ip/pa). */
+export type PitcherKnobStat = 'k' | 'bb' | 'hr' | 'h' | 'er' | 'ip' | 'pa';
+
+/**
+ * Per-stat modifier attribution (2026-09-04): each L2 knob as the effective
+ * multiplier it applied to each forecast rate, knob-first (`knobs.opp.k`,
+ * `knobs.park.hr`) — the pitcher twin of `BatterModifierKnobs`. Attribution
+ * is sequential along the chain the engine actually runs, talent → opp →
+ * park → weather: a knob's value for a stat is that stat's rate after the
+ * knob's stage divided by its rate before it, so the product over knobs
+ * equals in-game rate ÷ talent rate exactly, cross-terms included (opp K/BB
+ * move the contact rate that HR and hits ride on; that lands on `opp`).
+ * Only the knobs that touch a stat are present. `platoon`, `velocity` and
+ * `bullpen` are absent on purpose: none of them enters a graded stat line
+ * (platoon scales only the L3 composite, velocity is a fixed 1.0, bullpen
+ * prices W through `wParts`), and platoon is the same OPS-vs-hand scalar
+ * `opp` reads, so a column for it could never be separated from `opp`.
+ * Stamped into ledger snapshots (`context.knobs`) for the per-knob fit —
+ * docs/forecast-verification.md#snapshot-context.
+ */
+export interface PitcherModifierKnobs {
+  /** Opposing lineup vs the pitcher's hand: K via log5 on the opp K rate,
+   *  BB / non-HR contact via the OPS factor, HR and H through the contact
+   *  rate those move; IP via the workload factor, PA via workload × PA/inning. */
+  opp?: Partial<Record<PitcherKnobStat, number>>;
+  /** Park tracks: SO, BB, gb-gated HR (incl. the wind adder in wind-sensitive
+   *  parks), overall wOBA on non-HR contact; ER inherits all four. */
+  park?: Partial<Record<PitcherKnobStat, number>>;
+  /** Weather on HR and non-HR contact value (never K/BB); ER inherits both. */
+  weather?: Partial<Record<PitcherKnobStat, number>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +193,10 @@ export interface BuildForecastArgs {
  *  denominator as `TeamOffense.strikeOutRate` (per-PA since 2026-07 —
  *  see docs/history.md "Ledger-driven calibration fixes"). */
 const LEAGUE_OPS_K_RATE = 0.221;
+
+/** League-average batters faced per inning; the opposing lineup's OPS tilts
+ *  it by 1.5 PA/inning per OPS unit in `buildGameForecast`. */
+const PA_PER_INNING_BASE = 4.3;
 
 /** P(QS) shrink anchors + P(W) model anchors. Ledger-calibrated
  *  2026-07-25 against the first 188 graded starts — rationale and
@@ -517,91 +556,28 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
   const effectiveParkHrMult = 1 + (parkHrAdj.multiplier - 1) * (1 - gbBoost);
 
   // ----- In-game per-PA rates ---------------------------------------------
-  /** K/PA — log5 against opp K-rate, then × parkSO. (No weather term: K
-   *  rate is largely temperature/wind-independent.) */
-  const kPerPABase = oppK != null
-    ? log5(pitcher.kPerPA, oppK, LEAGUE_OPS_K_RATE)
-    : pitcher.kPerPA;
-  const kPerPA = kPerPABase * parkSoAdj.multiplier;
-
-  /** BB/PA — base × oppOps × parkBB. Opp lineups with more discipline
-   *  (high OPS) draw more walks; pitcher parks reduce walks slightly
-   *  (pitcher generally pitches ahead in better counts). */
-  const bbPerPA = pitcher.bbPerPA * oppOpsFactor * parkBbAdj.multiplier;
-
-  /** HR/PA — talent's HR/contact × in-game contactRate × gb-gated parkHR
-   *  × weather. The gb-gating is the single biggest park-HR refinement:
-   *  a Skubal-type GB arm in Yankee Stadium gets nothing close to the
-   *  +18% park bump; a Cole-type FB arm gets nearly all of it. */
-  const inGameContactRate = Math.max(0, 1 - kPerPA - bbPerPA);
-  const baseHrPerPA = pitcher.hrPerContact * inGameContactRate;
-  const hrPerPA = baseHrPerPA * effectiveParkHrMult * weatherHrFactor;
-
-  /** Non-HR contact value (xwOBA on contact, HR-removed). The talent's
-   *  base value gets a BABIP-like adjustment from overall park factor
-   *  + weather + opp OPS. This is what makes Coors's overall hitter
-   *  friendliness propagate into ERA / WHIP / W via the chain (rather
-   *  than living only as a dangling composite multiplier). */
-  const baseNonHrContactValue = talentNonHrContactXwoba(pitcher);
-  const nonHrContactValue = baseNonHrContactValue
-    * oppOpsFactor
-    * parkOverallAdj.multiplier
-    * weatherContactFactor;
-
-  /** In-game contactXwoba (HR-inclusive, for downstream consumers like
-   *  the batter-side AVG log5 against this SP). Re-composed from the
-   *  in-game non-HR contact value plus the in-game HR rate.
-   *
-   *   contactXwoba = (HR/BIP × wHR + nonHR/BIP × nonHrXwoba)
-   */
-  const W_HR = 1.97;
-  const hrFractionInContact = inGameContactRate > 0 ? hrPerPA / inGameContactRate : 0;
-  const contactXwoba = hrFractionInContact * W_HR
-                     + (1 - hrFractionInContact) * nonHrContactValue;
-
-  /** BAA — derived from in-game contact xwOBA (HR-inclusive). Used by
-   *  batter-side log5 vs SP's BAA for the AVG cat AND by the WHIP / hits
-   *  derivation below.
-   *
-   *  Multiplier 1.5 matches the empirical league-mean ratio: 2024 MLB
-   *  league xwOBACON ≈ .368, BAA ≈ .246, ratio = 1.50. The previous
-   *  multiplier of 1.4 systematically overstated BAA by ~7% across all
-   *  pitchers, which had been compensating for a separate hits/PA bug
-   *  (see `expectedH` below) — now that both are corrected, league-avg
-   *  hits/PA matches reality within rounding. The ratio drifts at the
-   *  tails (~1.6-1.8 for elite contact suppressors, ~1.4 for high-
-   *  damage profiles); single-multiplier model doesn't fit both ends
-   *  perfectly, but 1.5 is closer to empirical center. */
-  const baa = contactXwoba / 1.5;
-
-  // ----- xwOBA-allowed and ERA --------------------------------------------
-  /** Compose xwOBA from the explicit linear-weights form. HR is now
-   *  carried as its own term so park HR / gbRate / weather all flow
-   *  into expectedERA via this single composition. */
-  const xwobaAllowed = composeAdjustedXwobaAllowed({
-    bbPerPA, kPerPA, hrPerPA, nonHrContactValue,
-  });
-  /** Base xERA from linear weights. Captures the *average* run value
-   *  of each event (BB at 0.69 wOBA, HR at 1.97). Calibrated against
-   *  the population, where most pitchers walk 8% — this works well
-   *  near the mean but understates ER risk for high-walk pitchers,
-   *  whose walks compound (multi-runner situations, errors / wp / sb
-   *  more impactful) in ways linear weights collapse to a constant.
-   *
-   *  See `bbCompoundingPenalty` below. The penalty is 0 at league-mean
-   *  BB% and grows as walk rate departs from the population — so
-   *  population-mean pitchers are unaffected, while a 15% BB rate
-   *  pitcher's expected ERA gets the runner-stacking damage that
-   *  pure linear weights miss. Calibration anchor: empirically,
-   *  pitchers walking 15% run ~0.7 ERA above their xERA on average. */
-  const expectedERA = xwobaToXera(xwobaAllowed) + bbCompoundingPenalty(bbPerPA);
+  // The chain itself lives in `rateChain` (below) so the per-stat knob
+  // attribution can re-run it one stage at a time; the fully-loaded call
+  // here IS the forecast.
+  const factors: RateChainFactors = {
+    oppK,
+    oppOpsFactor,
+    parkSo: parkSoAdj.multiplier,
+    parkBb: parkBbAdj.multiplier,
+    parkHr: effectiveParkHrMult,
+    parkOverall: parkOverallAdj.multiplier,
+    weatherContact: weatherContactFactor,
+    weatherHr: weatherHrFactor,
+  };
+  const chain = rateChain(pitcher, factors);
+  const { kPerPA, bbPerPA, hrPerPA, contactXwoba, baa, xwobaAllowed, expectedERA } = chain;
 
   // ----- Per-game expected counts -----------------------------------------
   const oppWorkloadFactor = oppOps != null
     ? clamp(1 - (oppOps - LEAGUE_OPS) * 1.0, 0.85, 1.10)
     : 1.0;
   const expectedIp = pitcher.ipPerStart * oppWorkloadFactor;
-  const paPerInning = 4.3 + (oppOps != null ? (oppOps - LEAGUE_OPS) * 1.5 : 0);
+  const paPerInning = PA_PER_INNING_BASE + (oppOps != null ? (oppOps - LEAGUE_OPS) * 1.5 : 0);
   const expectedPa = expectedIp * paPerInning;
 
   const expectedK = expectedPa * kPerPA;
@@ -694,6 +670,38 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
   const weather = buildWeatherMultiplier(game, park);
   const opp = buildOppMultiplier(opposingOffense, pitcher.throws);
 
+  // ----- Per-stat knob attribution (see PitcherModifierKnobs) -------------
+  // Re-run the rate chain with the stages switched on cumulatively; each
+  // knob is the ratio between consecutive stages. `chain` is stage 3.
+  const stage0 = rateChain(pitcher, NEUTRAL_FACTORS);
+  const stage1 = rateChain(pitcher, { ...NEUTRAL_FACTORS, oppK, oppOpsFactor });
+  const stage2 = rateChain(pitcher, { ...factors, weatherContact: 1, weatherHr: 1 });
+  const ratio = (after: number, before: number) =>
+    before > 1e-12 && Number.isFinite(after / before) ? after / before : 1;
+  const knobs: PitcherModifierKnobs = {
+    opp: {
+      k: ratio(stage1.kPerPA, stage0.kPerPA),
+      bb: ratio(stage1.bbPerPA, stage0.bbPerPA),
+      hr: ratio(stage1.hrPerPA, stage0.hrPerPA),
+      h: ratio(stage1.hPerPA, stage0.hPerPA),
+      er: ratio(stage1.expectedERA, stage0.expectedERA),
+      ip: oppWorkloadFactor,
+      pa: ratio(expectedPa, pitcher.ipPerStart * PA_PER_INNING_BASE),
+    },
+    park: {
+      k: ratio(stage2.kPerPA, stage1.kPerPA),
+      bb: ratio(stage2.bbPerPA, stage1.bbPerPA),
+      hr: ratio(stage2.hrPerPA, stage1.hrPerPA),
+      h: ratio(stage2.hPerPA, stage1.hPerPA),
+      er: ratio(stage2.expectedERA, stage1.expectedERA),
+    },
+    weather: {
+      hr: ratio(chain.hrPerPA, stage2.hrPerPA),
+      h: ratio(chain.hPerPA, stage2.hPerPA),
+      er: ratio(chain.expectedERA, stage2.expectedERA),
+    },
+  };
+
   return {
     pitcher,
     game,
@@ -712,12 +720,139 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
     },
     probabilities: { qs, w, wParts },
     multipliers: { velocity, platoon, park: parkMult, weather, opp, bullpen },
+    knobs,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Context factors the per-PA chain multiplies onto talent. Neutral = 1
+ *  (and no opponent K rate). */
+interface RateChainFactors {
+  oppK: number | null;
+  oppOpsFactor: number;
+  parkSo: number;
+  parkBb: number;
+  /** gb-gated effective park HR multiplier. */
+  parkHr: number;
+  parkOverall: number;
+  weatherContact: number;
+  weatherHr: number;
+}
+
+interface RateChain {
+  kPerPA: number;
+  bbPerPA: number;
+  hrPerPA: number;
+  inGameContactRate: number;
+  nonHrContactValue: number;
+  contactXwoba: number;
+  baa: number;
+  /** Hits per PA = (1 − BB/PA) × BAA — see `expectedH` for the derivation. */
+  hPerPA: number;
+  xwobaAllowed: number;
+  expectedERA: number;
+}
+
+const NEUTRAL_FACTORS: RateChainFactors = {
+  oppK: null, oppOpsFactor: 1, parkSo: 1, parkBb: 1, parkHr: 1, parkOverall: 1, weatherContact: 1, weatherHr: 1,
+};
+
+/**
+ * The per-PA rate chain: talent → opp adj → park adj → weather adj → in-game
+ * value, for one set of factors. Factored out of `buildGameForecast` so the
+ * per-stat knob attribution can run the identical code with the stages
+ * switched on one at a time — the fully-loaded call is the production
+ * forecast, so attribution can never drift from what is forecast.
+ */
+function rateChain(pitcher: PitcherTalent, f: RateChainFactors): RateChain {
+  /** K/PA — log5 against opp K-rate, then × parkSO. (No weather term: K
+   *  rate is largely temperature/wind-independent.) */
+  const kPerPABase = f.oppK != null
+    ? log5(pitcher.kPerPA, f.oppK, LEAGUE_OPS_K_RATE)
+    : pitcher.kPerPA;
+  const kPerPA = kPerPABase * f.parkSo;
+
+  /** BB/PA — base × oppOps × parkBB. Opp lineups with more discipline
+   *  (high OPS) draw more walks; pitcher parks reduce walks slightly
+   *  (pitcher generally pitches ahead in better counts). */
+  const bbPerPA = pitcher.bbPerPA * f.oppOpsFactor * f.parkBb;
+
+  /** HR/PA — talent's HR/contact × in-game contactRate × gb-gated parkHR
+   *  × weather. The gb-gating is the single biggest park-HR refinement:
+   *  a Skubal-type GB arm in Yankee Stadium gets nothing close to the
+   *  +18% park bump; a Cole-type FB arm gets nearly all of it. */
+  const inGameContactRate = Math.max(0, 1 - kPerPA - bbPerPA);
+  const baseHrPerPA = pitcher.hrPerContact * inGameContactRate;
+  const hrPerPA = baseHrPerPA * f.parkHr * f.weatherHr;
+
+  /** Non-HR contact value (xwOBA on contact, HR-removed). The talent's
+   *  base value gets a BABIP-like adjustment from overall park factor
+   *  + weather + opp OPS. This is what makes Coors's overall hitter
+   *  friendliness propagate into ERA / WHIP / W via the chain (rather
+   *  than living only as a dangling composite multiplier). */
+  const baseNonHrContactValue = talentNonHrContactXwoba(pitcher);
+  const nonHrContactValue = baseNonHrContactValue
+    * f.oppOpsFactor
+    * f.parkOverall
+    * f.weatherContact;
+
+  /** In-game contactXwoba (HR-inclusive, for downstream consumers like
+   *  the batter-side AVG log5 against this SP). Re-composed from the
+   *  in-game non-HR contact value plus the in-game HR rate.
+   *
+   *   contactXwoba = (HR/BIP × wHR + nonHR/BIP × nonHrXwoba)
+   */
+  const W_HR = 1.97;
+  const hrFractionInContact = inGameContactRate > 0 ? hrPerPA / inGameContactRate : 0;
+  const contactXwoba = hrFractionInContact * W_HR
+                     + (1 - hrFractionInContact) * nonHrContactValue;
+
+  /** BAA — derived from in-game contact xwOBA (HR-inclusive). Used by
+   *  batter-side log5 vs SP's BAA for the AVG cat AND by the WHIP / hits
+   *  derivation below.
+   *
+   *  Multiplier 1.5 matches the empirical league-mean ratio: 2024 MLB
+   *  league xwOBACON ≈ .368, BAA ≈ .246, ratio = 1.50. The previous
+   *  multiplier of 1.4 systematically overstated BAA by ~7% across all
+   *  pitchers, which had been compensating for a separate hits/PA bug
+   *  (see `expectedH` below) — now that both are corrected, league-avg
+   *  hits/PA matches reality within rounding. The ratio drifts at the
+   *  tails (~1.6-1.8 for elite contact suppressors, ~1.4 for high-
+   *  damage profiles); single-multiplier model doesn't fit both ends
+   *  perfectly, but 1.5 is closer to empirical center. */
+  const baa = contactXwoba / 1.5;
+  const hPerPA = (1 - bbPerPA) * baa;
+
+  // ----- xwOBA-allowed and ERA --------------------------------------------
+  /** Compose xwOBA from the explicit linear-weights form. HR is now
+   *  carried as its own term so park HR / gbRate / weather all flow
+   *  into expectedERA via this single composition. */
+  const xwobaAllowed = composeAdjustedXwobaAllowed({
+    bbPerPA, kPerPA, hrPerPA, nonHrContactValue,
+  });
+  /** Base xERA from linear weights. Captures the *average* run value
+   *  of each event (BB at 0.69 wOBA, HR at 1.97). Calibrated against
+   *  the population, where most pitchers walk 8% — this works well
+   *  near the mean but understates ER risk for high-walk pitchers,
+   *  whose walks compound (multi-runner situations, errors / wp / sb
+   *  more impactful) in ways linear weights collapse to a constant.
+   *
+   *  See `bbCompoundingPenalty` below. The penalty is 0 at league-mean
+   *  BB% and grows as walk rate departs from the population — so
+   *  population-mean pitchers are unaffected, while a 15% BB rate
+   *  pitcher's expected ERA gets the runner-stacking damage that
+   *  pure linear weights miss. Calibration anchor: empirically,
+   *  pitchers walking 15% run ~0.7 ERA above their xERA on average. */
+  const expectedERA = xwobaToXera(xwobaAllowed) + bbCompoundingPenalty(bbPerPA);
+
+  return {
+    kPerPA, bbPerPA, hrPerPA, inGameContactRate, nonHrContactValue, contactXwoba, baa, hPerPA,
+    xwobaAllowed, expectedERA,
+  };
+}
 
 function log5(rateA: number, rateB: number, leagueRate: number): number {
   if (leagueRate <= 0 || leagueRate >= 1) return rateA;

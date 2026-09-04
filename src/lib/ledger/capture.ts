@@ -1,5 +1,6 @@
+import { sql } from 'drizzle-orm';
 import { getDb, forecastSnapshots } from '@/lib/db';
-import { buildGameForecast } from '@/lib/pitching/forecast';
+import { buildGameForecast, type PitcherKnobStat } from '@/lib/pitching/forecast';
 import { getPitcherRating } from '@/lib/pitching/rating';
 import { DEFAULT_SCORED_CATS } from '@/lib/pitching/scoring';
 import { getTeamOffense } from '@/lib/mlb/teams';
@@ -19,9 +20,15 @@ import { MODEL_VERSION } from './modelVersion';
  * Forecast capture — the write side of the ledger.
  *
  * A snapshot freezes what an engine predicted BEFORE the outcome exists;
- * rows are immutable and first-write-wins per identity (the DB unique
+ * live rows are immutable and first-write-wins per identity (the DB unique
  * index is the guard). Captures are fire-and-forget from request paths:
  * they must never slow down or fail a page.
+ *
+ * Retro rows (`retro-*` engines) are the one exception: they are
+ * RECONSTRUCTIONS computed from the rebuildable `statcast_events` corpus,
+ * not observations, so a re-run REPLACES the row under the same identity
+ * (upsert) and stamps the current MODEL_VERSION. See
+ * docs/forecast-verification.md#retro-rows-are-reconstructions.
  *
  * Engines snapshotted here call the same canonical L1/L2 primitives the
  * product surfaces use — capture never re-implements forecast math.
@@ -51,6 +58,9 @@ export interface SnapshotRow {
 }
 
 const round3 = (n: number) => Number(n.toFixed(3));
+/** Pitcher knobs move ~1-2% per start (log-SD ≈ 0.02); 3 decimals would
+ *  quantise them at a tenth of that spread, so they keep one more. */
+const round4 = (n: number) => Number(n.toFixed(4));
 
 /** Today's date in ET — MLB game dates are ET-anchored. */
 export function todayEt(): string {
@@ -83,24 +93,57 @@ export async function insertSnapshots(rows: SnapshotRow[]): Promise<number> {
   // nominal lead of 0 (the concept doesn't apply to them).
   const valid = rows.filter(r => isRetroEngine(r.engine) || (lead.get(r.gameDate) ?? -1) >= 0);
   if (valid.length === 0) return 0;
-  const inserted = await getDb()
-    .insert(forecastSnapshots)
-    .values(
-      valid.map(r => ({
-        gameDate: r.gameDate,
-        engine: r.engine,
-        mlbId: r.mlbId,
-        playerName: r.playerName,
-        leagueKey: r.leagueKey ?? '',
-        leadDays: isRetroEngine(r.engine) ? 0 : lead.get(r.gameDate)!,
-        predicted: r.predicted,
-        context: r.context,
-        modelVersion: MODEL_VERSION,
-      })),
-    )
-    .onConflictDoNothing()
-    .returning({ id: forecastSnapshots.id });
-  return inserted.length;
+  const toValues = (rs: SnapshotRow[]) =>
+    rs.map(r => ({
+      gameDate: r.gameDate,
+      engine: r.engine,
+      mlbId: r.mlbId,
+      playerName: r.playerName,
+      leagueKey: r.leagueKey ?? '',
+      leadDays: isRetroEngine(r.engine) ? 0 : lead.get(r.gameDate)!,
+      predicted: r.predicted,
+      context: r.context,
+      modelVersion: MODEL_VERSION,
+    }));
+  const live = valid.filter(r => !isRetroEngine(r.engine));
+  const retro = valid.filter(r => isRetroEngine(r.engine));
+  let written = 0;
+  if (live.length) {
+    // Observations: first write wins, forever.
+    const inserted = await getDb()
+      .insert(forecastSnapshots)
+      .values(toValues(live))
+      .onConflictDoNothing()
+      .returning({ id: forecastSnapshots.id });
+    written += inserted.length;
+  }
+  if (retro.length) {
+    // Reconstructions: the current build's rebuild of that date replaces
+    // any earlier one under the same identity. Scoped by construction —
+    // only rows whose engine key starts with 'retro-' reach this branch.
+    const upserted = await getDb()
+      .insert(forecastSnapshots)
+      .values(toValues(retro))
+      .onConflictDoUpdate({
+        target: [
+          forecastSnapshots.gameDate,
+          forecastSnapshots.engine,
+          forecastSnapshots.mlbId,
+          forecastSnapshots.leagueKey,
+          forecastSnapshots.leadDays,
+        ],
+        set: {
+          playerName: sql`excluded.player_name`,
+          predicted: sql`excluded.predicted`,
+          context: sql`excluded.context`,
+          modelVersion: sql`excluded.model_version`,
+          capturedAt: sql`now()`,
+        },
+      })
+      .returning({ id: forecastSnapshots.id });
+    written += upserted.length;
+  }
+  return written;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +205,23 @@ export async function capturePitcherSlate(
       // Composite 0-100 under the league-free default cats — captured so
       // the scorecard can test discrimination (do 80s out-produce 55s?).
       const rating = getPitcherRating({ forecast, scoredCategories: DEFAULT_SCORED_CATS, focusMap: {} });
+      // Per-stat modifier attribution (2026-09-04), the same shape as the
+      // batter rows: `knobs.<knob>.<stat>` is the multiplier that knob
+      // applied to that stat's RATE (per PA for k/bb/hr/h, per 9 for er;
+      // ip/pa are the volume terms, moved by opp only), and `mods.<stat>`
+      // is their product — in-game rate ÷ talent rate. Rate, not count:
+      // predicted.k = rate × forecast PA, so pred ÷ mods is the talent
+      // rate at the forecast exposure, exactly as on the batter side.
+      const knobs: Record<string, Record<string, number>> = {};
+      const mods: Record<string, number> = {};
+      for (const [knob, perStat] of Object.entries(forecast.knobs)) {
+        for (const [stat, mult] of Object.entries(perStat ?? {}) as [PitcherKnobStat, number][]) {
+          if (!Number.isFinite(mult)) continue;
+          (knobs[knob] ??= {})[stat] = round4(mult);
+          mods[stat] = (mods[stat] ?? 1) * mult;
+        }
+      }
+      for (const stat of Object.keys(mods)) mods[stat] = round4(mods[stat]);
       rows.push({
         gameDate,
         engine,
@@ -182,12 +242,17 @@ export async function capturePitcherSlate(
           venue: game.venue.name,
           parkKnown: game.park !== null,
           oppPitcherKnown: opposing?.talent != null,
-          // Per-knob attribution: each L2 modifier as applied (>1 boosts
-          // the pitcher). Lets the scorecard grade the knob, not just the
-          // total — "did starts we park-boosted actually allow fewer runs?"
+          // Breakdown-UI multipliers, one scalar per knob for the whole
+          // start (>1 boosts the pitcher). Kept for the scorecard's knob
+          // slices and for continuity with pre-2026-09-04 rows, but NOT
+          // what the forecast applies: `platoon`/`velocity` never touch a
+          // stat line and `opp`/`platoon` read the same OPS scalar. The
+          // fit reads `knobs` / `mods` below.
           mults: Object.fromEntries(
             Object.entries(forecast.multipliers).map(([k, m]) => [k, round3(m.multiplier)]),
           ),
+          knobs,
+          mods,
           // P(W) decomposition (2026-07-25): lets the next calibration
           // pass grade P(team win), credit share, and the run rates
           // separately — the first W pass had to reverse-engineer the

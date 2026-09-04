@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.09.03.3';
+export const MODEL_VERSION = '2026.09.03.4';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -157,6 +157,26 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'batter-week', stats: '*' },
       { engine: 'points-batter-day', stats: '*' },
       { engine: 'retro-batter-day', stats: '*' },
+    ],
+  },
+  {
+    version: '2026.09.03.4',
+    date: '2026-09-03',
+    summary:
+      'Batter talent baseline is park-neutralised before today\'s park factor is applied. A season rate ' +
+      'already contains ~half the batter\'s own home park (PA-weighted share 0.4897, measured), so the ' +
+      'factor was charged twice at home and the wrong park carried on the road — fitted park coefficients ' +
+      'of 0.17-0.57 home vs 0.40-1.00 away, where the arithmetic for exactly this error predicts 0.5 and ' +
+      '1.0. Weighted by how much of each baseline came from park-exposed actuals: Statcast expected stats ' +
+      'are built from exit velocity and launch angle and are park-neutral, so AVG/H/TB expose only their ' +
+      '40% actual side and K/BB none at all. Re-grading the cohort closes the home/away gap 0.49 -> 0.01 ' +
+      '(RBI), 0.43 -> 0.10 (HR), 0.42 -> 0.30 (TB), and leaves K/BB byte-identical. Visible consequence: ' +
+      'hitters from extreme parks are now marked down (or up) on the road, which the engine never did.',
+    touched: [
+      { engine: 'batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'score'] },
+      { engine: 'batter-week', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'score'] },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'score'] },
     ],
   },
 ];

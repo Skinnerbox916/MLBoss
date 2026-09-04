@@ -413,3 +413,55 @@ export function formatParkBadge(park: ParkData | null): ParkBadge {
     isHR: useHR && pfHr !== pf,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Baseline park-neutralisation
+// ---------------------------------------------------------------------------
+
+/**
+ * PA-weighted share of a batter's season sample played in his own home park.
+ * Measured over 37,167 graded retro batter-days: game share is exactly 0.5000
+ * by schedule construction, PA share 0.4897 — home teams bat slightly less,
+ * skipping the bottom of the ninth when they lead.
+ */
+const HOME_PA_SHARE = 0.4897;
+
+/**
+ * How much a batter's own season rate was already inflated (or suppressed) by
+ * the park he plays half his games in.
+ *
+ * THE BUG THIS FIXES. A season rate is not park-neutral talent — roughly half
+ * of it was accumulated in one specific park. Applying today's park factor to
+ * it charges for that park twice at home, and on the road leaves the baseline
+ * carrying the wrong park entirely. The forecast ledger shows exactly that
+ * signature: fitted park coefficients of 0.17–0.57 at home against 0.40–1.00
+ * away, where 1.00 is calibrated. The arithmetic predicts ~0.5 at home and
+ * ~1.0 away, and R/RBI — the cleanest cases — came in at 0.57/0.50 and
+ * 0.96/1.00. This is the same class of error that retired the pitcher
+ * velocity multiplier in 2026-05: a signal already present in the baseline,
+ * applied a second time on top.
+ *
+ * `exposedShare` is how much of the baseline actually came from park-exposed
+ * actuals, which differs by category: Statcast expected stats are built from
+ * exit velocity and launch angle and so are park-neutral by construction,
+ * while raw season rates are fully exposed. Dividing the whole baseline would
+ * over-correct the categories that blend the two.
+ *
+ * Returns the divisor for the baseline. 1.0 = nothing to undo.
+ */
+export function parkExposureFactor(input: {
+  homePark: ParkData | null;
+  statId?: number;
+  batterHand?: BatterHand;
+  /** 0 = baseline is already park-neutral, 1 = fully park-exposed. */
+  exposedShare: number;
+}): number {
+  const { homePark, statId, batterHand, exposedShare } = input;
+  if (!homePark || exposedShare <= 0) return 1;
+  // No weather and no pitcher hand: this is a season-long exposure, not a
+  // game. Switch hitters correctly fall back to the overall factor, which is
+  // what they average out to across a season of both stances.
+  const home = getParkAdjustment({ park: homePark, statId, batterHand, weather: null });
+  if (!home.available) return 1;
+  return 1 + exposedShare * HOME_PA_SHARE * (home.multiplier - 1);
+}

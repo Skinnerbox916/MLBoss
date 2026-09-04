@@ -238,6 +238,14 @@ export function supportsStatId(statId: number): boolean {
 const FULL_SAMPLE_PA = 400;
 
 export interface BlendedBaseline {
+  /**
+   * How much of `rate` came from park-exposed actuals, 0-1. Statcast expected
+   * stats are computed from exit velocity and launch angle, which do not know
+   * about park dimensions, so they are park-neutral by construction; raw
+   * season rates are fully exposed. `parkExposureFactor` needs this to avoid
+   * over-correcting a blended baseline — see parkAdjustment.ts.
+   */
+  parkExposedShare: number;
   /** Bayesian-blended per-PA rate (or native rate for AVG). */
   rate: number;
   /** Effective sample size behind the estimate (current + capped prior). */
@@ -350,7 +358,9 @@ export function blendedBaselineForCategory(
 
   // Regressed-actual talent rates (K%/BB%) stand alone.
   if (talentRate !== null && !XSTAT_MODELED_CATS.has(statId)) {
-    return { rate: talentRate, effectivePA: eff };
+    // K / BB: a regressed actual RATE, not a park-exposed count — a strikeout
+    // is a strikeout in any park, so nothing to undo.
+    return { rate: talentRate, effectivePA: eff, parkExposedShare: 0 };
   }
 
   // Raw path: Bayesian blend of raw current + prior + league. Needed both
@@ -373,10 +383,12 @@ export function blendedBaselineForCategory(
     return {
       rate: w * talentRate + (1 - w) * raw.value,
       effectivePA: Math.round(w * eff + (1 - w) * raw.effectiveN),
+      // Only the actual-rate side of the blend carries the player's home park.
+      parkExposedShare: 1 - w,
     };
   }
 
-  return { rate: raw.value, effectivePA: raw.effectiveN };
+  return { rate: raw.value, effectivePA: raw.effectiveN, parkExposedShare: 1 };
 }
 
 /**

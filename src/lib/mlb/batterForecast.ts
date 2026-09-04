@@ -19,7 +19,8 @@ import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { type MatchupContext, getWeatherScore } from './analysis';
 import { platoonFactor, facingHandFrom } from './platoon';
 import { blendedBaselineForCategory, supportsStatId } from './categoryBaselines';
-import { getParkAdjustment } from './parkAdjustment';
+import { getParkAdjustment, parkExposureFactor } from './parkAdjustment';
+import { getParkByTeam } from './parks';
 import { applyKnobs } from './knobReliability';
 import { getLeagueSbAllowedPerIp } from './leagueRates';
 import {
@@ -293,6 +294,7 @@ function applyMatchupModifier(
   bats: 'L' | 'R' | 'S' | undefined | null,
   ctx: MatchupContext | null,
   battingOrder: number | null,
+  parkExposedShare: number,
 ): ExpectedRate {
   const sp = ctx?.opposingPitcher ?? null;
   const weatherMult = weatherCatFactor(ctx, statId);
@@ -309,13 +311,32 @@ function applyMatchupModifier(
   // primitive picks the right field by `statId`, resolves switch hitters
   // against `pitcherThrows`, and applies the wind term in wind-sensitive
   // parks. Cases below just use it.
-  const parkAdj = getParkAdjustment({
+  const parkAdjRaw = getParkAdjustment({
     park: ctx?.game.park ?? null,
     statId,
     batterHand: bats,
     pitcherThrows: sp?.throws ?? null,
     weather: ctx?.game.weather ?? null,
   });
+
+  // The baseline is not park-neutral: roughly half of it was accumulated in
+  // this batter's own home park. Divide that exposure back out before
+  // applying today's park, or the factor is charged twice at home and the
+  // wrong park is carried on the road. See parkAdjustment.ts for the evidence
+  // and docs/history.md for the home/away signature that exposed it. The
+  // consequence worth knowing: a hitter from an extreme park is now marked
+  // DOWN on the road, which the engine previously never did.
+  const ownTeam = ctx ? (ctx.isHome ? ctx.game.homeTeam : ctx.game.awayTeam) : null;
+  const exposure = parkExposureFactor({
+    homePark: ownTeam ? getParkByTeam(ownTeam.abbreviation) ?? null : null,
+    statId,
+    batterHand: bats,
+    exposedShare: parkExposedShare,
+  });
+  const parkAdj = {
+    ...parkAdjRaw,
+    multiplier: exposure > 0 ? parkAdjRaw.multiplier / exposure : parkAdjRaw.multiplier,
+  };
 
   switch (statId) {
     case 3: { // AVG — log5 blend (SP BAA, bullpen BAA) + park.
@@ -546,6 +567,7 @@ export function buildBatterForecast(
       stats.bats,
       ctx,
       battingOrder,
+      baselineResult.parkExposedShare,
     );
     const obsRatio = handRatios?.[statId];
     const obs = obsRatio != null ? { ratio: obsRatio, pa: handPA } : null;

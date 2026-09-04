@@ -66,6 +66,16 @@ The third factor is the one the first two can't express: **which starter gets li
 
 **Standing verification:** the `batter-day` engine grades exactly this constant — the PA row of its scorecard plus the lineup-spot slice finding. Re-fit with `npx tsx scripts/retro-pa-model-fit.ts` (add `batter-day` for the independent live cohort); treat any new monotone-by-spot PA finding, or any reappearance of a gap between the edge and held populations, as these constants drifting.
 
+## Park-neutral baselines
+
+A season rate is not park-neutral talent — roughly half of it (PA-weighted share **0.4897**, measured over 37,167 graded batter-days) was accumulated in one specific park. Applying today's park factor straight on top charges for that park twice at home, and on the road leaves the baseline carrying the wrong park entirely.
+
+`parkExposureFactor` ([parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)) divides that exposure back out before the day's factor goes on, weighted by how much of the baseline actually came from park-exposed actuals — reported by `blendedBaselineForCategory` as `parkExposedShare`. Statcast expected stats are computed from exit velocity and launch angle, which know nothing about park dimensions, so they are park-neutral by construction: AVG/H/TB expose only their 40% actual side, K/BB none at all, and HR/R/RBI are fully exposed. Dividing the whole baseline would over-correct the blended categories.
+
+**Deliberately L2, not L1.** The neutralisation lives in the matchup layer, not in `blendedBaselineForCategory`, because a park-contaminated baseline is the *right* input for the roster page's neutral-week projections — a hitter really will keep playing half his games in his own park, so his ROS value should include it. Only the day-level matchup path, which then applies a specific park, needs the exposure removed first.
+
+The visible consequence: a hitter from an extreme park is now marked **down** on the road (a Yankee Stadium bat's HR knob goes 1.000 → 0.907 in a neutral park) and **up** where his own park suppresses him (Oracle Park, 1.000 → 1.109). The engine previously did neither. Verify with `npx tsx scripts/retro-park-neutralize-check.ts`, which re-grades the stored cohort analytically and reports the home/away gap before and after.
+
 ## Reuse rules
 
 1. **One per-player primitive per side.** All three consumers (team aggregate, opponent aggregate, per-FA week ranking) call the same `projectBatterPlayer` / `projectPitcherPlayer`. Don't write a parallel "but for the streaming board" version — extend the primitive or wrap it.

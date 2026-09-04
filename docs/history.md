@@ -8,6 +8,43 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — Category regression priors were 4-9x too weak (and were never measured)
+
+The per-knob fit read the batter talent layer's spread as badly over-confident for some categories and fine for others: slope 1.02 for K and 1.03 for BB, where 1.00 is calibrated, against 0.92 for TB, 0.96 for H, 0.84 for HR, and 0.67 / 0.65 for R and RBI. That gradient is not random. It tracks exactly how much of each category's baseline comes from a single unmeasured constant.
+
+`CATEGORY_BASELINE_CONFIG` gave **every** category the same `leaguePriorN` of 100 PA — the number of plate appearances of league-average mixed into the Bayesian blend — bar SB (100) and K (50). The stated reasoning was that priors should sit at "roughly half the true-talent stabilisation point" so that current performance over a real sample would still move the rank, the worry being that a strict prior would project a .178-over-50-PA hitter as a .240 hitter.
+
+That is a claim about prediction, and it had never been tested against a prediction.
+
+**The fit.** `scripts/retro-talent-shrinkage-fit.ts` searches for the N that best predicts a held-out later window: window A (before a split date) supplies the observed rate, window B is the target, and the score is the Poisson log-likelihood of the held-out counts. R and RBI are not plate-appearance events so the Statcast corpus cannot supply them — the ledger's `player_game_actuals` can, and does, for all 37,150 graded batter-days. Three split dates, ~300 batters each.
+
+| category | path | was | fitted (3 splits) | now |
+|---|---|---|---|---|
+| K | fallback | 50 | 40 / 55 / 50 | **50** (unchanged) |
+| SB | raw | 100 | 70 / 70 / 80 | **100** (unchanged) |
+| BB | fallback | 80 | 180 / 200 / 170 | **200** |
+| HBP | raw | 100 | 320 / 340 / 300 | **400** |
+| HR | raw | 100 | 400 / 350 / 360 | **425** |
+| H | 60/40 | 100 | 600 / 525 / 575 | **600** |
+| R | raw | 100 | 675 / 625 / 575 | **650** |
+| AVG | 60/40 | 100 | 625 / 625 / 750 | **700** |
+| 3B | raw | 100 | 675 / 500 / 775 | **700** |
+| RBI | raw | 100 | 725 / 700 / 925 | **800** |
+| TB | 60/40 | 100 | 850 / 625 / 825 | **900** |
+| 2B | raw | 100 | 6000 / 1600 / 1200 | **1500** |
+
+`path` is how much of that category's baseline the constant actually controls: `raw` = all of it (no expected-stat equivalent exists), `60/40` = only the 40% raw side since a Statcast talent rate carries the rest, `fallback` = only when the talent gate fails under 100 effective PA. **That column explains the whole knob-fit gradient** — K and BB ride a Statcast talent path and were calibrated; TB and H are 60% Statcast and were mildly over-spread; HR, R and RBI are pure raw and were the worst.
+
+**The control that makes this believable:** K came back at its existing 50 and SB inside its existing 100. The fit is not simply preferring more regression — it identifies the two categories that were already right and leaves them alone. The ordering also reproduces the stabilisation literature unprompted: K fastest, then BB, then power, then rate stats, with the context-dependent counting stats slowest and doubles barely stabilising at all.
+
+**Verification.** Re-running the fit after the change collapses the log-likelihood gain from +13…+131 to zero for every category touched. Cross-checked against a three-way fit shaped like the engine's actual blend (current + prior season at the capped weight of 250 + league), which agrees within overlapping confidence intervals; its higher point estimates come from its shorter windows, not from the prior term. Shrinking toward the league rate for the batter's own lineup slot instead of the flat league mean was tested and is a wash — that context is already carried by the `order` knob at the modifier layer, so putting it in the prior too would double-count.
+
+**The consequence to expect, and it is the intended one:** players look more alike than they did, and a hot or cold stretch moves a projection less. An above-average run scorer's R/PA projection comes down roughly 8%, a poor one's goes up roughly 12%, and the spread across the league compresses about 40% — which is what the 0.67 talent slope was asking for.
+
+**Don't reintroduce:** a hand-chosen regression prior. The horizon this app plans over is exactly the horizon the fit scores, so the constant is measurable and there is no reason to guess it. Re-fit with `npx tsx scripts/retro-talent-shrinkage-fit.ts` when a second season is available; treat any category whose fitted N drifts far from the value here as that category's run environment having changed.
+
+---
+
 ## 2026-09 — Manager usage predicts platoon-split size; the effect is a tail, not a ramp
 
 `scripts/retro-platoon-usage-check.ts`. The question left open by the [platoon recalibration](#2026-09--batter-platoon-recalibrated-the-knob-was-never-inert-and-the-per-knob-fit-was-mis-specified): does how a manager uses a batter predict how large that batter's platoon split really is? Asked of the pitch corpus directly rather than of the engine's residuals — no forecasts, no talent layer, no as-of machinery, so nothing but the batter is in the comparison.

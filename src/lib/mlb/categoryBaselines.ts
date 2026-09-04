@@ -53,23 +53,41 @@ export interface CategoryBaselineConfig {
  * near 1.0 and clearly-below-average normalise near 0. League means pulled
  * from 2024 MLB rates.
  *
- * Priors are tuned for *predictive* fantasy decisions (3-week horizon),
- * not strict true-talent estimation. True-talent stabilisation for AVG is
- * famously slow (~910 PA), so a Bayesian-strict prior would smooth out
- * even 200 current PA. For roster decisions we want current performance
- * over a real sample to genuinely move the rank — a guy hitting .178
- * over 50 PA should not be projected as a .240 hitter just because that's
- * his career line. The priors here are roughly half the true-talent
- * stabilisation point, splitting the difference between "pure current"
- * (overreacts to small samples) and "pure prior" (ignores what's actually
- * happening this year).
+ * `leaguePriorN` is how many plate appearances of league-average the blend
+ * mixes in — the regression strength. It is fitted per category, not chosen:
+ * `scripts/retro-talent-shrinkage-fit.ts` searches, out of sample, for the N
+ * that best predicts a held-out later window (2026-09, ~300 batters at each
+ * of three split dates; see docs/history.md).
+ *
+ * The values order themselves the way the stabilisation literature says they
+ * should — K fastest, then BB, then power, then rate stats, with the
+ * context-dependent counting stats slowest and doubles barely stabilising at
+ * all. K's fitted value came back at its existing 50 and SB inside its
+ * existing 100, which is the check that the fit is measuring something real
+ * rather than just preferring more regression.
+ *
+ * WHAT THIS REPLACED, and why it is not a matter of taste: every category
+ * used to sit at 100 (bar SB and K), on the reasoning that priors should be
+ * "roughly half the true-talent stabilisation point" so that current
+ * performance over a real sample would genuinely move the rank — the worry
+ * being that a Bayesian-strict prior would project a .178-over-50-PA hitter
+ * as a .240 hitter. That is a claim about PREDICTION, and the fit measures
+ * prediction directly over exactly the horizon the app plans on. It is wrong
+ * by a factor of 4-9x for every category except the two already correct. The
+ * cost of the old values was real: the per-knob fit read the talent layer's
+ * spread at 0.67 for R and 0.65 for RBI, where 1.00 is calibrated, and the
+ * gradient across categories tracked precisely how much of each one leaned on
+ * this raw path.
+ *
+ * The consequence to expect, and it is the intended one: players look more
+ * alike than they used to, and a hot or cold stretch moves a projection less.
  */
 export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = {
   3: { // AVG — leagueMean refreshed 2026 mid-season from MLB Stats API
        //       (was 0.243 from 2024; reality is ~0.239 in 2026).
     label: 'AVG',
     leagueMean: 0.239,
-    leaguePriorN: 100,
+    leaguePriorN: 700,
     priorCap: 250,
     getCurrent: s => s.avg,
     getPrior: p => p.avg,
@@ -79,7 +97,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
   7: { // R
     label: 'R',
     leagueMean: 0.115,
-    leaguePriorN: 100,
+    leaguePriorN: 650,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.runs / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.runs / p.pa : null),
@@ -89,7 +107,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
   8: { // H — leagueMean refreshed 2026 (was 0.215).
     label: 'H',
     leagueMean: 0.212,
-    leaguePriorN: 100,
+    leaguePriorN: 600,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.hits / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.hits / p.pa : null),
@@ -101,7 +119,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
         //      lines; null routes the blend to prior + league mean.
     label: '2B',
     leagueMean: 0.044,
-    leaguePriorN: 100,
+    leaguePriorN: 1500,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 && typeof s.doubles === 'number' ? s.doubles / s.pa : null),
     getPrior: p => (p.pa > 0 && typeof p.doubles === 'number' ? p.doubles / p.pa : null),
@@ -114,7 +132,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
         //      the zeros).
     label: '3B',
     leagueMean: 0.0045,
-    leaguePriorN: 100,
+    leaguePriorN: 700,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 && typeof s.triples === 'number' ? s.triples / s.pa : null),
     getPrior: p => (p.pa > 0 && typeof p.triples === 'number' ? p.triples / p.pa : null),
@@ -125,7 +143,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
         //      compressed; the 2026 league HR/PA is ~0.0275.
     label: 'HR',
     leagueMean: 0.0275,
-    leaguePriorN: 100,
+    leaguePriorN: 425,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.hr / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.hr / p.pa : null),
@@ -135,7 +153,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
   13: { // RBI
     label: 'RBI',
     leagueMean: 0.110,
-    leaguePriorN: 100,
+    leaguePriorN: 800,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.rbi / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.rbi / p.pa : null),
@@ -158,7 +176,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
         //      each in Yahoo default); ~1.3 pts/wk at the archetype extreme.
     label: 'HBP',
     leagueMean: 0.009,
-    leaguePriorN: 100,
+    leaguePriorN: 400,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 && typeof s.hbp === 'number' ? s.hbp / s.pa : null),
     getPrior: p => (p.pa > 0 && typeof p.hbp === 'number' ? p.hbp / p.pa : null),
@@ -170,7 +188,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
         //      early-season walk spike; season-to-date settled at ~.089.
     label: 'BB',
     leagueMean: 0.089,
-    leaguePriorN: 80,
+    leaguePriorN: 200,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.walks / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.walks / p.pa : null),
@@ -193,7 +211,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
         // near 0.50; punchless hitters near 0.25.
     label: 'TB',
     leagueMean: 0.340,
-    leaguePriorN: 100,
+    leaguePriorN: 900,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.totalBases / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.totalBases / p.pa : null),

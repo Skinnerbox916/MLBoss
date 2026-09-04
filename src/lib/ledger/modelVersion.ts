@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.09.03.2';
+export const MODEL_VERSION = '2026.09.03.3';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -133,6 +133,25 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       '(it had the average hook baked into its slope) and the no-spot fallback moves 4.00 -> 3.95. PA ' +
       'volume scales every batter counting stat and the rating\'s opportunity multiplier, so every ' +
       'batter engine and every stat segments.',
+    touched: [
+      { engine: 'batter-day', stats: '*' },
+      { engine: 'batter-week', stats: '*' },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'retro-batter-day', stats: '*' },
+    ],
+  },
+  {
+    version: '2026.09.03.3',
+    date: '2026-09-03',
+    summary:
+      'Category baseline regression priors fitted instead of assumed (docs/history.md "2026-09 — ' +
+      'Category regression priors were 4-9x too weak"). Every batter category bar SB and K sat at ' +
+      'leaguePriorN 100 on a "half the stabilisation point" heuristic; fitting N out of sample against ' +
+      'a held-out later window puts it at 200 (BB) to 1500 (2B), with R 650, RBI 800, TB 900, AVG 700, ' +
+      'H 600, HR 425, HBP 400, 3B 700. K stays at 50 and SB at 100 — both came back at their existing ' +
+      'values, which is the control. This is the cause of the talent-layer over-spread the per-knob fit ' +
+      'measured (R 0.67, RBI 0.65 where 1.00 is calibrated). Touches the baseline of every scored batter ' +
+      'category and therefore the day score, so every batter engine and stat segments.',
     touched: [
       { engine: 'batter-day', stats: '*' },
       { engine: 'batter-week', stats: '*' },

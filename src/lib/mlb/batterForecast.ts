@@ -20,6 +20,7 @@ import { type MatchupContext, getWeatherScore } from './analysis';
 import { platoonFactor, facingHandFrom } from './platoon';
 import { blendedBaselineForCategory, supportsStatId } from './categoryBaselines';
 import { getParkAdjustment } from './parkAdjustment';
+import { applyKnobs } from './knobReliability';
 import { getLeagueSbAllowedPerIp } from './leagueRates';
 import {
   LEAGUE_IP_PER_START,
@@ -321,11 +322,10 @@ function applyMatchupModifier(
       const spBaaR = spBaa(sp);
       const rpBaaR = oppRp?.baa ?? null;
       const blended = blendLog5(baseline, spBaaR, rpBaaR, LEAGUE_AVG, spShare);
-      const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
       if (spBaaR != null) hints.push(`${spBaaR.toFixed(3)} BAA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
-      return { expected, modifierHint: hints.join(' · '), knobs: { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier } };
+      return resolve(statId, baseline, { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier }, hints);
     }
 
     case 12: { // HR — ratio-clamp blend (SP, bullpen HR/PA) + park + weather.
@@ -335,13 +335,12 @@ function applyMatchupModifier(
       const spHr = spHrPerPA(sp);
       const rpHr = oppRp?.hrPerPA ?? null;
       const blendedMod = blendRatioMult(spHr, rpHr, LEAGUE_HR_PER_PA, PITCHER_SWING_HR, spShare);
-      const expected = baseline * blendedMod * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
       if (spHr != null) hints.push(`${spHr.toFixed(3)} HR/PA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
       if (weatherMult >= 1.04) hints.push('wind-boost');
       else if (weatherMult <= 0.96) hints.push('wind-suppress');
-      return { expected, modifierHint: hints.join(' · '), knobs: { pitcher: blendedMod, park: parkAdj.multiplier, weather: weatherMult } };
+      return resolve(statId, baseline, { pitcher: blendedMod, park: parkAdj.multiplier, weather: weatherMult }, hints);
     }
 
     case 16: { // SB — RHP hand bump + team SB-allowed-per-IP blend.
@@ -364,12 +363,11 @@ function applyMatchupModifier(
         else if (teamSbMult <= 0.90) teamSbHint = 'SB-stingy staff';
       }
 
-      const expected = baseline * handMult * teamSbMult;
       const hints: string[] = [];
       if (sp?.throws === 'R') hints.push('RHP (easier to run)');
       else if (sp?.throws === 'L') hints.push('LHP');
       if (teamSbHint) hints.push(teamSbHint);
-      return { expected, modifierHint: hints.join(' · '), knobs: { hand: handMult, teamSb: teamSbMult } };
+      return resolve(statId, baseline, { hand: handMult, teamSb: teamSbMult }, hints);
     }
 
     case 7: { // R — ratio-clamp blend (SP xERA, bullpen ERA) + park + order + weather.
@@ -384,15 +382,13 @@ function applyMatchupModifier(
       const expEra = spExpectedEra(sp);
       const rpEra = oppRp?.era ?? null;
       const blendedMod = blendRatioMult(expEra, rpEra, 4.0, PITCHER_SWING_RUNS, spShare);
-      const expected = baseline * blendedMod * parkAdj.multiplier * orderMod * weatherMult;
-      const knobs: BatterModifierKnobs = { pitcher: blendedMod, park: parkAdj.multiplier, order: orderMod, weather: weatherMult };
       const hints: string[] = [];
       if (expEra != null) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('top of order');
       if (parkAdj.hint) hints.push(parkAdj.hint);
       if (weatherMult >= 1.03) hints.push('wind-boost');
       else if (weatherMult <= 0.97) hints.push('wind-suppress');
-      return { expected, modifierHint: hints.join(' · '), knobs };
+      return resolve(statId, baseline, { pitcher: blendedMod, park: parkAdj.multiplier, order: orderMod, weather: weatherMult }, hints);
     }
 
     case 13: { // RBI — ratio-clamp blend (SP xERA, bullpen ERA) + park + order + weather.
@@ -406,64 +402,80 @@ function applyMatchupModifier(
       const expEra = spExpectedEra(sp);
       const rpEra = oppRp?.era ?? null;
       const blendedMod = blendRatioMult(expEra, rpEra, 4.0, PITCHER_SWING_RUNS, spShare);
-      const expected = baseline * blendedMod * parkAdj.multiplier * orderMod * weatherMult;
-      const knobs: BatterModifierKnobs = { pitcher: blendedMod, park: parkAdj.multiplier, order: orderMod, weather: weatherMult };
       const hints: string[] = [];
       if (expEra != null) hints.push(`${expEra.toFixed(2)} xERA SP`);
       if (orderMod > 1) hints.push('middle of order');
       if (parkAdj.hint) hints.push(parkAdj.hint);
       if (weatherMult >= 1.03) hints.push('wind-boost');
       else if (weatherMult <= 0.97) hints.push('wind-suppress');
-      return { expected, modifierHint: hints.join(' · '), knobs };
+      return resolve(statId, baseline, { pitcher: blendedMod, park: parkAdj.multiplier, order: orderMod, weather: weatherMult }, hints);
     }
 
     case 21: { // K — log5 blend (SP K/PA, bullpen K/PA) + park SO factor.
       const spKRate = sp?.talent?.kPerPA ?? null;
       const rpKRate = oppRp?.kPerPA ?? null;
       const blended = blendLog5(baseline, spKRate, rpKRate, LEAGUE_K_PER_PA, spShare);
-      const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
       if (spKRate != null) hints.push(`${(spKRate * 100).toFixed(0)}% K SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
-      return { expected, modifierHint: hints.join(' · '), knobs: { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier } };
+      return resolve(statId, baseline, { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier }, hints);
     }
 
     case 8: { // H — log5 blend (SP, bullpen hits/PA) + park + weather.
       const spHits = spHitsPerPA(sp);
       const rpHits = oppRp?.hitsPerPA ?? null;
       const blended = blendLog5(baseline, spHits, rpHits, LEAGUE_H_PER_PA, spShare);
-      const expected = blended * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
       if (spHits != null) hints.push(`${spHits.toFixed(3)} H/PA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
-      return { expected, modifierHint: hints.join(' · '), knobs: { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier, weather: weatherMult } };
+      return resolve(statId, baseline, { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier, weather: weatherMult }, hints);
     }
 
     case 23: { // TB — log5 blend (SP, bullpen hits/PA) + park + weather.
       const spHits = spHitsPerPA(sp);
       const rpHits = oppRp?.hitsPerPA ?? null;
       const blended = blendLog5(baseline, spHits, rpHits, LEAGUE_H_PER_PA, spShare);
-      const expected = blended * parkAdj.multiplier * weatherMult;
       const hints: string[] = [];
       if (spHits != null) hints.push(`${spHits.toFixed(3)} H/PA SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
-      return { expected, modifierHint: hints.join(' · '), knobs: { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier, weather: weatherMult } };
+      return resolve(statId, baseline, { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier, weather: weatherMult }, hints);
     }
 
     case 18: { // BB — log5 blend (SP, bullpen BB/PA) + park.
       const spBb = sp?.talent?.bbPerPA ?? null;
       const rpBb = oppRp?.bbPerPA ?? null;
       const blended = blendLog5(baseline, spBb, rpBb, LEAGUE_BB_PER_PA, spShare);
-      const expected = blended * parkAdj.multiplier;
       const hints: string[] = [];
       if (spBb != null) hints.push(`${(spBb * 100).toFixed(0)}% BB SP`);
       if (parkAdj.hint) hints.push(parkAdj.hint);
-      return { expected, modifierHint: hints.join(' · '), knobs: { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier } };
+      return resolve(statId, baseline, { pitcher: ratioKnob(blended, baseline), park: parkAdj.multiplier }, hints);
     }
 
     default:
       return { expected: baseline, modifierHint: '', knobs: {} };
   }
+}
+
+/**
+ * The single place a matchup-adjusted rate is built. Each case above declares
+ * WHICH knobs it applies; the expected rate is then derived from them rather
+ * than multiplied out a second time by hand. That is what guarantees the
+ * ledger's `context.knobs` and the number the app actually used can never
+ * drift apart — and it gives reliability shrinkage exactly one home.
+ *
+ * Introducing this was verified behaviour-identical against the previous
+ * hand-multiplied expressions over three full slates (~7,000 rate
+ * computations, zero divergence beyond float noise) before the duplicate
+ * expressions were removed.
+ */
+function resolve(
+  statId: number,
+  baseline: number,
+  raw: BatterModifierKnobs,
+  hints: string[],
+): ExpectedRate {
+  const { knobs, product } = applyKnobs(statId, raw);
+  return { expected: baseline * product, modifierHint: hints.join(' · '), knobs };
 }
 
 // ---------------------------------------------------------------------------

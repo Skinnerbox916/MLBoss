@@ -8,6 +8,78 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — Modifier reliability given one home, and the park double-count fixed at the baseline
+
+Two changes that belong together: the first is the mechanism, the second is the first real use of it — and the second one turned out not to need it.
+
+### The pattern that forced this
+
+Read one at a time, the per-knob fit looked like a list of unrelated calibration misses. Read together it is one finding. Of the 28 knob coefficients the rate-basis fit produces, **25 sit below 1.00**, and the two biggest matchup dials are 7-for-7:
+
+| knob | coefficients across the seven stats | below 1.00 |
+|---|---|---|
+| opposing pitcher | .53 .36 .76 .41 .42 .77 .64 | 7 of 7 |
+| park | .58 .34 .42 .77 .75 .52 .37 | 7 of 7 |
+| platoon (pre-fix) | .73 .53 .81 1.03 .82 .48 .82 | 6 of 7 |
+| talent spread | .92 .96 .84 .67 .65 1.02 1.03 | 5 of 7 |
+
+Five independent bugs do not all point the same way. The engine is systematically over-confident, and the cause is structural: **every modifier takes a sourced effect size and applies it at full strength.** Those are estimates with error bars, measured on league-wide season totals and then used on one batter in tonight's posted lineup. Anything estimated and then used as a multiplier needs shrinking toward 1.0 in proportion to how much of it transfers — the same regression-toward-the-mean the engine already applies rigorously to player talent and never applied to itself.
+
+### `knobReliability.ts` — the mechanism
+
+Left alone, each knob grows a bespoke scaling table inside its own file and the same idea gets implemented three times, drifting. One home instead. Applied as `m ** r` rather than `1 + r·(m − 1)`, deliberately: `retro-knob-fit.ts` regresses on `log(knob)`, so its coefficient IS the exponent. Set a reliability to the fitted number and the next fit reads back 1.00 — the diagnostic's output becomes the engine's input rather than being hand-translated into a new constant each time.
+
+It also closed a latent correctness hole. Every case in `applyMatchupModifier` used to compute the expected rate by hand **and** separately record the same factors as `knobs` for the ledger — two parallel computations of one thing, so the record of what was applied could silently drift from what actually was, and the fit would be grading a fiction. Cases now declare their knobs and the rate is derived from them; `applyKnobs` is the only path. Verified behaviour-identical against the old expressions over three full slates (~7,000 rate computations, zero divergence) before the duplicates were deleted.
+
+Everything ships at 1.0. The mechanism landed behaviour-neutral on purpose; each fitted value is its own reviewable change with its own version bump.
+
+**Platoon deliberately does not use it.** Its multiplier blends a population table with the batter's own observed split, and those fit at very different reliabilities (0.6–1.25 against ~0.1–0.3). A knob-level factor applied to the blended result would wrongly rescue the weaker input. A knob whose inputs differ in reliability must be calibrated per input; one that resolves to a single computed multiplier belongs in the shared table.
+
+### Park was not a reliability problem at all
+
+The obvious next move was to give park its fitted 0.34–0.77 and call it done. That would have papered over the actual bug.
+
+Park's coefficients split by venue: **0.17–0.57 at home against 0.40–1.00 away.** A uniform over-application does not do that. A double-count does, and the arithmetic is exact — a season rate already contains the batter's own home park, so applying today's factor on top charges for it twice at home and carries the wrong park on the road. For a baseline exposed at share *f*, the predicted coefficients are ~0.5 home and ~1.0 away. R and RBI, the cleanest cases, came in at 0.57/0.50 and 0.96/1.00.
+
+Same class of bug that retired the pitcher velocity multiplier in 2026-05: a signal already present in the baseline, applied a second time on top.
+
+**The fix is `parkExposureFactor`** ([parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)) — divide the exposure back out before the day's factor goes on. Two details that matter:
+
+- The home share is **0.4897**, measured PA-weighted over 37,167 graded batter-days, not assumed at 0.5. Home teams bat slightly less; they skip the bottom of the ninth when leading.
+- It is weighted by `parkExposedShare`, which `blendedBaselineForCategory` now reports, because dividing the whole baseline would over-correct the blended categories.
+
+**It lives in L2, not in the shared L1 baseline, and that is deliberate.** The roster page's neutral-week projection *should* carry a player's home park — he will keep playing half his games there, so it belongs in his rest-of-season value. Only the day-level path, which then applies a specific park, needs the exposure removed first.
+
+### Which baselines are actually park-exposed — the part I got wrong first
+
+The first cut set K and BB to zero exposure on the grounds that they ride the Statcast talent path. That conflated the data SOURCE with the KIND of statistic. `xBA` / `xSLG` are park-neutral because they are built from exit velocity and launch angle, which know nothing about outfield walls. `kRate` / `bbRate` come off the same leaderboard but are plain counted rates, and counted rates carry whatever park they were counted in. Park factors move them more than they move overall offence: our own table spans 91–119 for BB and 90–117 for SO, against 92–112 overall.
+
+The ledger backed only half of that. The home/away gap is the direct diagnostic for a contaminated baseline:
+
+| stat | exposed share | gap before | gap after |
+|---|---|---|---|
+| RBI | 1 | 0.49 | **0.01** |
+| HR | 1 | 0.43 | **0.10** |
+| R | 1 | 0.39 | 0.21 |
+| TB | 0.4 | 0.42 | 0.30 |
+| H | 0.4 | 0.15 | 0.09 |
+| BB | 1 | 0.40 | 0.28 |
+| K | **0** | 0.05 | 0.05 |
+
+Gap closure scales with exposure, exactly as designed. BB is contaminated and closes. **K is not** — its gap was already 0.05, and correcting for a contamination that is not there opened it to 0.31. K's coefficient is uniformly ~0.5 on both sides instead, which is a factor applied twice too hard rather than one counted twice, and belongs in the reliability table.
+
+Likely mechanism, offered as hypothesis: a walk is largely a pitcher-approach outcome, and approach is exactly what park dimensions change — nibble in a bandbox, challenge in a cavern — so a batter's observed BB% absorbs his park. Strikeouts ride his own swing decisions and contact ability, which travel with him, and the SO park factor may mostly reflect which pitchers work there. Testable by comparing how much park moves pitcher versus batter K rates; not done.
+
+**Visible consequence:** a hitter from an extreme park is now marked down on the road (a Yankee Stadium bat's HR knob goes 1.000 → 0.907 in a neutral park) and up where his own park suppresses him (Oracle Park, 1.000 → 1.109). The engine previously did neither.
+
+Verify either half with `npx tsx scripts/retro-park-neutralize-check.ts`, which re-grades the stored cohort analytically — snapshots carry the applied knob, the batter's team and the home flag, so the corrected knob is recoverable without re-running the engine or writing a row.
+
+**Don't reintroduce:** (a) a per-knob scaling table inside an individual modifier's file — that is what `knobReliability.ts` exists to prevent; (b) a reliability value for park chosen before checking the home/away split, which would hide a double-count as a scaling miss; (c) the assumption that anything served by the Statcast leaderboard is park-neutral — only the expected stats are.
+
+**Still open:** residual over-application survives on every knob after the structural fix (most coefficients still below 1.0). That is the reliability table's actual job, and it should be re-fitted once the cohort is regenerated rather than read off the pre-fix numbers.
+
+---
+
 ## 2026-09 — Category regression priors were 4-9x too weak (and were never measured)
 
 The per-knob fit read the batter talent layer's spread as badly over-confident for some categories and fine for others: slope 1.02 for K and 1.03 for BB, where 1.00 is calibrated, against 0.92 for TB, 0.96 for H, 0.84 for HR, and 0.67 / 0.65 for R and RBI. That gradient is not random. It tracks exactly how much of each category's baseline comes from a single unmeasured constant.

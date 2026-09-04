@@ -239,11 +239,15 @@ const FULL_SAMPLE_PA = 400;
 
 export interface BlendedBaseline {
   /**
-   * How much of `rate` came from park-exposed actuals, 0-1. Statcast expected
-   * stats are computed from exit velocity and launch angle, which do not know
-   * about park dimensions, so they are park-neutral by construction; raw
-   * season rates are fully exposed. `parkExposureFactor` needs this to avoid
-   * over-correcting a blended baseline — see parkAdjustment.ts.
+   * How much of `rate` came from park-exposed actuals, 0-1.
+   *
+   * The line is EXPECTED vs OBSERVED, not which data source served it.
+   * xBA / xSLG are built from exit velocity and launch angle, which know
+   * nothing about park dimensions, so they are park-neutral by construction.
+   * Everything observed carries the park it was compiled in — including K%
+   * and BB%, which come off the same Statcast leaderboard but are plain
+   * counted rates. `parkExposureFactor` needs this to avoid over-correcting
+   * a blended baseline — see parkAdjustment.ts.
    */
   parkExposedShare: number;
   /** Bayesian-blended per-PA rate (or native rate for AVG). */
@@ -358,9 +362,29 @@ export function blendedBaselineForCategory(
 
   // Regressed-actual talent rates (K%/BB%) stand alone.
   if (talentRate !== null && !XSTAT_MODELED_CATS.has(statId)) {
-    // K / BB: a regressed actual RATE, not a park-exposed count — a strikeout
-    // is a strikeout in any park, so nothing to undo.
-    return { rate: talentRate, effectivePA: eff, parkExposedShare: 0 };
+    // K / BB ride the Statcast talent path but are NOT expected stats:
+    // `kRate` / `bbRate` are the player's OBSERVED rates regressed toward
+    // league, so structurally they should carry his home park like any other
+    // actual. Parks move both more than they move overall offence — our own
+    // factors span 91-119 for BB and 90-117 for SO against 92-112 overall.
+    //
+    // The ledger says only the walk half of that is true. The home/away gap
+    // in the fitted park coefficient is the direct diagnostic for a
+    // contaminated baseline, and it is 0.40 for BB (removing the exposure
+    // closes it to 0.28) but 0.05 for K — no contamination to remove, and
+    // correcting for it anyway opens the gap to 0.31. K's coefficient is
+    // instead uniformly ~0.5 on both sides, which is the signature of a
+    // factor applied about twice too hard rather than one counted twice;
+    // that belongs in knobReliability.ts.
+    //
+    // The likely mechanism, offered as hypothesis rather than fact: a walk is
+    // substantially a pitcher-approach outcome, and approach is what park
+    // dimensions change — nibble in a bandbox, challenge in a cavern — so a
+    // batter's observed BB% absorbs his park. Strikeouts ride his own swing
+    // decisions and contact ability, which travel with him, and the SO park
+    // factor may mostly reflect which pitchers work there. Testable by
+    // comparing how much park moves pitcher vs batter K rates; not yet done.
+    return { rate: talentRate, effectivePA: eff, parkExposedShare: statId === 18 ? 1 : 0 };
   }
 
   // Raw path: Bayesian blend of raw current + prior + league. Needed both

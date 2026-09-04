@@ -32,9 +32,11 @@ const STATS: [string, number][] = [
   ['tb', 23], ['h', 8], ['hr', 12], ['r', 7], ['rbi', 13], ['k', 21], ['bb', 18],
 ];
 /** What fraction of each baseline came from park-exposed actuals — mirrors
- *  `blendedBaselineForCategory`: Statcast-blended cats expose only their 40%
- *  actual side, K/BB ride a park-neutral rate, the rest are fully exposed. */
-const EXPOSED: Record<number, number> = { 3: 0.4, 8: 0.4, 23: 0.4, 21: 0, 18: 0, 12: 1, 7: 1, 13: 1 };
+ *  `blendedBaselineForCategory`: only xBA/xSLG are park-neutral by
+ *  construction, so the cats that blend them expose their 40% actual side and
+ *  everything else — K% and BB% included, they are observed rates — is fully
+ *  exposed. */
+const EXPOSED: Record<number, number> = { 3: 0.4, 8: 0.4, 23: 0.4, 21: 0, 18: 1, 12: 1, 7: 1, 13: 1 };
 const OTHER = ['pitcher', 'weather', 'order', 'platoon'];
 const f = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : '  — ');
 

@@ -18,7 +18,7 @@ The roster page strips that out: take the **current** roster, project its talent
 
 ## Matchup vacuum
 
-"Matchup vacuum" means each team's projection is computed against league-average opposition at neutral park, with each player getting their typical full-week PA / IP volume. **No this-week's schedule. No this-week's opponent SP. No this-week's lineup spot.**
+"Matchup vacuum" means each team's projection is computed against league-average opposition, with each player getting their typical full-week PA / IP volume. **No this-week's schedule. No this-week's opponent SP. No this-week's lineup spot. No weather.** The one context a batter keeps is his own home park, because that one belongs to him rather than to the schedule — see [Home park](#home-park).
 
 The output is a single per-cat scalar per team representing "in a typical neutral week, this roster produces X." Stable until the roster changes — rankings don't drift just because Wednesday becomes Thursday.
 
@@ -79,17 +79,33 @@ Each team's neutral-week projection is built from:
 ### Saves
 
 SV has no rating-engine window (save chances are role-driven, not per-PA skill), so the neutral-week projection models it directly: `observedSavesPerAppearance(seasonSaves, seasonGames) × appearancesPerWeek`, relievers only. The save-conversion helper lives in [`pitching/talent.ts`](../src/lib/pitching/talent.ts) beside the other observed role signals and is shared with the points rate vector, so both engines agree on who's a closer. Non-closers (below `SAVE_CLOSER_THRESHOLD` season saves) project 0 — an honest under-count for just-anointed closers until saves accrue; refine with save-opportunity data (`statSplits` carries it team-level) if that bites. Starters contribute no SV entry at all, so an SP-only roster aggregates to 0 projected saves and the SV tile lands where it should for a saves-punting team: bottom rank, auto-concede candidate. HLD is still unmodeled.
-- **Neutral context** — league-average opposition, neutral park. No park factor, no opp SP adjustment, no weather. Those belong on the day/week pages.
+- **Neutral context** — league-average opposition. No opp SP adjustment, no weather, no venue for the game being modelled. Those belong on the day/week pages. Batters keep their own home park at the season share (see below); pitchers are still fully park-neutral.
 - **IL players are included.** The premise: an IL player will be back to weekly production (or the team would've dropped them). Excluding them asymmetrically distorts the league forecast — a Full count without Acuña doesn't represent Full count's real SB strength. IL players are projected at full-time volume same as healthy hitters; the starting-lineup optimizer still caps each team at the league's daily capacity, so low-talent stash candidates don't displace healthy starters.
 
 What the projection deliberately does *not* consume:
 
 - Today's, this week's, or any specific schedule
-- Park, weather, opponent SP
+- The venue of any particular game, weather, opponent SP
 - `analyzeMatchup` (that's L5)
 - YTD cumulative stats as a primary input (they feed the talent model as Bayesian evidence, but it's the talent estimate that gets used downstream — not the raw counts)
 
 The result is a per-team per-cat vector that depends **only on the rosters and the scored-cat set**. Add/drop activity is the only thing that moves it. Caching reflects that.
+
+### Home park
+
+Every other context the page refuses is a fact about the *schedule*: who you face, where you travel, what the wind does on Thursday. A batter's home park is not. Own him for a season and he banks roughly half his plate appearances in one specific building — 0.4897 of them, PA-weighted, measured over the graded retro cohort (`HOME_PA_SHARE`). Two hitters with identical talent are not identical assets when one of them hits half his balls at Coors. Refusing that made the vacuum *less* accurate about roster construction, not more disciplined.
+
+So the batter side runs with `parkHorizon: 'season'` ([`matchupContext.ts`](../src/lib/mlb/matchupContext.ts)): `game.park` is ignored entirely, and [`seasonHomeParkAdjustment`](../src/lib/mlb/parkAdjustment.ts) applies the batter's own park at exactly one `HOME_PA_SHARE` dose. The pitcher side is untouched and still fully park-neutral.
+
+**Most categories don't move, and that is the point.** A season rate already *contains* one dose of the batter's home park — that is the double-count [`parkExposureFactor`](../src/lib/mlb/parkAdjustment.ts) exists to divide back out of a game forecast. Here the target and what the baseline already carries are the same quantity, so the multiplier is the top-up between them:
+
+| Baseline source | `parkExposedShare` | What moves |
+|---|---|---|
+| Raw season rates (R, RBI, HR, SB, BB) | 1 | Nothing — the dose is already in there |
+| Statcast expected stats blended with actuals (AVG, H, TB) | 1 − `XSTAT_BLEND_WEIGHT` | The expected side, which is built from exit velocity and launch angle and knows nothing about park dimensions |
+| Regressed Statcast rates (K) | 0 | The whole dose |
+
+**Known limitation:** the "already exposed" share is credited to the batter's *current* park. A hitter traded mid-season carries his old park in his raw baseline and gets no correction toward his new one, so he is mispriced for exactly as long as the old rates dominate the blend. Fixing it needs per-player park history, which we don't compile. The same approximation is already in the game path.
 
 ### Volume calibration constants
 

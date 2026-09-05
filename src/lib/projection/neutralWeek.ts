@@ -15,7 +15,13 @@
  *   - Per-PA / per-IP rates come from the rating engines run against
  *     a neutral matchup context (`buildNeutralGame`). The engines
  *     normally take a schedule-aware context; we feed them a synthetic
- *     neutral one so park / opp SP / weather collapse to 1.0.
+ *     neutral one so opp SP / weather collapse to 1.0.
+ *   - Batters are the one exception to "no context": the context is
+ *     stamped `parkHorizon: 'season'`, which prices the batter's OWN home
+ *     park at the half-season share he will actually bank there. That is
+ *     a fact about the player you own, not about this week's schedule, so
+ *     it belongs in the vacuum — see docs/roster-strategy.md#home-park.
+ *     The pitcher side is still fully park-neutral.
  *   - Output shape matches `projectBatterTeam` / `projectPitcherTeam`
  *     so `computeLeagueForecast` consumes it unchanged.
  */
@@ -148,7 +154,7 @@ function projectOneBatterNeutral(
   player: ActiveBatter,
   deps: NeutralBatterDeps,
   reusableContext: MatchupContext,
-): { byCat: Map<number, PerCategoryProjection>; ratingScore: number } | null {
+): { byCat: Map<number, PerCategoryProjection>; ratingScore: number; weeklyPA: number } | null {
   const stats = deps.statsByMlbId.get(player.mlbId);
   if (!stats) return null;
 
@@ -166,10 +172,17 @@ function projectOneBatterNeutral(
 
   const spot = deps.lineupSpots.get(player.mlbId) ?? null;
 
-  // Mutate the reusable context's asBatter for this player. Cheaper than
-  // rebuilding the whole context (which clones a neutral park each call).
+  // Shallow-clone the reusable context for this player. Cheaper than
+  // rebuilding the whole thing (which clones a neutral park each call).
+  // The home team carries the batter's real franchise so the season park
+  // horizon can find his home park; everything else about the game — the
+  // opposing team, the park at `game.park`, the weather — stays neutral.
   const context: MatchupContext = {
     ...reusableContext,
+    game: {
+      ...reusableContext.game,
+      homeTeam: { ...reusableContext.game.homeTeam, abbreviation: player.teamAbbr },
+    },
     asBatter: { hand: stats.bats ?? null, battingOrder: spot },
   };
 
@@ -187,7 +200,7 @@ function projectOneBatterNeutral(
     const count = cat.expected * denom;
     accumulate(byCat, cat.statId, count, denom);
   }
-  return { byCat, ratingScore: rating.score };
+  return { byCat, ratingScore: rating.score, weeklyPA };
 }
 
 /**
@@ -201,9 +214,9 @@ function projectOneBatterNeutral(
  * with `byCategory` populated and `weeklyScore` carrying the neutral-
  * context rating score (0-100) — the canonical "how good is this bat in
  * a vacuum" scalar, used by the forecast route's starting-lineup
- * assignment. `perDay`, `weeklyPA`, and `expectedGames` are
- * placeholder/empty since this layer doesn't project per-day or apply
- * schedule.
+ * assignment. `weeklyPA` is the typical-week volume every count above was
+ * built from. `perDay` and `expectedGames` are empty since this layer
+ * doesn't project per-day or apply schedule.
  */
 export function projectBatterNeutral(
   player: ActiveBatter,
@@ -219,7 +232,7 @@ export function projectBatterNeutral(
     teamAbbr: player.teamAbbr,
     perDay: [],
     weeklyScore: result.ratingScore,
-    weeklyPA: 0,
+    weeklyPA: result.weeklyPA,
     byCategory: result.byCat,
     expectedGames: 0,
   };
@@ -234,6 +247,9 @@ export function buildNeutralBatterContext(): MatchupContext {
     opposingPitcher: null,
     asPitcher: null,
     asBatter: { hand: null, battingOrder: null },
+    // Roster construction, not a game: the batter's own park is priced at
+    // the season share, today's park is ignored. See MatchupContext.
+    parkHorizon: 'season',
   };
 }
 

@@ -103,10 +103,11 @@ export async function GET(
     const myRoster = await getTeamRoster(user.id, teamKey);
     const rosterFp = hashCode(myRoster.map(p => p.player_key).sort().join(','));
 
-    // v3: pitcher side gained relievers (previously ghosts on the
-    // categories path) + modeled SV. v2: per-player value lines.
+    // v4: batter lines carry projected weekly PA and the batter's own home
+    // park at the season share. v3: pitcher side gained relievers (previously
+    // ghosts on the categories path) + modeled SV. v2: per-player value lines.
     const aggregateBundle = await withCache(
-      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:v3:${leagueKey}:${rosterFp}`,
+      `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:league-forecast-aggregates:v4:${leagueKey}:${rosterFp}`,
       CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong,
       () => computeAggregateBundle(user.id, leagueKey),
     );
@@ -277,7 +278,7 @@ async function computeAggregateBundle(
         expectedDenom: agg.expectedDenom * ptf,
       });
     }
-    return { ...proj, byCategory };
+    return { ...proj, byCategory, weeklyPA: proj.weeklyPA * ptf };
   };
 
   const serialize = (proj: PlayerProjection): PlayerCatLine => {
@@ -285,7 +286,7 @@ async function computeAggregateBundle(
     for (const [statId, agg] of proj.byCategory) {
       byCategory[statId] = { c: agg.expectedCount, d: agg.expectedDenom };
     }
-    return { name: proj.name, teamAbbr: proj.teamAbbr, byCategory };
+    return { name: proj.name, teamAbbr: proj.teamAbbr, pa: proj.weeklyPA, byCategory };
   };
 
   const byTeam: Record<string, PlayerCatLine[]> = {};

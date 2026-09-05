@@ -465,3 +465,52 @@ export function parkExposureFactor(input: {
   if (!home.available) return 1;
   return 1 + exposedShare * HOME_PA_SHARE * (home.multiplier - 1);
 }
+
+/**
+ * Season-horizon park multiplier: what a batter's own home park is worth
+ * across a whole season of owning him, rather than in one game.
+ *
+ * A rostered batter banks roughly half his plate appearances in one park and
+ * the other half spread across the league, which averages to neutral. So the
+ * park content of his season line is exactly one `HOME_PA_SHARE` dose of his
+ * home park — `parkExposureFactor` at full exposure. That is a property of
+ * WHO HE IS, not of who he plays this week, which is why the roster page's
+ * matchup vacuum admits it while still refusing today's opponent, today's
+ * park and today's weather.
+ *
+ * The baseline already carries `baselineExposedShare` of that dose (see
+ * `parkExposureFactor`), so the multiplier is the top-up between the two:
+ * a fully park-exposed baseline needs nothing (returns 1.0), a Statcast
+ * expected-stat baseline is park-neutral by construction and needs the whole
+ * half-season, and a blend needs the difference.
+ *
+ * Not a game-day path — `getParkAdjustment` stays the only answer to "what is
+ * tonight's park worth".
+ */
+export function seasonHomeParkAdjustment(input: {
+  homePark: ParkData | null;
+  /** Yahoo stat_id. Omit for the composite factor. */
+  statId?: number;
+  batterHand?: BatterHand;
+  /** How much of the baseline is already park-exposed, 0-1. From
+   *  `blendedBaselineForCategory().parkExposedShare`. */
+  baselineExposedShare: number;
+}): ParkAdjustment {
+  const { homePark, statId, batterHand, baselineExposedShare } = input;
+  if (!homePark) return NEUTRAL;
+  const target = parkExposureFactor({ homePark, statId, batterHand, exposedShare: 1 });
+  const already = parkExposureFactor({
+    homePark,
+    statId,
+    batterHand,
+    exposedShare: baselineExposedShare,
+  });
+  if (already <= 0) return NEUTRAL;
+  const multiplier = target / already;
+  const pct = Math.round((multiplier - 1) * 100);
+  return {
+    multiplier,
+    hint: pct === 0 ? '' : `${homePark.teamAbbr} home ${pct > 0 ? '+' : ''}${pct}%`,
+    available: true,
+  };
+}

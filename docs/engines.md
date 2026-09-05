@@ -58,7 +58,7 @@ Talent × game context. Per-PA and per-game adjustments.
 - Reliever week forecast (`buildReliefWeekForecast`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts) — per-week IP/K/BB/HR rollup from `PitcherTalent.role === 'reliever'` signals (`appearancesPerWeek`, `ipPerAppearance`). No per-opponent context; the reliever-appearance mix over a week averages neutral.
 - Batter per-PA forecast (`buildBatterForecast`) — [src/lib/mlb/batterForecast.ts](../src/lib/mlb/batterForecast.ts)
 - BB compounding penalty (`bbCompoundingPenalty`) — [src/lib/pitching/forecast.ts](../src/lib/pitching/forecast.ts)
-- Park adjustment (`getParkAdjustment`) — [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)
+- Park adjustment (`getParkAdjustment`, `parkExposureFactor`, `seasonHomeParkAdjustment`) — [src/lib/mlb/parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts) — one primitive per horizon: tonight's venue, how much of a season baseline the batter's own park already accounts for, and (roster construction only) that park priced across a whole season of owning him
 - Weather score (`getWeatherScore`) — [src/lib/mlb/analysis.ts](../src/lib/mlb/analysis.ts)
 - Batter platoon, per-category (`platoonFactor`) — [src/lib/mlb/platoon.ts](../src/lib/mlb/platoon.ts) — Bayesian regression of the batter's own vs-hand split toward a population component target, weighted by PA on that side; applied per-cat inside `buildBatterForecast`, not a composite multiplier. Replaced the OPS-based composite `getPlatoonAdjustedTalent` (2026-05).
 - Matchup context resolver — [src/lib/mlb/matchupContext.ts](../src/lib/mlb/matchupContext.ts)
@@ -97,7 +97,7 @@ Standings → category strategy. The bridge layer (reads from L4, writes `catego
 
 ROS (rest-of-season) roster construction in a matchup vacuum — talent-only, neutral context, league-wide comparison. Does **not** consume `analyzeMatchup` (that's L5 weekly thinking) and does **not** depend on this week's schedule.
 
-- Neutral-week team projection (`projectBatterTeamNeutral`, `projectPitcherTeamNeutral`) — [src/lib/projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) — pitcher side covers SP and RP, including SV from observed save pace (see [roster-strategy.md#saves](./roster-strategy.md#saves))
+- Neutral-week team projection (`projectBatterTeamNeutral`, `projectPitcherTeamNeutral`) — [src/lib/projection/neutralWeek.ts](../src/lib/projection/neutralWeek.ts) — pitcher side covers SP and RP, including SV from observed save pace (see [roster-strategy.md#saves](./roster-strategy.md#saves)). Batters carry their own home park at the season share — the only context the vacuum admits, because it belongs to the player and not the schedule (see [roster-strategy.md#home-park](./roster-strategy.md#home-park))
 - League forecast (`computeLeagueForecast`) — [src/lib/league/forecast.ts](../src/lib/league/forecast.ts)
 - Replacement Upgrade Per Move (`computeRupm`) — [src/lib/league/rupm.ts](../src/lib/league/rupm.ts)
 - Manager-engagement multiplier (`computeTeamEngagements`) — [src/lib/league/engagement.ts](../src/lib/league/engagement.ts)

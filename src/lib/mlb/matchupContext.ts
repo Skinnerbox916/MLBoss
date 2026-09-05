@@ -43,6 +43,22 @@ export interface MatchupContext {
   opposingPitcher: ProbablePitcher | null;
   asPitcher: AsPitcherContext | null;
   asBatter: AsBatterContext | null;
+  /**
+   * Which park question the batter forecast is answering.
+   *
+   * `'game'` (default) — tonight's park at `game.park`, with the batter's
+   * home-park exposure divided back out of the baseline first.
+   *
+   * `'season'` — no single game. The batter is priced over a whole season of
+   * being owned, which is half his own home park and half a league-average
+   * road mix, so `game.park` is ignored entirely and his own park is applied
+   * at the season share. Set by the L6 neutral-week projection; see
+   * `seasonHomeParkAdjustment` and docs/roster-strategy.md#home-park.
+   *
+   * The batter's franchise is read from the own-side team of `game` (the
+   * home team when `isHome`), the same lookup both horizons use.
+   */
+  parkHorizon?: 'game' | 'season';
 }
 
 /**

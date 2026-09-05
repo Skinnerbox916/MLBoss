@@ -19,8 +19,14 @@ import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { type MatchupContext, getWeatherScore } from './analysis';
 import { platoonFactor, facingHandFrom } from './platoon';
 import { blendedBaselineForCategory, supportsStatId } from './categoryBaselines';
-import { getParkAdjustment, parkExposureFactor } from './parkAdjustment';
+import {
+  getParkAdjustment,
+  parkExposureFactor,
+  seasonHomeParkAdjustment,
+  type ParkAdjustment,
+} from './parkAdjustment';
 import { getParkByTeam } from './parks';
+import { normalizeTeamAbbr } from './teamAbbr';
 import { applyKnobs } from './knobReliability';
 import { getLeagueSbAllowedPerIp } from './leagueRates';
 import {
@@ -307,36 +313,52 @@ function applyMatchupModifier(
   const oppRp = oppStaffSplits?.rp ?? null;
   const spShare = computeSpShare(sp, oppStaffSplits);
 
-  // Shared `getParkAdjustment` call for any stat with park signal — the
-  // primitive picks the right field by `statId`, resolves switch hitters
-  // against `pitcherThrows`, and applies the wind term in wind-sensitive
-  // parks. Cases below just use it.
-  const parkAdjRaw = getParkAdjustment({
-    park: ctx?.game.park ?? null,
-    statId,
-    batterHand: bats,
-    pitcherThrows: sp?.throws ?? null,
-    weather: ctx?.game.weather ?? null,
-  });
-
-  // The baseline is not park-neutral: roughly half of it was accumulated in
-  // this batter's own home park. Divide that exposure back out before
-  // applying today's park, or the factor is charged twice at home and the
-  // wrong park is carried on the road. See parkAdjustment.ts for the evidence
-  // and docs/history.md for the home/away signature that exposed it. The
-  // consequence worth knowing: a hitter from an extreme park is now marked
-  // DOWN on the road, which the engine previously never did.
+  // The batter's own franchise, and so his home park. Normalised because the
+  // schedule feed says AZ where the park table says ARI.
   const ownTeam = ctx ? (ctx.isHome ? ctx.game.homeTeam : ctx.game.awayTeam) : null;
-  const exposure = parkExposureFactor({
-    homePark: ownTeam ? getParkByTeam(ownTeam.abbreviation) ?? null : null,
-    statId,
-    batterHand: bats,
-    exposedShare: parkExposedShare,
-  });
-  const parkAdj = {
-    ...parkAdjRaw,
-    multiplier: exposure > 0 ? parkAdjRaw.multiplier / exposure : parkAdjRaw.multiplier,
-  };
+  const homePark = ownTeam
+    ? getParkByTeam(normalizeTeamAbbr(ownTeam.abbreviation)) ?? null
+    : null;
+
+  // Two park horizons (see MatchupContext.parkHorizon):
+  //
+  //  - 'season' — no game to price. The batter banks half a season in his own
+  //    park, so that is the whole park term. Roster construction only.
+  //  - 'game' (default) — tonight's park, with the baseline's own home-park
+  //    exposure divided back out first. The baseline is not park-neutral:
+  //    roughly half of it was accumulated in one park, and applying today's
+  //    factor on top charges for it twice at home and carries the wrong park
+  //    on the road. See parkAdjustment.ts for the evidence and docs/history.md
+  //    for the home/away signature that exposed it. The consequence worth
+  //    knowing: a hitter from an extreme park is now marked DOWN on the road,
+  //    which the engine previously never did.
+  let parkAdj: ParkAdjustment;
+  if (ctx?.parkHorizon === 'season') {
+    parkAdj = seasonHomeParkAdjustment({
+      homePark,
+      statId,
+      batterHand: bats,
+      baselineExposedShare: parkExposedShare,
+    });
+  } else {
+    const parkAdjRaw = getParkAdjustment({
+      park: ctx?.game.park ?? null,
+      statId,
+      batterHand: bats,
+      pitcherThrows: sp?.throws ?? null,
+      weather: ctx?.game.weather ?? null,
+    });
+    const exposure = parkExposureFactor({
+      homePark,
+      statId,
+      batterHand: bats,
+      exposedShare: parkExposedShare,
+    });
+    parkAdj = {
+      ...parkAdjRaw,
+      multiplier: exposure > 0 ? parkAdjRaw.multiplier / exposure : parkAdjRaw.multiplier,
+    };
+  }
 
   switch (statId) {
     case 3: { // AVG — log5 blend (SP BAA, bullpen BAA) + park.

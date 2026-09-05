@@ -8,6 +8,20 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — The roster page's matchup vacuum admits one context: the batter's own home park
+
+**What we did.** The L6 neutral-week projection ([neutralWeek.ts](../src/lib/projection/neutralWeek.ts)) ran every batter through a synthetic neutral game so park, opposing SP and weather all collapsed to 1.0. [roster-strategy.md](./roster-strategy.md) stated it as doctrine: *"Neutral context — league-average opposition, neutral park. No park factor... Those belong on the day/week pages."*
+
+**Why it was wrong.** The doctrine is right about *why* — the page answers "who should I own for the rest of the season," so anything that changes between Wednesday and Thursday is noise. But home park is not that kind of context. Own a batter for a season and he banks 0.4897 of his plate appearances (PA-weighted, measured) in one specific building. That is a property of the asset, the same way his role share is. Two hitters with identical talent are not identical assets when one of them plays half his games at Coors, and the page was pricing them as if they were.
+
+**What replaced it.** `MatchupContext.parkHorizon`: `'game'` (default, unchanged) applies tonight's venue after dividing the baseline's own home-park exposure back out; `'season'` ignores `game.park` entirely and applies the batter's own park at exactly one `HOME_PA_SHARE` dose via `seasonHomeParkAdjustment` ([parkAdjustment.ts](../src/lib/mlb/parkAdjustment.ts)). The neutral-week batter path sets `'season'`; the pitcher path is untouched and still fully park-neutral. The "Your Batters" / "Upgrade Targets" tables were switched off YTD season totals onto the projected weekly line at the same time, so the columns and the Score they sit beside now read from one substrate.
+
+**The surprise worth recording:** almost nothing moved. A raw season rate already carries one dose of the batter's own park — that is precisely the double-count the [2026-09 baseline neutralisation](#2026-09--modifier-reliability-given-one-home-and-the-park-double-count-fixed-at-the-baseline) divides out of a game forecast — so the correct top-up for R / RBI / HR / SB / BB is exactly zero. The change lands only where the baseline is park-neutral by construction: the Statcast expected-stat side of AVG / H / TB, and all of K. If a future reader "fixes" the vacuum by multiplying the whole line by a park factor, they will have reintroduced the double-count on the categories users watch most.
+
+**Don't reintroduce:** a blanket park multiplier on a season projection, or the reverse — stripping the batter's park back out of L6 on the grounds that the vacuum forbids context. The rule is not "no context," it is *no context that belongs to the schedule rather than to the player*.
+
+---
+
 ## 2026-09 — Modifier reliability given one home, and the park double-count fixed at the baseline
 
 Two changes that belong together: the first is the mechanism, the second is the first real use of it — and the second one turned out not to need it.
@@ -114,6 +128,32 @@ That is a claim about prediction, and it had never been tested against a predict
 **The consequence to expect, and it is the intended one:** players look more alike than they did, and a hot or cold stretch moves a projection less. An above-average run scorer's R/PA projection comes down roughly 8%, a poor one's goes up roughly 12%, and the spread across the league compresses about 40% — which is what the 0.67 talent slope was asking for.
 
 **Don't reintroduce:** a hand-chosen regression prior. The horizon this app plans over is exactly the horizon the fit scores, so the constant is measurable and there is no reason to guess it. Re-fit with `npx tsx scripts/retro-talent-shrinkage-fit.ts` when a second season is available; treat any category whose fitted N drifts far from the value here as that category's run environment having changed.
+
+---
+
+## 2026-09 — Retro rows are reconstructions: the ledger's first-write-wins rule stops at the `retro-` prefix
+
+**What we did.** Every `forecast_snapshots` row obeyed one contract: immutable, first-write-wins on `(game_date, engine, mlb_id, league_key, lead_days)`, `ON CONFLICT DO NOTHING`. The retro engines (`retro-pitcher-start`, `retro-batter-day`, added 2026-09-02) inherited it because they share the table and the grading join.
+
+**Why it was wrong.** The contract exists because a live snapshot is an *observation* whose inputs are gone by the next morning. A retro row is a *reconstruction* from inputs that are all still here — the `statcast_events` corpus (itself documented as a rebuildable bulk dataset, not ledger data), the MLB game logs, the engine code. Under the shared contract, re-running a captured date wrote zero rows, so (a) a change to what capture *records* could never reach the retro cohort — the pitcher per-stat knob attribution added on 2026-09-04 would have applied only to dates never captured — and (b) the whole 41k-row cohort stayed stamped `2026.07.25.2` three model versions after the shipped batter fixes, which is exactly the version-staleness the manifest cannot see through.
+
+**What replaced it.** `insertSnapshots` splits on `isRetroEngine`: live rows keep `DO NOTHING`; retro rows `DO UPDATE` — replace `predicted` / `context` / `model_version` / `captured_at` under the same identity. `retroCaptureDay` then sweeps that date's rows for the engine it ran that the run did not touch, only when it wrote at least one row. `scripts/retro-capture.ts <from> [to] [pitchers|batters]` can regenerate one side at a time. No schema change; no `MODEL_VERSION` bump (recording ≠ predicting). Rationale and the rejected `model_version`-in-identity alternative: [forecast-verification.md](./forecast-verification.md#retro-rows-are-reconstructions); storage-leg rubric: [data-architecture.md](./data-architecture.md#the-three-storage-legs).
+
+**Guard rails that stay.** Every delete in the retro path is scoped to a `retro-*` engine key by the type system, and `player_game_actuals` is never touched. Back up `forecast_snapshots` before a mass regeneration anyway (`pg_dump -t forecast_snapshots`). Verify a regeneration is output-neutral on two or three dates (compare `predicted` before and after) before running a season.
+
+**Don't reintroduce:** first-write-wins for retro engines, or a per-version copy of retro rows. The first pins the cohort to whatever build happened to run first; the second makes every reader filter-or-double-count for reconstructions nobody needs.
+
+---
+
+## 2026-09 — Pitcher per-stat knob attribution; the `mults` fit was unreadable by construction
+
+**What we did.** Pitcher snapshots carried `context.mults`: the six breakdown-UI `ContextMultiplier` scalars (`opp`, `park`, `weather`, `platoon`, `velocity`, `bullpen`), one number per knob for the whole start. `scripts/retro-knob-fit.ts` fell back to them as if each applied to every stat alike, and returned `opp` and `platoon` coefficients with standard errors of ±10 to ±40.
+
+**Why it was wrong, in two layers.** The obvious one: one scalar per knob leaves the columns nothing to vary against per stat. The one that per-stat stamping alone would *not* have fixed: `platoon` and `opp` are both linear in the same OPS-vs-hand scalar (slopes 0.4 and 0.6), so their log-multipliers correlate at 0.999 over 4,166 starts — no amount of data separates them. And `platoon`, `velocity` and `bullpen` never enter a graded stat at all (platoon scales only the L3 composite; velocity has been a fixed 1.0 since 2026-05; bullpen prices W in run units through `wParts`), so `pred ÷ Π mults` was not the talent forecast either — the "neutral" the fit regressed on was wrong. The `bullpen` coefficient that looked "usable" was a proxy for team quality, not a knob grade.
+
+**What replaced it.** `PitcherModifierKnobs` on `GameForecast` ([pitching/forecast.ts](../src/lib/pitching/forecast.ts)): the per-PA chain is factored into `rateChain`, run once fully loaded (that call *is* the forecast — verified bit-identical on three dates) and three more times with the stages switched on cumulatively (talent → opp → park → weather); each knob is the stat's rate after its stage over the rate before, so the product is exactly matchup ÷ talent, cross-terms included. Stamped as `context.knobs.<knob>.<stat>` + `context.mods.<stat>` in the batter shape; `mults` is kept for the scorecard slices and older rows. The fit reads `knobs` exclusively when present, uses batters faced as pitcher exposure, and fits the two volume stats (`pa`, `ip`) on the count basis since they are the exposure. Results: [forecast-verification.md](./forecast-verification.md#per-knob-calibration-fit-2026-09-full-season-retro-cohort).
+
+**Don't reintroduce:** grading a breakdown-UI multiplier as if it were an applied one — check that a knob actually enters the predicted stat before fitting a coefficient to it — or stamping a knob that is a re-read of another knob's input.
 
 ---
 

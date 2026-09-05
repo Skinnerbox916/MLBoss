@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.09.03.4';
+export const MODEL_VERSION = '2026.09.05';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -177,6 +177,26 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'batter-week', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'score'] },
       { engine: 'points-batter-day', stats: '*' },
       { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'score'] },
+    ],
+  },
+  {
+    version: '2026.09.05',
+    date: '2026-09-05',
+    summary:
+      'Two park changes. (1) The neutral-week batter projection behind the roster page now prices each ' +
+      'batter\'s OWN home park at the half-season share he actually banks there (parkHorizon: \'season\'), ' +
+      'where before it was fully park-neutral. This is the same HOME_PA_SHARE dose the 2026.09.03.4 ' +
+      'neutralisation divides out of a game forecast, applied in the one place it belongs to the player ' +
+      'rather than the schedule: who you OWN for a season. Only the park-neutral side of a baseline moves ' +
+      '— a fully park-exposed baseline already carries the dose and is unchanged, so the shift lands on ' +
+      'AVG/H/TB (60% Statcast) and K (fully Statcast), and vanishes for R/RBI/SB. (2) Team-abbreviation ' +
+      'normalisation on the home-park lookup: the schedule feed says AZ where the park table says ARI, so ' +
+      'every Arizona hitter was silently skipping the baseline neutralisation on the game path too.',
+    touched: [
+      { engine: 'batter-week', stats: '*' },
+      { engine: 'batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'k', 'bb', 'score'] },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'k', 'bb', 'score'] },
     ],
   },
 ];

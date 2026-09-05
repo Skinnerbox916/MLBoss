@@ -336,6 +336,9 @@ export function computeCategoryLeverage(
 export interface PlayerCatLine {
   name: string;
   teamAbbr: string;
+  /** Projected plate appearances in a typical week, role share applied —
+   *  the volume every `c` below was built from. */
+  pa: number;
   byCategory: Record<number, { c: number; d: number }>;
 }
 

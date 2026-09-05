@@ -14,17 +14,14 @@ import Tabs from '@/components/ui/Tabs';
 import { Heading, Text } from '@/components/typography';
 import { useFantasyContext } from '@/lib/hooks/useFantasyContext';
 import { useRoster } from '@/lib/hooks/useRoster';
-import { useRosterStats } from '@/lib/hooks/useRosterStats';
 import { useLeagueCategories } from '@/lib/hooks/useLeagueCategories';
 import { useAvailableBatters } from '@/lib/hooks/useAvailableBatters';
 import { useAvailablePitchers } from '@/lib/hooks/useAvailablePitchers';
-import { useFreeAgentStats } from '@/lib/hooks/useFreeAgentStats';
 import { useRosterPositions } from '@/lib/hooks/useRosterPositions';
 import { usePlayerMarketSignals } from '@/lib/hooks/usePlayerMarketSignals';
 import type { RosterEntry, FreeAgentPlayer } from '@/lib/yahoo-fantasy-api';
 import { formatStatValue } from '@/lib/formatStat';
-import type { BatterSeasonStats, PlayerStatLine } from '@/lib/mlb/types';
-import { fromBatterSeasonStats } from '@/lib/mlb/adapters';
+import { supportsStatId } from '@/lib/mlb/categoryBaselines';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import { isPitcher, getRowStatus } from '@/components/lineup/types';
 import {
@@ -65,48 +62,43 @@ import {
   type CategoryImpact,
   type CatRole,
 } from '@/lib/league/swapStrategy';
+import { isRatioCat } from '@/lib/league/forecast';
 import type { LeagueForecast, ForecastEntry } from '@/lib/league/forecast';
 
 // ---------------------------------------------------------------------------
-// Stat mapping: league stat_id → PlayerStatLine accessor
+// Expected production
 // ---------------------------------------------------------------------------
-// Pulls from `line.current` (the season the player's primary counting
-// data came from — this is `season - 1` for the prior-year fallback case
-// where the IL'd player has no current-year line). Falls back to `prior`
-// only when current is missing entirely.
+//
+// Every number in the batter tables is a forward projection, not a season
+// log: the neutral-week line the L6 league forecast already runs on
+// (`PlayerCatLine` — talent × role share × the batter's own home park, no
+// opponent and no schedule). Same substrate as the Score column, so the
+// columns and the ranking can never disagree.
 
-type StatGetter = (line: PlayerStatLine) => number | null;
+type LineLookup = (name: string, team: string) => PlayerCatLine | undefined;
 
-const pickCounting = (line: PlayerStatLine, field: keyof NonNullable<PlayerStatLine['current']>) => {
-  const counting = line.current ?? line.prior;
-  if (!counting) return null;
-  const value = counting[field];
-  return typeof value === 'number' ? value : null;
-};
-
-const BATTER_STAT_MAP: Record<number, StatGetter> = {
-  3:  line => pickCounting(line, 'avg'),
-  7:  line => pickCounting(line, 'runs'),
-  8:  line => pickCounting(line, 'hits'),
-  12: line => pickCounting(line, 'hr'),
-  13: line => pickCounting(line, 'rbi'),
-  16: line => pickCounting(line, 'sb'),
-  18: line => pickCounting(line, 'walks'),
-  21: line => pickCounting(line, 'strikeouts'),
-  23: line => pickCounting(line, 'totalBases'),
-};
-
-function getStatValue(
-  input: PlayerStatLine | BatterSeasonStats,
-  statId: number,
+/**
+ * A category's projected weekly value. Counting cats are the expected
+ * count; ratio cats (AVG) divide by their own denominator.
+ */
+function expectedValue(
+  line: PlayerCatLine | undefined,
+  cat: EnrichedLeagueStatCategory,
 ): number | null {
-  const getter = BATTER_STAT_MAP[statId];
-  if (!getter) return null;
-  // Migration shim: existing call sites pass BatterSeasonStats; the map
-  // itself reads from PlayerStatLine. Adapt on the way in until Phase 4
-  // moves the producers (hooks, API route) over to the new shape.
-  const line = 'identity' in input ? input : fromBatterSeasonStats(input);
-  return getter(line);
+  const agg = line?.byCategory[cat.stat_id];
+  if (!agg) return null;
+  if (isRatioCat(cat)) return agg.d > 0 ? agg.c / agg.d : null;
+  return agg.c;
+}
+
+/** Ratio cats keep their native formatting (.278); weekly counts always
+ *  carry a decimal, so a projection never masquerades as a season total. */
+function formatExpected(
+  value: number | null,
+  cat: EnrichedLeagueStatCategory,
+): string {
+  if (value === null) return '—';
+  return isRatioCat(cat) ? formatStatValue(value, cat.display_name) : value.toFixed(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -179,13 +171,13 @@ function DepthChart({
 // Player stat cells
 // ---------------------------------------------------------------------------
 
-function StatCell({ value, name, contested, conceded }: {
+function StatCell({ value, cat, contested, conceded }: {
   value: number | null;
-  name: string;
+  cat: EnrichedLeagueStatCategory;
   contested: boolean;
   conceded: boolean;
 }) {
-  const formatted = formatStatValue(value, name);
+  const formatted = formatExpected(value, cat);
   const color = contested
     ? 'text-success font-semibold'
     : conceded
@@ -199,24 +191,25 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge color={isIL ? 'error' : 'accent'}>{status}</Badge>;
 }
 
-// PA acts as a sample-size cue next to the counting stats. Current-season
-// counting totals below ~30 PA are thin enough that the category-pill Score
-// (Bayesian blended vs. prior-year + league mean) is doing most of the work,
-// so we dim those rows' PA to telegraph "don't read the raw numbers straight".
-const THIN_SAMPLE_PA = 30;
+// Projected PA/week is the volume every other number in the row is built
+// from, so it leads the numeric block and sets its cadence. An everyday bat
+// runs ~25 (4.2 PA/game x 6 games); below this the role share has cut him to
+// a platoon or bench bat, which is worth telegraphing without a column of
+// its own.
+const PART_TIME_PA_PER_WEEK = 15;
 
 function PACell({ pa }: { pa: number | null }) {
   if (pa === null) {
     return <td className="px-2 py-1.5 text-right text-xs tabular-nums text-muted-foreground/40">—</td>;
   }
-  const thin = pa < THIN_SAMPLE_PA;
-  const color = thin ? 'text-muted-foreground/50' : 'text-muted-foreground';
-  const title = thin
-    ? `${pa} PA — thin sample; Score is regressed to prior-year talent + league mean`
-    : `${pa} PA`;
+  const partTime = pa < PART_TIME_PA_PER_WEEK;
+  const color = partTime ? 'text-muted-foreground/50' : 'text-muted-foreground';
+  const title = partTime
+    ? `${pa.toFixed(1)} PA/week — part-time role, volume scaled down accordingly`
+    : `${pa.toFixed(1)} PA/week`;
   return (
     <td className={`px-2 py-1.5 text-right text-xs tabular-nums ${color}`} title={title}>
-      {pa}
+      {pa.toFixed(1)}
     </td>
   );
 }
@@ -231,13 +224,13 @@ function RosterTable({
   players,
   displayCategories,
   catRoleFor,
-  getStats,
+  getLine,
   scoreIndexFor,
 }: {
   players: RosterEntry[];
   displayCategories: EnrichedLeagueStatCategory[];
   catRoleFor: (statId: number) => CatRole;
-  getStats: (name: string, team: string) => BatterSeasonStats | null;
+  getLine: LineLookup;
   scoreIndexFor: (playerKey: string) => number | null;
 }) {
   const [sortKey, setSortKey] = useState<RosterSortKey>('score');
@@ -272,10 +265,11 @@ function RosterTable({
     const valueOf = (p: RosterEntry): string | number | null => {
       if (sortKey === 'name') return p.name.toLowerCase();
       if (sortKey === 'score') return scoreIndexFor(p.player_key);
-      const s = getStats(p.name, p.editorial_team_abbr);
-      if (!s) return null;
-      if (sortKey === 'pa') return s.pa;
-      return getStatValue(s, sortKey);
+      const line = getLine(p.name, p.editorial_team_abbr);
+      if (!line) return null;
+      if (sortKey === 'pa') return line.pa;
+      const cat = displayCategories.find(c => c.stat_id === sortKey);
+      return cat ? expectedValue(line, cat) : null;
     };
 
     const dir = sortDir === 'asc' ? 1 : -1;
@@ -291,7 +285,7 @@ function RosterTable({
       }
       return ((va as number) - (vb as number)) * dir;
     });
-  }, [players, getStats, scoreIndexFor, sortKey, sortDir]);
+  }, [players, getLine, displayCategories, scoreIndexFor, sortKey, sortDir]);
 
   if (sorted.length === 0) {
     return <p className="text-xs text-muted-foreground p-4">No batters on roster</p>;
@@ -322,9 +316,9 @@ function RosterTable({
             <th
               className="text-right px-2 py-1.5 text-muted-foreground font-medium w-10 cursor-pointer select-none hover:text-foreground"
               onClick={() => handleSort('pa')}
-              title="Current-season plate appearances. Counting stats below 30 PA are thin samples; the Score regresses toward prior-year talent."
+              title="Projected plate appearances in a typical week, scaled by the player's role share. Every category below is projected over the same week."
             >
-              <span className={sortKey === 'pa' ? 'text-accent' : ''}>PA</span>
+              <span className={sortKey === 'pa' ? 'text-accent' : ''}>PA/wk</span>
               {sortIndicator('pa')}
             </th>
             {displayCategories.map(cat => {
@@ -340,9 +334,11 @@ function RosterTable({
                   key={cat.stat_id}
                   className={`text-right px-2 py-1.5 font-medium w-12 cursor-pointer select-none hover:text-foreground ${baseColor}`}
                   onClick={() => handleSort(cat.stat_id)}
-                  title={role === 'contested' ? 'Battleground category — production here carries full weight'
-                    : role === 'conceded' ? 'Conceded — production here carries no weight'
-                    : 'Cushioned lead — production here carries reduced weight'}
+                  title={`Projected ${cat.display_name} per week. ${
+                    role === 'contested' ? 'Battleground category — production here carries full weight'
+                      : role === 'conceded' ? 'Conceded — production here carries no weight'
+                      : 'Cushioned lead — production here carries reduced weight'
+                  }`}
                 >
                   <span className={isActive ? 'text-accent' : ''}>{cat.display_name}</span>
                   {sortIndicator(cat.stat_id)}
@@ -360,7 +356,7 @@ function RosterTable({
         </thead>
         <tbody>
           {sorted.map(player => {
-            const stats = getStats(player.name, player.editorial_team_abbr);
+            const line = getLine(player.name, player.editorial_team_abbr);
             const rowStatus = getRowStatus(player);
             const rowOpacity = rowStatus === 'injured' ? 'opacity-40' : '';
             return (
@@ -373,14 +369,14 @@ function RosterTable({
                   <span className="text-caption text-muted-foreground">{player.editorial_team_abbr}</span>
                 </td>
                 <td className="px-2 py-1.5 text-muted-foreground">{player.display_position}</td>
-                <PACell pa={stats?.pa ?? null} />
+                <PACell pa={line?.pa ?? null} />
                 {displayCategories.map(cat => {
                   const role = catRoleFor(cat.stat_id);
                   return (
                     <StatCell
                       key={cat.stat_id}
-                      value={stats ? getStatValue(stats, cat.stat_id) : null}
-                      name={cat.display_name}
+                      value={expectedValue(line, cat)}
+                      cat={cat}
                       contested={role === 'contested'}
                       conceded={role === 'conceded'}
                     />
@@ -421,13 +417,13 @@ function UpgradeTargetsTable({
   players,
   displayCategories,
   catRoleFor,
-  getStats,
+  getLine,
   scoreIndexFor,
 }: {
   players: FreeAgentPlayer[];
   displayCategories: EnrichedLeagueStatCategory[];
   catRoleFor: (statId: number) => CatRole;
-  getStats: (name: string, team: string) => BatterSeasonStats | null;
+  getLine: LineLookup;
   scoreIndexFor: (playerKey: string) => number | null;
 }) {
   const sorted = useMemo(() => {
@@ -446,16 +442,16 @@ function UpgradeTargetsTable({
       })
       .map(p => ({
         player: p,
-        stats: getStats(p.name, p.editorial_team_abbr),
+        line: getLine(p.name, p.editorial_team_abbr),
         index: scoreIndexFor(p.player_key),
       }))
-      // Drop rows we have nothing to rank by — players with no stats or
-      // no value line just fill rows with em-dashes. Keeping them pushes
-      // real candidates out of the top 30.
-      .filter(({ stats, index }) => stats !== null && index !== null)
+      // Drop rows we have nothing to rank by — players with no projection
+      // line just fill rows with em-dashes. Keeping them pushes real
+      // candidates out of the top 30.
+      .filter(({ line, index }) => line !== undefined && index !== null)
       .sort((a, b) => (b.index ?? 0) - (a.index ?? 0))
       .slice(0, 30);
-  }, [players, getStats, scoreIndexFor]);
+  }, [players, getLine, scoreIndexFor]);
 
   if (sorted.length === 0) {
     return <p className="text-xs text-muted-foreground p-4">Loading available players...</p>;
@@ -470,9 +466,9 @@ function UpgradeTargetsTable({
             <th className="text-left px-2 py-1.5 text-muted-foreground font-medium w-10">Pos</th>
             <th
               className="text-right px-2 py-1.5 text-muted-foreground font-medium w-10"
-              title="Current-season plate appearances. Counting stats below 30 PA are thin samples; the Score regresses toward prior-year talent."
+              title="Projected plate appearances in a typical week, scaled by the player's role share. Every category below is projected over the same week."
             >
-              PA
+              PA/wk
             </th>
             {displayCategories.map(cat => {
               const role = catRoleFor(cat.stat_id);
@@ -486,6 +482,7 @@ function UpgradeTargetsTable({
                         ? 'text-muted-foreground/40'
                         : 'text-muted-foreground'
                   }`}
+                  title={`Projected ${cat.display_name} per week`}
                 >
                   {cat.display_name}
                 </th>
@@ -495,7 +492,7 @@ function UpgradeTargetsTable({
           </tr>
         </thead>
         <tbody>
-          {sorted.map(({ player, stats, index }) => {
+          {sorted.map(({ player, line, index }) => {
             const isWaivers = player.ownership_type === 'waivers';
             return (
               <tr key={player.player_key} className="border-b border-border/50 hover:bg-surface-muted/50">
@@ -508,15 +505,14 @@ function UpgradeTargetsTable({
                   <span className="text-caption text-muted-foreground">{player.editorial_team_abbr}</span>
                 </td>
                 <td className="px-2 py-1.5 text-muted-foreground">{player.display_position}</td>
-                <PACell pa={stats?.pa ?? null} />
+                <PACell pa={line?.pa ?? null} />
                 {displayCategories.map(cat => {
-                  const val = stats ? getStatValue(stats, cat.stat_id) : null;
                   const role = catRoleFor(cat.stat_id);
                   return (
                     <StatCell
                       key={cat.stat_id}
-                      value={val}
-                      name={cat.display_name}
+                      value={expectedValue(line, cat)}
+                      cat={cat}
                       contested={role === 'contested'}
                       conceded={role === 'conceded'}
                     />
@@ -693,10 +689,8 @@ export default function RosterManager() {
   const { roster, isLoading: rosterLoading } = useRoster(teamKey);
   const { categories, isLoading: catsLoading } = useLeagueCategories(leagueKey);
   const { positions: leaguePositions, isLoading: posLoading } = useRosterPositions(leagueKey);
-  const { getPlayerStats: getRosterPlayerStats } = useRosterStats(roster);
   const { batters: availableBatters, isLoading: battersLoading } = useAvailableBatters(leagueKey, true);
   const { players: availablePitchers, isLoading: pitchersLoading } = useAvailablePitchers(leagueKey);
-  const { getPlayerStats: getFAStats } = useFreeAgentStats(availableBatters);
 
   const [tab, setTab] = useState<RosterTab>('batters');
   const { preferredDepth, updatePreferredDepth } = usePreferredDepth(CATEGORIES_PREFERRED_DEPTH_KEY);
@@ -731,8 +725,10 @@ export default function RosterManager() {
     [categories],
   );
 
+  // Only cats the forecast engine actually projects get a column — the
+  // rest would render a column of em-dashes.
   const displayCategories = useMemo(
-    () => battingCategories.filter(c => BATTER_STAT_MAP[c.stat_id]),
+    () => battingCategories.filter(c => supportsStatId(c.stat_id)),
     [battingCategories],
   );
 
@@ -769,8 +765,10 @@ export default function RosterManager() {
   );
 
   // Per-player value lines from the forecast route (neutral-week weekly
-  // category production, role share applied server-side). Keyed by
-  // name|team — the same identity join the stats hooks use.
+  // category production, role share applied server-side). These are the
+  // page's ONE source of per-player production: the tables render them,
+  // the contributions below weight them, and the Score scales them.
+  // Keyed by name|team — the same identity join the stats hooks use.
   const nameTeamKey = (name: string, team: string) =>
     `${name.toLowerCase()}|${team.toLowerCase()}`;
 
@@ -785,6 +783,15 @@ export default function RosterManager() {
     }
     return { rosterLines: rostered, faLines: fas };
   }, [forecast]);
+
+  const getRosterLine = useCallback<LineLookup>(
+    (name, team) => rosterLines.get(nameTeamKey(name, team)),
+    [rosterLines],
+  );
+  const getFALine = useCallback<LineLookup>(
+    (name, team) => faLines.get(nameTeamKey(name, team)),
+    [faLines],
+  );
 
   // Contributions (move units per cat) and leverage-weighted value per
   // player. One map for everyone on the page — roster rows, FA rows, and
@@ -966,8 +973,8 @@ export default function RosterManager() {
           availableBatters={availableBatters}
           battersLoading={battersLoading}
           displayCategories={displayCategories}
-          getRosterPlayerStats={getRosterPlayerStats}
-          getFAStats={getFAStats}
+          getRosterLine={getRosterLine}
+          getFALine={getFALine}
           scoreIndexFor={scoreIndexFor}
           preferredDepth={preferredDepth}
           onPreferredDepthChange={updatePreferredDepth}
@@ -1006,8 +1013,8 @@ function BattersTab({
   availableBatters,
   battersLoading,
   displayCategories,
-  getRosterPlayerStats,
-  getFAStats,
+  getRosterLine,
+  getFALine,
   scoreIndexFor,
   preferredDepth,
   onPreferredDepthChange,
@@ -1025,8 +1032,8 @@ function BattersTab({
   availableBatters: FreeAgentPlayer[];
   battersLoading: boolean;
   displayCategories: EnrichedLeagueStatCategory[];
-  getRosterPlayerStats: (name: string, team: string) => BatterSeasonStats | null;
-  getFAStats: (name: string, team: string) => BatterSeasonStats | null;
+  getRosterLine: LineLookup;
+  getFALine: LineLookup;
   scoreIndexFor: (playerKey: string) => number | null;
   preferredDepth: Partial<Record<BatterPosition, number>>;
   onPreferredDepthChange: (pos: BatterPosition, next: number | null) => void;
@@ -1082,7 +1089,7 @@ function BattersTab({
                 players={rosterBatters}
                 displayCategories={displayCategories}
                 catRoleFor={catRoleFor}
-                getStats={getRosterPlayerStats}
+                getLine={getRosterLine}
                 scoreIndexFor={scoreIndexFor}
               />
             </Panel>
@@ -1100,7 +1107,7 @@ function BattersTab({
                   players={activeBatters}
                   displayCategories={displayCategories}
                   catRoleFor={catRoleFor}
-                  getStats={getFAStats}
+                  getLine={getFALine}
                   scoreIndexFor={scoreIndexFor}
                 />
               </Panel>
@@ -1114,7 +1121,7 @@ function BattersTab({
                     players={stashBatters}
                     displayCategories={displayCategories}
                     catRoleFor={catRoleFor}
-                    getStats={getFAStats}
+                    getLine={getFALine}
                     scoreIndexFor={scoreIndexFor}
                   />
                 </Panel>

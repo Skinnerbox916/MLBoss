@@ -8,6 +8,36 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — "Locked win" became a win probability instead of a hand-set constant
+
+Reported by the owner looking at a Game Plan that called seven categories locked wins: *"I don't feel like that's taking variation into enough consideration. Are we looking at the probable range on those?"* We were not.
+
+**What the margin used to be.** `computeMargin` divided a category gap by a constant and clamped: `clamp(gap / CORRECTED_COUNTING_SCALE[statId], ±1)`, with the constants (SB 3, HR 4, BB 7, R 8, RBI 9, K 10, H 12, TB 20) eyeballed as "~1.0–1.4× the cross-team σ of full-week production." Three defects, compounding:
+
+1. **Not a probability.** A constant cannot know whether a 3.7-steal lead is safe, because that depends on how many steals are still to come.
+2. **The clamp erased everything past the constant.** Every one of the seven leads exceeded its constant, so all seven reported margin exactly 1.00. A 3.7-steal lead and a 43.7-total-base lead became the same number, and `pivotality(1.0) = 0.017` deweighted both to nothing. The owner's phrase "completely remove them from calculations" was empirically right even though the design said "deweighted, never removed": batting average held 88% of the renormalised weight and each "locked" category got 1.5%.
+3. **`corrected` mode had no time awareness at all.** The same projected gap read identically on Monday and Saturday.
+
+**What the real numbers were.** Joining all 37,403 graded batter-days in the ledger to actuals and bootstrapping a projected team-week put the seven "identical" leads between 85% and 99.9%. Four of them — HR 90%, BB 89%, RBI 88%, SB 86% — carried a combined ~30% chance of dropping at least one category the app had written off. The mirror-image defect was worse: a 3-HR projected deficit auto-conceded at margin −0.75 when it was a **27% win probability**.
+
+**The model now.** Counts have variance proportional to their mean, so fitting φ = Var(actual − predicted)/mean per category on the graded cohorts (37,403 batter-days, 4,192 pitcher starts) gives `Var(gap) = φ × (my remaining + opp remaining)`, `z = gap/σ`, `P = Φ(z)`. φ held stable across terciles of predicted value in every category, which is what licenses treating it as a constant. The numbers are physically legible: total bases 2.04 and RBI 1.48 cluster because one swing is worth several; innings pitched 0.37, wins 0.65 and quality starts 0.56 are bounded per start, with W and QS landing near their theoretical `1 − p`.
+
+Margin becomes `PIVOTALITY_W × z` clamped to ±1. That specific form is not cosmetic: `pivotality(w·z, w) = exp(−z²/2)`, which is proportional to `dP(win)/d(production)`, the actual marginal value of working a category. The shared gradient in `rating/pivotality.ts` is untouched, and every existing threshold gains a probability reading (±0.7 = 97.7%, the ±1 clamp = 99.8%).
+
+Using **remaining** rather than total production is what makes it time-aware for free, which let the `0.15 + 0.85 × weekProgress` confidence hack retire. Verified: one projected gap reads 84% on Monday, 91% mid-week, 99.8% on Sunday.
+
+**Effect on the reported matchup.** Locked count 8 → 4. The four soft leads moved from `punt` to `neutral` and from 1.5% weight each to 13.6–17.5%; batting average went from 88% of the weight to 30%. Game Plan tiles now read "comfortable lead" rather than "locked win" for them. Auto-concession no longer fires until a category is genuinely gone (a 3-HR deficit stays live at 27%; concession waits for ~0.8%).
+
+**Also repaired in passing:** `swing = corrected.margin − raw.margin` previously subtracted margins computed against two different denominators. Both are now z-scores of the same quantity, so the number means something. And `GamePlanPanel` had its own `const LOCKED = 0.7` shadowing `LOCKED_THRESHOLD`; it imports the constant now.
+
+**Considered and rejected.** A hard floor on pivotality weight so nothing can reach zero. Unnecessary once margin is a probability — the ±1 clamp already floors the weight at 0.017 and only a 99.8% category reaches it. A floor on top would be an arbitrary second mechanism doing the same job.
+
+**Don't reintroduce:** (a) a fixed per-category scale for turning a gap into a margin — it cannot express "how much is still to come," which is the entire question; (b) a clamp that saturates before the underlying quantity does, which destroys ordering exactly where decisions are made; (c) a `weekProgress` confidence multiplier, now that σ carries time; (d) any threshold on `margin` that isn't stated in probability terms in its comment.
+
+**Left open, with numbers:** the weight is `exp(−z²/2)` where the full derivative is `exp(−z²/2)/σ`, so a category where one unit of production moves the needle further should be worth more per unit. That `1/σ` scaling belongs with the per-category unit normaliser in `streamCatImpact.ts` and folding it in without re-checking that normaliser would double-count. Saves (no reliever cohort) and hit-by-pitch (not projected) default to φ = 1.0. The cohorts contain only players who actually played, so playing-time variance is covered by a 1.10 inflation constant rather than measured.
+
+---
+
 ## 2026-09 — Batter score scale recentred, and the matchup layer applied at its fitted reliability
 
 `MODEL_VERSION` 2026.09.08. Surfaced by the streaming board on 2026-09-08: the "Available Batters" day pills read **100** for three straight games for several marginal free agents (McNeil, Bolte, Wilson — all A's — and anyone at Coors), while the board's own tier column called the same players "marginal".

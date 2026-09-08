@@ -10,6 +10,7 @@ import type {
   AnalyzedMatchupRow,
   MatchupAnalysis,
 } from '@/lib/matchup/analysis';
+import { LOCKED_THRESHOLD } from '@/lib/matchup/analysis';
 import { rowHasComparablePair } from '@/components/shared/matchupRows';
 import type { DailyBaseline } from '@/lib/projection/slotAware';
 import type { WeekTarget } from '@/lib/dashboard/weekRange';
@@ -527,7 +528,9 @@ function TileSegment({
 // Reason text — derived from rawMargin / margin / swing
 // ---------------------------------------------------------------------------
 
-const LOCKED = 0.7;
+/** Re-exported so the label bands and the engine can't drift apart. At this
+ *  margin a category is ~97.7% decided — see matchup/categoryVariance.ts. */
+const LOCKED = LOCKED_THRESHOLD;
 const SWING_NOTABLE = 0.15;
 
 function getReason(row: AnalyzedMatchupRow): string {

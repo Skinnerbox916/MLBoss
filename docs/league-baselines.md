@@ -78,9 +78,10 @@ These aren't league baselines but they ARE cross-engine — every advice surface
 
 | Constant | File | Anchor |
 |---|---|---|
-| `LOCKED_THRESHOLD` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | `\|margin\|` ≥ this → `suggestedFocus = punt` (locked win OR out-of-reach loss). Direction-aware: both extremes deserve 0× weight. |
-| `RATE_SCALE` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | Per-stat typical-swing scale (AVG 0.040, ERA 0.50, etc.). Margin = `gap × dir / scale × confidence`. |
-| `CORRECTED_COUNTING_SCALE` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | Fixed residual-uncertainty scale for counting cats when `mode='corrected'`. Keyed by `stat_id` because batter K (21) and pitcher K (42) share a display label. |
+| `LOCKED_THRESHOLD` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | `\|margin\|` ≥ this → `suggestedFocus = punt` (locked win OR out-of-reach loss). Since 2026-09-08 margin is a z-score, so this is ~97.7% / ~2.3%. |
+| `CATEGORY_DISPERSION` | [matchup/categoryVariance.ts](../src/lib/matchup/categoryVariance.ts) | Per-category φ = Var(actual − predicted) / mean, fitted on the graded retro cohorts (37,403 batter-days, 4,192 starts). Turns remaining production into the σ of a category gap, which is what makes a margin a win probability. Re-fit when a forecast engine's spread changes, not on an annual calendar. |
+| `UNMODELED_VARIANCE_INFLATION` | [matchup/categoryVariance.ts](../src/lib/matchup/categoryVariance.ts) | Variance allowance for cross-player correlation (measured, ~1.01–1.05× at roster scale) and playing-time risk (the cohorts only contain players who played). |
+| `RATE_SCALE`, `CORRECTED_COUNTING_SCALE` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | Superseded fallbacks, reached only when a row has no measured `gapSigma`. Don't extend. |
 
 ## Batter HR knob basis
 

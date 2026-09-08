@@ -7,23 +7,31 @@
  *  - Today / `LineupManager` seeds its batter `focusMap` from `suggestedFocus`.
  *  - Streaming / `StreamingManager` seeds its pitcher `focusMap` the same way.
  *
- * The math splits into two flavors. Rate stats (AVG, ERA, WHIP, …) use a
- * per-stat "typical-swing" scale (`RATE_SCALE`) and soften early-week
- * confidence so a small Monday sample doesn't read as locked. Counting
- * stats branch on the `mode` option:
+ * **Margin is a win probability** (2026-09-08). Every category's gap is
+ * divided by the standard deviation of that gap — built from how much
+ * production each side still has coming and the category's fitted
+ * dispersion — and the resulting z-score becomes the margin. See
+ * [categoryVariance.ts](./categoryVariance.ts) for the model, the fitted
+ * constants, and the probability each threshold corresponds to. The short
+ * version: margin is `PIVOTALITY_W × z` clamped to ±1, so 0 is a coin
+ * flip, ±0.7 (`LOCKED_THRESHOLD`) is ~97.7%, and the ±1 clamp is ~99.8%.
  *
- *   - `'raw'` (default — matchup-to-date scoreboard rows): a week-elapsed
- *     model so "HR 8-5" feels different on Wednesday than on Sunday — the
- *     same gap is much harder to close late in the week because there's
- *     less production left to accrue.
- *   - `'corrected'` (end-of-week projected rows): a fixed per-cat
- *     residual-uncertainty scale (`CORRECTED_COUNTING_SCALE`). Once the
- *     projection has absorbed rest-of-week production, the matchup-to-date
- *     remaining-production buffer would double-count and over-compress
- *     every gap. Only `useCorrectedMatchupAnalysis` passes this mode.
+ * Both analysis modes reach that same quantity, differing only in where
+ * "remaining production" comes from:
  *
- * Both branches output a margin in [-1, +1] from the user's perspective. A
- * margin of 0 is dead-even / no data; a magnitude near 1 reads as "locked".
+ *   - `'raw'` (default — matchup-to-date scoreboard rows): pace
+ *     extrapolation from what each side has banked so far.
+ *   - `'corrected'` (end-of-week projected rows): the rest-of-week
+ *     projection itself, carried onto each row as `gapSigma` by
+ *     `composeCorrectedRows`. Only `useCorrectedMatchupAnalysis` passes
+ *     this mode.
+ *
+ * Because the spread shrinks as the week empties out, time awareness is
+ * automatic in both modes and no separate week-progress fudge is needed.
+ *
+ * `RATE_SCALE` and `CORRECTED_COUNTING_SCALE` survive only as fallbacks for
+ * rows the variance model can't reach (an unprojected category, an exotic
+ * scored stat). They are the pre-2026-09-08 model; don't extend them.
  *
  * "No signal" is treated identically to "no data" everywhere downstream
  * (suggestedFocus stays `neutral`, leverage / contested counts skip the
@@ -41,12 +49,17 @@
  */
 
 import { rowHasComparablePair, type MatchupRow } from '@/components/shared/matchupRows';
+import { countingGapSigma, marginFromGap } from './categoryVariance';
 
 /**
- * Typical-swing scale per rate stat — the gap that, on its own, corresponds
- * to a "decent lead" (margin ~1.0 before confidence softening). Calibrated
- * for standard 5x5 / 6x6 leagues; deriving these from league averages is a
- * v2 once defaults are observed to misbehave.
+ * FALLBACK ONLY. Typical-swing scale per rate stat, used when a row carries
+ * no measured `gapSigma` — an unprojected rate cat, or a matchup-to-date row
+ * analyzed outside the corrected composer. Where the projection exists,
+ * `ratioGapSigma` supersedes this with a real spread.
+ *
+ * Also the list that identifies which categories ARE rate stats, which is
+ * why entries stay here for cats the projection can't reach (OBP, SLG, OPS,
+ * K/9, BB/9, H/9).
  */
 export const RATE_SCALE: Record<string, number> = {
   AVG: 0.040,
@@ -61,21 +74,19 @@ export const RATE_SCALE: Record<string, number> = {
 };
 
 /**
- * Per-cat counting-stat scale used when analyzing corrected (end-of-week
- * projected) rows. The corrected row already absorbs rest-of-week
- * production, so we can't use the matchup-to-date `expectedRemaining` denominator —
- * it would extrapolate production past what the projection already
- * captured, compressing every gap toward zero. Instead, evaluate the
- * gap against the projection's residual uncertainty: a gap equal to
- * `scale` reads as margin = ±1.0 ("locked").
+ * FALLBACK ONLY, and superseded. These were eyeballed at "~1.0-1.4× the
+ * cross-team σ of full-week production" with a note to revisit once
+ * projection-vs-realized data accumulated. It has, and
+ * [categoryVariance.ts](./categoryVariance.ts) now derives the spread per
+ * matchup from fitted dispersion and remaining production.
  *
- * Calibrated to ~1.0-1.4× the cross-team σ of full-week production
- * observed in real Yahoo H2H scoreboards. Cross-team σ overstates the
- * post-projection residual (the projection already absorbs roster
- * differences), but a slightly looser scale avoids over-locking high-
- * variance cats like SB / HR. Revisit empirically once projection-vs-
- * realized data accumulates.
+ * What made them wrong was not the levels but the shape: a constant can't
+ * know how much production is left, and the ±1 clamp collapsed every lead
+ * past its constant onto the same "locked" value. On 2026-09-08 that put a
+ * 3.7-steal lead (85-92% to hold) and a 43.7-total-base lead (97-99.6%) at
+ * the identical margin of 1.00, and `pivotality` zeroed both.
  *
+ * Still reached when a corrected row has no projection on one side.
  * Keyed by `stat_id` (not display_name) because batter K (21) and
  * pitcher K (42) share a label.
  */
@@ -105,14 +116,18 @@ export type SuggestedFocus = 'chase' | 'neutral' | 'punt';
 
 export interface AnalyzedMatchupRow extends MatchupRow {
   /** Margin in [-1, +1] from the user's perspective. Positive = winning.
-   *  When the analysis is corrected with projections, this is the
-   *  projected end-of-week margin; otherwise it's the matchup-to-date margin. */
+   *  `PIVOTALITY_W × z`, where z is the gap over its standard deviation —
+   *  so it maps to a win probability (0 = coin flip, ±0.7 ≈ 97.7%, ±1
+   *  ≈ 99.8%). When the analysis is corrected with projections this is the
+   *  projected end-of-week margin; otherwise it's the matchup-to-date one. */
   margin: number;
   /** True when `streamCapacity` softened this row's deficit — the raw
    *  projected gap reads worse, but remaining streams can close it.
    *  Drives the "in reach via streams" tile status. */
   streamAssisted?: boolean;
-  /** Priority weight in [0, 1]. 1 = toss-up, 0 = locked. */
+  /** Priority weight in [0, 1]. 1 = toss-up, 0 = locked. `1 - |margin|`,
+   *  so the `>= 0.5` contested test is a win probability between roughly
+   *  7.6% and 92.4%. */
   priority: number;
   /** Mapped onto the existing chase/neutral/punt vocabulary. */
   suggestedFocus: SuggestedFocus;
@@ -144,6 +159,12 @@ export interface MatchupAnalysis {
   lockedCount: number;
 }
 
+/**
+ * |margin| at or above this reads as decided — a locked win on the positive
+ * side, out of reach on the negative. In probability terms it is a z of 2.0,
+ * so ~97.7% / ~2.3%. See [categoryVariance.ts](./categoryVariance.ts) for
+ * the full margin-to-probability table.
+ */
 export const LOCKED_THRESHOLD = 0.7;
 
 /**
@@ -218,46 +239,64 @@ function computeMargin(
   if (!Number.isFinite(my) || !Number.isFinite(opp)) return { margin: 0, streamAssisted: false };
 
   const dir = row.betterIs === 'lower' ? -1 : 1;
-  const rateScale = RATE_SCALE[row.name];
+  const isRateStat = RATE_SCALE[row.name] !== undefined;
 
-  if (rateScale !== undefined) {
-    const confidence = 0.15 + 0.85 * weekProgress;
-    return {
-      margin: clamp(((my - opp) * dir / rateScale) * confidence, -1, 1),
-      streamAssisted: false,
-    };
+  let gap = (my - opp) * dir;
+  let streamAssisted = false;
+  // Stream-capacity softening for losing counting rows (see
+  // AnalyzeOpts.streamCapacity): the deficit is measured net of what
+  // the user's remaining moves could add, capped at even. SV carries
+  // no capacity entry (SP streams can't make saves), so a save deficit
+  // is never softened — it auto-concedes on its own margin when the
+  // opponent's projected saves are large enough, and stays chase-able
+  // when they aren't (user concedes manually in that case).
+  if (mode === 'corrected' && !isRateStat) {
+    const capacity = streamCapacity?.[row.statId];
+    if (capacity !== undefined && capacity > 0 && gap < 0) {
+      const softened = Math.min(0, gap + capacity);
+      streamAssisted = softened !== gap;
+      gap = softened;
+    }
   }
 
+  // Preferred path: the corrected-row composer measured how much
+  // production each side still has coming, so the gap can be read as a
+  // win probability instead of against a hand-set constant.
+  if (row.gapSigma !== undefined && row.gapSigma > 0) {
+    return { margin: marginFromGap(gap, row.gapSigma), streamAssisted };
+  }
+
+  // Rate stat with no measured spread (unprojected, or a matchup-to-date
+  // row that never went through the composer). Legacy scale.
+  if (isRateStat) {
+    const confidence = 0.15 + 0.85 * weekProgress;
+    return { margin: clamp((gap / RATE_SCALE[row.name]) * confidence, -1, 1), streamAssisted };
+  }
+
+  // Corrected counting row whose projection was missing. Legacy scale.
   if (mode === 'corrected') {
     const countScale = CORRECTED_COUNTING_SCALE[row.statId];
     if (countScale !== undefined) {
-      let gap = (my - opp) * dir;
-      let streamAssisted = false;
-      // Stream-capacity softening for losing counting rows (see
-      // AnalyzeOpts.streamCapacity): the deficit is measured net of what
-      // the user's remaining moves could add, capped at even. SV carries
-      // no capacity entry (SP streams can't make saves), so a save deficit
-      // is never softened — it auto-concedes on its own margin when the
-      // opponent's projected saves are large enough, and stays chase-able
-      // when they aren't (user concedes manually in that case).
-      const capacity = streamCapacity?.[row.statId];
-      if (capacity !== undefined && capacity > 0 && gap < 0) {
-        const softened = Math.min(0, gap + capacity);
-        streamAssisted = softened !== gap;
-        gap = softened;
-      }
       return { margin: clamp(gap / countScale, -1, 1), streamAssisted };
     }
     // Unknown counting cat — fall through to the raw model rather than
     // returning 0. Better to under-call punt than to silently hide a row.
   }
 
-  // Counting stat, raw matchup-to-date: scale gap by expected remaining production.
+  // Counting stat, matchup-to-date. There is no projection here, but pace
+  // extrapolation gives the remaining production each side should accrue,
+  // which is the same quantity the corrected path gets from the projection —
+  // so the same variance model applies and the two modes agree on what a
+  // margin means.
+  const remainingScale = (1 - weekProgress) / weekProgress;
+  const sigma = countingGapSigma(row.statId, my * remainingScale, opp * remainingScale);
+  if (sigma !== null) {
+    return { margin: marginFromGap(gap, sigma), streamAssisted };
+  }
+
+  // No fitted dispersion for this category at all (an exotic scored stat).
   const expectedRemaining = ((my + opp) / weekProgress) * (1 - weekProgress);
-  return {
-    margin: clamp(((my - opp) * dir) / Math.max(expectedRemaining, 1), -1, 1),
-    streamAssisted: false,
-  };
+  return { margin: clamp(gap / Math.max(expectedRemaining, 1), -1, 1), streamAssisted };
 }
 
 export type AnalyzeMode = 'raw' | 'corrected';

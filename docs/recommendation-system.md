@@ -92,7 +92,8 @@ flowchart TD
 
 | Engine | Lives in | Inputs | Outputs |
 |--------|----------|--------|---------|
-| `analyzeMatchup` | [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts) | `MatchupRow[]`, `daysElapsed`, optional `mode: 'raw' \| 'corrected'` (default `'raw'`) | Per-row `margin` ∈ [-1, +1], `priority`, `suggestedFocus`; aggregate `leverage`, `contestedCount`, `lockedCount`. `mode='corrected'` swaps the counting-stat denominator — see Thresholds |
+| `analyzeMatchup` | [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts) | `MatchupRow[]`, `daysElapsed`, optional `mode: 'raw' \| 'corrected'` (default `'raw'`) | Per-row `margin` ∈ [-1, +1], `priority`, `suggestedFocus`; aggregate `leverage`, `contestedCount`, `lockedCount`. `mode` selects where remaining production comes from — see Thresholds |
+| `countingGapSigma` / `ratioGapSigma` / `marginFromGap` | [src/lib/matchup/categoryVariance.ts](../src/lib/matchup/categoryVariance.ts) | statId + remaining production per side | σ of the end-of-week gap, and the margin derived from it. The only place category variance is modelled; `composeCorrectedRows` calls it and stamps `gapSigma` on each row |
 | `withSwing` | [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts) | corrected `MatchupAnalysis`, raw `MatchupAnalysis` | Same shape as the corrected analysis but each row gets `rawMargin` + `swing = margin - rawMargin` for UI explanation. Focus suggestions are unchanged |
 | `useMatchupAnalysis` | [src/lib/hooks/useMatchupAnalysis.ts](../src/lib/hooks/useMatchupAnalysis.ts) | `leagueKey`, `teamKey` | `{ analysis, isLoading }` — wraps scoreboard + categories + week-progress assembly. Use for descriptive surfaces |
 | `useCorrectedMatchupAnalysis` | [src/lib/hooks/useCorrectedMatchupAnalysis.ts](../src/lib/hooks/useCorrectedMatchupAnalysis.ts) | `leagueKey`, `teamKey`, optional `opts: { targetWeek: 'current' \| 'next' }` | `{ analysis, isCorrected, isLoading, myProjection, oppProjection, myPitcherProjection, oppPitcherProjection, opponentTeamKey, opponentName }` — same as raw but rows carry projection-corrected `margin` + `rawMargin` + `swing` for batter cats and counting/ratio pitcher cats (mid-week blend mode). On `targetWeek: 'next'` the end-of-week streaming pivot kicks in: pure-projection values via `composeCorrectedRows` projection-only mode, no `withSwing` (so `rawMargin`/`swing` are undefined). Use for action surfaces (Game Plan card). See [streaming-page.md](./streaming-page.md#end-of-week-pivot) |
@@ -116,26 +117,39 @@ The rating engines (`getBatterRating`, `getPitcherRating`, `blendedCategoryScore
 
 ## Thresholds
 
-All recommendation-layer thresholds live in [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts). If you change one, search the codebase to make sure no UI is hardcoding a duplicate.
+Thresholds live in [src/lib/matchup/analysis.ts](../src/lib/matchup/analysis.ts); the variance model that gives them meaning lives in [src/lib/matchup/categoryVariance.ts](../src/lib/matchup/categoryVariance.ts). If you change one, search the codebase to make sure no UI is hardcoding a duplicate.
 
-| Constant | Value | What it controls |
-|----------|-------|------------------|
-| `LOCKED_THRESHOLD` | `0.7` | `\|margin\|` ≥ this → `suggestedFocus = punt` (locked either way) |
-| `RATE_SCALE` | per-stat table | Typical-swing scale per rate stat (AVG 0.040, ERA 0.50, etc.). Margin = `gap × dir / scale × confidence` where `confidence = 0.15 + 0.85 × weekProgress`. Applies in both `mode='raw'` and `mode='corrected'` |
-| `CORRECTED_COUNTING_SCALE` | per-stat-id table | Fixed residual-uncertainty scale for counting cats when `mode='corrected'`. Margin = `gap × dir / scale` (no confidence factor — the projection already absorbs week progress). Keyed by `stat_id` because batter K (21) and pitcher K (42) share a display label |
+**Margin is a win probability (2026-09-08).** A category's gap is divided by the standard deviation of that gap, and the z-score becomes the margin: `margin = PIVOTALITY_W × z`, clamped to ±1. That form is chosen so `pivotality(margin)` evaluates to `exp(−z²/2)`, which is proportional to `dP(win)/d(production)` — the marginal value of working on the category. Every threshold therefore has a probability reading:
+
+| margin | z | P(win) | meaning |
+|--------|---|--------|---------|
+| 0.00 | 0.0 | 50.0% | coin flip, maximum weight |
+| 0.30 | 0.86 | 80.4% | Game Plan tile flips to "comfortable lead" |
+| 0.50 | 1.43 | 92.4% | edge of `contested` (`priority ≥ 0.5`) |
+| 0.70 | 2.00 | 97.7% | `LOCKED_THRESHOLD`; also the auto-concede line |
+| 1.00 | 2.86 | 99.8% | clamp; pivotality weight bottoms out at 0.017 |
+
+The σ comes from the category's fitted dispersion times the production **still to come** on both sides — `Var = φ × (my remaining + opp remaining)`. Fitted φ values and their derivation are in `CATEGORY_DISPERSION`. Because σ shrinks as the week empties, time awareness is automatic: the same projected gap reads 84% on Monday, 91% on Thursday and 99.8% on Sunday, with no week-progress fudge factor.
+
+| Constant | Home | What it controls |
+|----------|------|------------------|
+| `LOCKED_THRESHOLD` | `analysis.ts` | `\|margin\|` ≥ this → `suggestedFocus = punt` (locked either way). ~97.7% |
+| `CATEGORY_DISPERSION` | `categoryVariance.ts` | Per-category φ = Var/mean, fitted on the graded retro cohorts. The whole variance model rests on these |
+| `UNMODELED_VARIANCE_INFLATION` | `categoryVariance.ts` | Allowance for cross-player correlation and playing-time risk the cohorts can't see |
+| `RATE_SCALE`, `CORRECTED_COUNTING_SCALE` | `analysis.ts` | **Fallbacks only**, for rows the variance model can't reach. Superseded — don't extend them |
 
 ### The `mode` option
 
-`analyzeMatchup` takes `mode: 'raw' | 'corrected'` (default `'raw'`). The two modes differ only in how counting-stat margins are computed; rate-stat math is identical.
+`analyzeMatchup` takes `mode: 'raw' | 'corrected'` (default `'raw'`). Both now compute the same quantity and differ only in where "remaining production" comes from.
 
-| Mode | Counting-stat denominator | Right for |
+| Mode | Remaining production from | Right for |
 |------|---------------------------|-----------|
-| `raw` | Dynamic `expectedRemaining = (my + opp) / weekProgress × (1 − weekProgress)` — the pace-extrapolated production still to come | Matchup-to-date scoreboard rows (Boss Brief, dashboard LeverageBar, raw analysis in `useCorrectedMatchupAnalysis`) |
-| `corrected` | Fixed `CORRECTED_COUNTING_SCALE[statId]` — residual uncertainty around the end-of-week projection | Rows that already carry rest-of-week projection (Game Plan via `useCorrectedMatchupAnalysis`) |
+| `raw` | Pace extrapolation, `value / weekProgress × (1 − weekProgress)` per side | Matchup-to-date scoreboard rows (Boss Brief, dashboard LeverageBar, the raw analysis inside `useCorrectedMatchupAnalysis`) |
+| `corrected` | The rest-of-week projection itself, carried onto each row as `gapSigma` by `composeCorrectedRows` | Rows that already carry rest-of-week projection (Game Plan via `useCorrectedMatchupAnalysis`) |
 
 Only `useCorrectedMatchupAnalysis` ever passes `mode: 'corrected'`, and only on the *corrected* `analyzeMatchup` call (the parallel raw call inside the same hook stays `'raw'` so `withSwing` can compare a like-for-like matchup-to-date baseline). The Sunday pivot path runs `mode: 'corrected'` and skips the raw call entirely — there is no MTD baseline to swing from.
 
-**Why the two-mode split exists.** The original engine used the dynamic `expectedRemaining` denominator for both MTD and corrected inputs. That works fine for MTD — "down 10 with most of the week to play" should read as a slim margin, not locked. But once the projection has baked rest-of-week production into the corrected totals, dividing by another remaining-production buffer double-counts and compresses every gap toward zero. The user-visible failure mode was Game Plan saying "chase H" while the corrected projection had the user down 25 hits at end of week — clearly out of reach, but never crossing the `|margin| ≥ 0.7` threshold. The fixed scale is the same shape as `RATE_SCALE` (which already handles rate stats this way because they have no meaningful "remaining production" buffer either).
+Putting both modes on one scale also repairs `swing`. It is `corrected.margin − raw.margin`, which before 2026-09-08 subtracted two margins computed against different denominators and was only loosely interpretable; both are now z-scores of the same quantity.
 
 `suggestedFocus` falls out of `LOCKED_THRESHOLD` regardless of mode:
 
@@ -146,7 +160,7 @@ margin ≤ 0 (with signal)    → chase  (losing or tied — pickup target)
 no signal                   → neutral
 ```
 
-There's no separate "contested" magnitude band. Direction is the gate — once the corrected margin is non-locked, sign decides chase vs. hold. The previous magnitude band (`CONTESTED_THRESHOLD`, scaled by week progress) created the "chase everything" failure mode by treating slim leads and slim deficits identically. Confidence is still encoded in the margin itself via the `0.15 + 0.85 × weekProgress` factor inside `computeMargin`, so an early-week 5-3 lead in HR doesn't read as locked.
+There's no separate "contested" magnitude band. Direction is the gate — once the corrected margin is non-locked, sign decides chase vs. hold. The previous magnitude band (`CONTESTED_THRESHOLD`, scaled by week progress) created the "chase everything" failure mode by treating slim leads and slim deficits identically. Confidence is encoded in the margin itself, now through the variance model rather than a week-progress factor: an early-week 5-3 lead in HR has most of its production still to come, so σ is wide and the margin stays well short of locked.
 
 A row has "no signal" when either (a) the two sides are not a comparable numeric pair (`rowHasComparablePair(row)` is false — one or both values missing / non-numeric, typical for ERA/WHIP when 0 IP) or (b) both sides parse as exactly zero (the Monday-morning pattern: counting stats are reported as `0=0` before any games complete). Without rule (b), every counting cat would land in `chase` on Monday since `|0| < CONTESTED_THRESHOLD`, making the rate cats look like they were "demoted" by the engine when they're actually the only ones being correctly handled. Aggregates (`leverage`, `contestedCount`, `lockedCount`) skip no-signal rows on the same logic — a flat 0=0 matchup should read as flat, not as fully contested. (Headline W/L/T uses `countsTowardRecord` on `MatchupRow` instead — see `buildMatchupRows` — so one-sided categories can count in the Boss tally without inventing a recommendation margin from "5 vs —" or "3.50 vs —".)
 

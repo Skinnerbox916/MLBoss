@@ -37,6 +37,7 @@
  */
 
 import { rowHasComparablePair, type MatchupRow } from '@/components/shared/matchupRows';
+import { countingGapSigma, ratioGapSigma, type RatioSideVolume } from './categoryVariance';
 import type { ProjectedCategory } from '@/lib/hooks/useBatterTeamProjection';
 import { isProjectablePitcherStat } from '@/lib/projection/pitcherTeam';
 import { parseYahooIP } from '@/lib/utils';
@@ -147,12 +148,20 @@ function correctRowProjectionOnly(
   // out of consumer panels via `rowHasComparablePair`.
   if (!myProj || !oppProj) return row;
 
+  // Nothing has elapsed on the pivot, so remaining production IS the whole
+  // projection and the denominator total IS the projected denominator.
+  const projVolume = (p: ProjectedCategory): RatioSideVolume => ({
+    numeratorRemaining: p.expectedCount,
+    denominatorTotal: p.expectedDenom,
+  });
+
   if (row.statId === STAT_ID_AVG) {
     if (myProj.expectedDenom <= 0 || oppProj.expectedDenom <= 0) return row;
     return buildAvgCorrectedRow(
       row,
       myProj.expectedCount / myProj.expectedDenom,
       oppProj.expectedCount / oppProj.expectedDenom,
+      ratioGapSigma(row.statId, projVolume(myProj), projVolume(oppProj)),
     );
   }
 
@@ -163,6 +172,7 @@ function correctRowProjectionOnly(
       row,
       (myProj.expectedCount / myProj.expectedDenom) * eraScale,
       (oppProj.expectedCount / oppProj.expectedDenom) * eraScale,
+      ratioGapSigma(row.statId, projVolume(myProj), projVolume(oppProj)),
     );
   }
 
@@ -170,7 +180,12 @@ function correctRowProjectionOnly(
   // K/W/QS/IP). Un-projectable pitcher cats (K/9, BB/9, H/9) won't have a
   // projection at all and fell out at the `!myProj || !oppProj` guard above.
   if (row.isBatterStat || isProjectablePitcherStat(row.statId)) {
-    return buildCountingCorrectedRow(row, myProj.expectedCount, oppProj.expectedCount);
+    return buildCountingCorrectedRow(
+      row,
+      myProj.expectedCount,
+      oppProj.expectedCount,
+      countingGapSigma(row.statId, myProj.expectedCount, oppProj.expectedCount),
+    );
   }
   return row;
 }
@@ -188,10 +203,13 @@ function correctCountingRow(
   const oppMtd = parseFloat(row.oppVal);
   if (!Number.isFinite(myMtd) || !Number.isFinite(oppMtd)) return row;
 
+  // `expectedCount` is the REST-of-week projection, which is exactly the
+  // production still carrying uncertainty — what the gap σ is built from.
   return buildCountingCorrectedRow(
     row,
     myMtd + (myProj?.expectedCount ?? 0),
     oppMtd + (oppProj?.expectedCount ?? 0),
+    countingGapSigma(row.statId, myProj?.expectedCount ?? 0, oppProj?.expectedCount ?? 0),
   );
 }
 
@@ -212,10 +230,16 @@ function correctAvgRow(
   const oppMtdAvg = parseFloat(row.oppVal);
   if (!Number.isFinite(myMtdAvg) || !Number.isFinite(oppMtdAvg)) return row;
 
+  const mine = blendAvg(myMtdAvg, ctx.myMtdH, myProj, ctx.daysElapsed, ctx.weekLengthDays);
+  const theirs = blendAvg(oppMtdAvg, ctx.oppMtdH, oppProj, ctx.daysElapsed, ctx.weekLengthDays);
+
   return buildAvgCorrectedRow(
     row,
-    blendAvg(myMtdAvg, ctx.myMtdH, myProj, ctx.daysElapsed, ctx.weekLengthDays),
-    blendAvg(oppMtdAvg, ctx.oppMtdH, oppProj, ctx.daysElapsed, ctx.weekLengthDays),
+    mine.value,
+    theirs.value,
+    mine.volume && theirs.volume
+      ? ratioGapSigma(row.statId, mine.volume, theirs.volume)
+      : null,
   );
 }
 
@@ -239,8 +263,8 @@ function blendAvg(
   proj: ProjectedCategory | undefined,
   daysElapsed: number,
   weekLengthDays: number,
-): number {
-  if (!proj || proj.expectedDenom <= 0) return mtdAvg;
+): { value: number; volume: RatioSideVolume | null } {
+  if (!proj || proj.expectedDenom <= 0) return { value: mtdAvg, volume: null };
   const projH = proj.expectedCount;
   const projAB = proj.expectedDenom;
   const projAvg = projAB > 0 ? projH / projAB : mtdAvg;
@@ -257,9 +281,15 @@ function blendAvg(
   }
 
   const totalAB = mtdAB + projAB;
-  if (totalAB <= 0) return mtdAvg;
+  if (totalAB <= 0) return { value: mtdAvg, volume: null };
   const correctedH = mtdAvg * mtdAB + projAvg * projAB;
-  return correctedH / totalAB;
+  // Only the projected hits are still uncertain; the ones already banked
+  // are not. The denominator (at-bats) is treated as known — see
+  // `ratioGapSigma`.
+  return {
+    value: correctedH / totalAB,
+    volume: { numeratorRemaining: projH, denominatorTotal: totalAB },
+  };
 }
 
 interface PitcherRatioContext {
@@ -279,10 +309,16 @@ function correctPitcherRatioRow(
   const myMtdRatio = parseFloat(row.myVal) || 0;
   const oppMtdRatio = parseFloat(row.oppVal) || 0;
 
+  const mine = blendPitcherRatio(myMtdRatio, ctx.myMtdIP, myProj, ctx.daysElapsed, ctx.weekLengthDays, isEra);
+  const theirs = blendPitcherRatio(oppMtdRatio, ctx.oppMtdIP, oppProj, ctx.daysElapsed, ctx.weekLengthDays, isEra);
+
   return buildPitcherRatioCorrectedRow(
     row,
-    blendPitcherRatio(myMtdRatio, ctx.myMtdIP, myProj, ctx.daysElapsed, ctx.weekLengthDays, isEra),
-    blendPitcherRatio(oppMtdRatio, ctx.oppMtdIP, oppProj, ctx.daysElapsed, ctx.weekLengthDays, isEra),
+    mine.value,
+    theirs.value,
+    mine.volume && theirs.volume
+      ? ratioGapSigma(row.statId, mine.volume, theirs.volume)
+      : null,
   );
 }
 
@@ -296,8 +332,8 @@ function blendPitcherRatio(
   daysElapsed: number,
   weekLengthDays: number,
   isEra: boolean,
-): number {
-  if (!proj || proj.expectedDenom <= 0) return mtdRatio;
+): { value: number; volume: RatioSideVolume | null } {
+  if (!proj || proj.expectedDenom <= 0) return { value: mtdRatio, volume: null };
   const projNum = proj.expectedCount;
   const projIP = proj.expectedDenom;
 
@@ -311,44 +347,66 @@ function blendPitcherRatio(
   }
 
   const totalIP = actualMtdIP + projIP;
-  if (totalIP <= 0) return mtdRatio;
+  if (totalIP <= 0) return { value: mtdRatio, volume: null };
 
   // Recover mtdNum (ER or H+BB) from mtdRatio and mtdIP
   const mtdNum = isEra ? (mtdRatio * actualMtdIP) / 9 : mtdRatio * actualMtdIP;
   const totalNum = mtdNum + projNum;
   const finalRatio = totalIP > 0 ? (isEra ? (totalNum / totalIP) * 9 : totalNum / totalIP) : mtdRatio;
 
-  return finalRatio;
+  // Only the projected earned runs / baserunners still carry uncertainty.
+  return {
+    value: finalRatio,
+    volume: { numeratorRemaining: projNum, denominatorTotal: totalIP },
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Row builders — shared between blend and projection-only modes
 // ---------------------------------------------------------------------------
 
-function buildCountingCorrectedRow(row: MatchupRow, myValue: number, oppValue: number): MatchupRow {
+function buildCountingCorrectedRow(
+  row: MatchupRow,
+  myValue: number,
+  oppValue: number,
+  gapSigma: number | null,
+): MatchupRow {
   return {
     ...row,
     myVal: formatCount(myValue),
     oppVal: formatCount(oppValue),
     winning: deltaWinning(myValue, oppValue, row.betterIs),
+    ...(gapSigma !== null ? { gapSigma } : {}),
   };
 }
 
-function buildAvgCorrectedRow(row: MatchupRow, myAvg: number, oppAvg: number): MatchupRow {
+function buildAvgCorrectedRow(
+  row: MatchupRow,
+  myAvg: number,
+  oppAvg: number,
+  gapSigma: number | null,
+): MatchupRow {
   return {
     ...row,
     myVal: formatAvg(myAvg),
     oppVal: formatAvg(oppAvg),
     winning: deltaWinning(myAvg, oppAvg, row.betterIs),
+    ...(gapSigma !== null ? { gapSigma } : {}),
   };
 }
 
-function buildPitcherRatioCorrectedRow(row: MatchupRow, myRatio: number, oppRatio: number): MatchupRow {
+function buildPitcherRatioCorrectedRow(
+  row: MatchupRow,
+  myRatio: number,
+  oppRatio: number,
+  gapSigma: number | null,
+): MatchupRow {
   return {
     ...row,
     myVal: formatPitcherRatio(myRatio),
     oppVal: formatPitcherRatio(oppRatio),
     winning: deltaWinning(myRatio, oppRatio, row.betterIs),
+    ...(gapSigma !== null ? { gapSigma } : {}),
   };
 }
 

@@ -38,6 +38,18 @@ export interface MatchupRow {
    *  like ERA/WHIP, "higher" for the rest. Carried through so downstream
    *  analysis (margin, suggested focus) doesn't have to re-look it up. */
   betterIs: 'higher' | 'lower';
+  /**
+   * σ of the (mine − opponent) difference in this category's FINAL value,
+   * given how much production each side still has coming.
+   *
+   * Set by `composeCorrectedRows`, which is the only layer that knows the
+   * remaining volumes. `analyzeMatchup` turns it into a win probability and
+   * hence the margin; when it is absent (an unprojected category, or a
+   * matchup-to-date row that never went through the composer) the analysis
+   * falls back to its legacy per-category scale. See
+   * [categoryVariance.ts](../../lib/matchup/categoryVariance.ts).
+   */
+  gapSigma?: number;
 }
 
 /** True when the cell should show a formatted number (not our placeholder em-dash). */

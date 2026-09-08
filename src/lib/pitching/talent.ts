@@ -343,14 +343,20 @@ export function talentHrPerPA(t: TalentForHr): number {
  *  hit-allowing skill — same shape as `talentBaa` but normalised per
  *  PA (BAA strips walks; H/PA includes them in the denominator).
  *
- *  H/PA = H/AB × AB/PA = talentBaa × (1 − bbPerPA) approximately
- *  (HBP and SF are tiny and partially offset; ignored here for
- *  simplicity — adding them would change H/PA by < 0.5%). */
+ *  H/PA = H/AB × AB/PA = talentBaa × (1 − bbPerPA − NON_BB_NON_AB_PER_PA).
+ *  The old `1 − bbPerPA` shortcut dropped HBP / SF / SH (2.3% of PA) and
+ *  ran H/PA 2.6% high for every pitcher — not the "< 0.5%" its comment
+ *  claimed. Same constant as `abPerPA` in mlb/categoryBaselines.ts. */
 export function talentHitsPerPA(
   t: Pick<PitcherTalent, 'contactXwoba' | 'bbPerPA'>,
 ): number {
-  return talentBaa(t) * Math.max(0, 1 - t.bbPerPA);
+  return talentBaa(t) * Math.max(0, 1 - t.bbPerPA - NON_BB_NON_AB_PER_PA);
 }
+
+/** PA that are neither a walk nor an at-bat (HBP, SF, SH, interference).
+ *  2026 season-to-date .0229 — AB/PA .888 against BB/PA .0891 (MLB Stats
+ *  API, 2026-09-08). Mirrors `NON_BB_NON_AB_PER_PA` in categoryBaselines. */
+const NON_BB_NON_AB_PER_PA = 0.023;
 
 // ---------------------------------------------------------------------------
 // League constants (used by SoS + the HR/contact regression)
@@ -369,7 +375,7 @@ export const LEAGUE_OPS = 0.710;
 /** League-average HR-per-contact rate. Used as the regression anchor for
  *  hrPerContact. ~0.035 corresponds to a roughly league-average HR/9 of
  *  1.15 across the population. */
-const LEAGUE_HR_PER_CONTACT = 0.035;
+export const LEAGUE_HR_PER_CONTACT = 0.035;
 const LEAGUE_HR_PER_CONTACT_PRIOR_BIP = 200;
 
 /** League-average IP/start. Anchors `ipPerStart` for thin samples

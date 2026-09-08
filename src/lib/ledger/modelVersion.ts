@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.09.05';
+export const MODEL_VERSION = '2026.09.08';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -197,6 +197,33 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'k', 'bb', 'score'] },
       { engine: 'points-batter-day', stats: '*' },
       { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'tb', 'k', 'bb', 'score'] },
+    ],
+  },
+  {
+    version: '2026.09.08',
+    date: '2026-09-08',
+    summary:
+      'Batter matchup layer recalibrated from the regenerated full-season retro cohort (37,386 graded ' +
+      'batter-days on the park-neutralised baseline). (1) KNOB_RELIABILITY takes its fitted values: opposing ' +
+      'pitcher 0.36-0.77 and park 0.36-0.71 per stat, team-SB 0.53 — each knob now moves the forecast only as ' +
+      'far as the outcomes justify. (2) League-mean anchors refreshed to 2026 season-to-date (AVG .244, H .216, ' +
+      'HR .030, R .118, RBI .113, SB .018 (was .010), TB .355, 2B .041, 3B .0035, HBP .0115; K/BB unchanged), ' +
+      'in categoryBaselines, the batterForecast log5 anchors and LEAGUE_XBA together. (3) AB/PA on the ' +
+      'talent path is 1 - BB% - 2.3% (HBP/SF/SH), not 1 - BB%, which had every talent-path H and TB 2.6% ' +
+      'high; talentHitsPerPA carries the same fix, so points-pitcher H moves too. (4) The SP HR input is ' +
+      'rescaled from its talent basis (.035 HR/contact x contact share = .024) onto the actual .030 basis before ' +
+      'the ratio, so a league-average starter no longer reads as a 20% HR suppressor. (5) Athletics park ' +
+      'lookup: ATH now resolves to Sutter Health Park (the table said OAK), so A\'s batters get the baseline ' +
+      'neutralisation and the roster-page home-park dose like everyone else. Score only: normalisation ' +
+      'windows recentred on the league means with half-widths of 2.5 forecast-SDs, so a league-average ' +
+      'batter-day composites to 50 (was 29-38) and the ceiling pile-up on single-category weight vectors ' +
+      'clears; the forecast quantities above are what the ledger grades.',
+    touched: [
+      { engine: 'batter-day', stats: '*' },
+      { engine: 'batter-week', stats: '*' },
+      { engine: 'points-batter-day', stats: '*' },
+      { engine: 'retro-batter-day', stats: '*' },
+      { engine: 'points-pitcher-start', stats: ['points'] },
     ],
   },
 ];

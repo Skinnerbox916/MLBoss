@@ -40,9 +40,12 @@ export type KnobName =
  * Reliability per knob, optionally per stat_id. `'*'` is the knob's default.
  * 1.0 = apply the raw multiplier as computed.
  *
- * Everything sits at 1.0 today because introducing the mechanism must not
- * move a single forecast — the values that belong here are fitted, and each
- * one lands as its own reviewable change with its own MODEL_VERSION bump.
+ * The mechanism landed with everything at 1.0 (behaviour-neutral by design);
+ * the fitted values below arrived 2026-09-08 as their own MODEL_VERSION bump,
+ * once the cohort had been regenerated on the park-neutralised baseline so the
+ * fit was reading the engine as shipped rather than the pre-fix build. Re-fit
+ * with `npx tsx scripts/retro-knob-fit.ts retro-batter-day` after any change
+ * to a knob's own model; a correctly-set table reads back ~1.00.
  *
  * `platoon` is 1.0 and is expected to stay there. Its calibration lives one
  * level down, inside `platoon.ts`, because its multiplier is a blend of two
@@ -54,12 +57,36 @@ export type KnobName =
  * single computed multiplier belongs here.
  */
 const KNOB_RELIABILITY: Partial<Record<KnobName, Partial<Record<number | '*', number>>>> = {
-  // pitcher: fitted 0.36–0.77 across the seven stats — the worst-scaled knob
-  //          on the board and the one that applies to every batter every day.
-  // park:    fitted 0.34–0.77, but the home/away split (0.17–0.57 home vs
-  //          0.40–1.00 away) says part of that is the talent baseline already
-  //          containing the player's home park. A reliability here would be
-  //          papering over a double-count; neutralise the baseline instead.
+  // Fitted 2026-09-08 on the regenerated full-season cohort (37,386 graded
+  // batter-days, rate basis, park-neutralised baseline, fitted priors) —
+  // docs/forecast-verification.md#per-knob-calibration-fit. Each value is
+  // the Poisson coefficient on log(knob), so `m ** r` makes the next fit
+  // read 1.00. AVG (3) has no graded count; it rides the H log5 and takes
+  // H's value. Knobs the fit could not identify (weather, hand; SE > 0.8)
+  // and knobs that read ~1.00 (order 0.90 / 0.96) stay at 1.0.
+  pitcher: {
+    3: 0.36, 8: 0.36,   // AVG, H   (±0.11)
+    23: 0.51,           // TB       (±0.10)
+    12: 0.76,           // HR       (±0.15)
+    7: 0.41, 13: 0.42,  // R, RBI   (±0.08)
+    21: 0.77,           // K        (±0.04)
+    18: 0.64,           // BB       (±0.06)
+  },
+  // Park, post-neutralisation: the home/away split that flagged the
+  // double-count has closed (R 1.10/0.62 → pooled 0.71, RBI 0.96/0.61 →
+  // 0.66, HR 0.38/0.48, K 0.46/0.51); what is left is uniform
+  // over-application, which is what this table is for.
+  park: {
+    3: 0.36, 8: 0.36,   // AVG, H   (±0.13)
+    23: 0.60,           // TB       (±0.11)
+    12: 0.48,           // HR       (±0.11)
+    7: 0.71, 13: 0.66,  // R, RBI   (±0.19)
+    21: 0.52,           // K        (±0.09)
+    18: 0.39,           // BB       (±0.15)
+  },
+  // Team SB-allowed: about half the applied swing is delivered (±0.11). The
+  // flat RHP hand bump is not identified by the fit (SE 0.87) and stays raw.
+  teamSb: { 16: 0.53 },
 };
 
 /**

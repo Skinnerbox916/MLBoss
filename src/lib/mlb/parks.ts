@@ -256,7 +256,7 @@ const PARKS_RAW: Omit<ParkData, 'tendency'>[] = [
   {
     mlbVenueId: 2529,
     name: 'Sutter Health Park',
-    teamAbbr: 'OAK',
+    teamAbbr: 'ATH',
     city: 'West Sacramento, CA',
     lat: 38.5801, lng: -121.5128,
     surface: 'grass', roof: 'open',

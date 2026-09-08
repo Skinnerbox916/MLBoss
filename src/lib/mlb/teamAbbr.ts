@@ -45,6 +45,10 @@ const ALIASES: Record<string, string> = {
   // Tampa Bay
   TBR: 'TB',
   TB: 'TB',
+  // Athletics — MLB/Yahoo/ESPN all say ATH since the Sacramento move;
+  // Savant and pre-2025 tables still say OAK.
+  OAK: 'ATH',
+  ATH: 'ATH',
 };
 
 /**

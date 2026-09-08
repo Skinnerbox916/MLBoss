@@ -42,16 +42,27 @@ export interface CategoryBaselineConfig {
   getCurrent: (s: BatterSeasonStats) => number | null;
   /** Pull the prior per-PA rate (or native rate for AVG). */
   getPrior: (p: NonNullable<BatterSeasonStats['priorSeason']>) => number | null;
-  /** (floor, elite) rate bounds for 0-1 normalisation. Clamped. */
-  normRange: [number, number];
+  /**
+   * 0-1 normalisation window, `center ± halfWidth`, clamped. `center` is the
+   * league mean, so a league-average rate normalises to exactly 0.5 and the
+   * composite's "50 = neutral" contract holds by construction. `halfWidth`
+   * is 2.5 standard deviations of the forecast layer's own per-PA output
+   * over the full-season retro cohort — one SD of forecast movement is
+   * worth the same score points in every category, and ~1% of batter-days
+   * clip at either end. See docs/unified-rating-model.md#batter-score-scale.
+   */
+  norm: { center: number; halfWidth: number };
   /** Which direction is "good"? AVG/HR/R/RBI/SB/BB/H higher = better; K lower = better. */
   betterIs: 'higher' | 'lower';
 }
 
 /**
- * Per-category config. Bounds chosen so elite (top-20-ish) players normalise
- * near 1.0 and clearly-below-average normalise near 0. League means pulled
- * from 2024 MLB rates.
+ * Per-category config. `leagueMean` values are 2026 season-to-date MLB rates
+ * (MLB Stats API `/teams/stats?group=hitting&stats=season`, 30 teams summed,
+ * 163,893 PA, fetched 2026-09-08) — refresh per
+ * docs/league-baselines.md#updating-these and keep the `batterForecast.ts`
+ * log5 anchors in step. `norm` windows are centred on those means; see the
+ * field doc above.
  *
  * `leaguePriorN` is how many plate appearances of league-average the blend
  * mixes in — the regression strength. It is fitted per category, not chosen:
@@ -83,104 +94,103 @@ export interface CategoryBaselineConfig {
  * alike than they used to, and a hot or cold stretch moves a projection less.
  */
 export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = {
-  3: { // AVG — leagueMean refreshed 2026 mid-season from MLB Stats API
-       //       (was 0.243 from 2024; reality is ~0.239 in 2026).
+  3: { // AVG — 2026 season-to-date .2437 (was .239 from a mid-season pull).
     label: 'AVG',
-    leagueMean: 0.239,
+    leagueMean: 0.244,
     leaguePriorN: 700,
     priorCap: 250,
     getCurrent: s => s.avg,
     getPrior: p => p.avg,
-    normRange: [0.220, 0.300],
+    norm: { center: 0.244, halfWidth: 0.044 },
     betterIs: 'higher',
   },
   7: { // R
     label: 'R',
-    leagueMean: 0.115,
+    leagueMean: 0.118,
     leaguePriorN: 650,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.runs / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.runs / p.pa : null),
-    normRange: [0.090, 0.155],
+    norm: { center: 0.118, halfWidth: 0.033 },
     betterIs: 'higher',
   },
-  8: { // H — leagueMean refreshed 2026 (was 0.215).
+  8: { // H — 2026 season-to-date .2164.
     label: 'H',
-    leagueMean: 0.212,
+    leagueMean: 0.216,
     leaguePriorN: 600,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.hits / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.hits / p.pa : null),
-    normRange: [0.195, 0.265],
+    norm: { center: 0.216, halfWidth: 0.039 },
     betterIs: 'higher',
   },
-  10: { // 2B — doubles per PA. League ~0.044 (MLB ~8.2k doubles / ~185k PA).
+  10: { // 2B — doubles per PA. 2026 season-to-date .0410.
         //      Optional-field getters: `doubles` is absent on stale cached
         //      lines; null routes the blend to prior + league mean.
     label: '2B',
-    leagueMean: 0.044,
+    leagueMean: 0.041,
     leaguePriorN: 1500,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 && typeof s.doubles === 'number' ? s.doubles / s.pa : null),
     getPrior: p => (p.pa > 0 && typeof p.doubles === 'number' ? p.doubles / p.pa : null),
-    normRange: [0.025, 0.070],
+    norm: { center: 0.041, halfWidth: 0.005 },
     betterIs: 'higher',
   },
-  11: { // 3B — triples per PA. Rare, speed/park-driven; league ~0.0045.
+  11: { // 3B — triples per PA. Rare, speed/park-driven; 2026 season-to-date .0035.
         //      Tight prior (stabilises slowly, but the absolute rates are
         //      tiny — the blend mostly separates the 8-triple burners from
         //      the zeros).
     label: '3B',
-    leagueMean: 0.0045,
+    leagueMean: 0.0035,
     leaguePriorN: 700,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 && typeof s.triples === 'number' ? s.triples / s.pa : null),
     getPrior: p => (p.pa > 0 && typeof p.triples === 'number' ? p.triples / p.pa : null),
-    normRange: [0, 0.015],
+    norm: { center: 0.0035, halfWidth: 0.0035 },
     betterIs: 'higher',
   },
-  12: { // HR — leagueMean refreshed 2026 (was 0.028). HR rates have
-        //      compressed; the 2026 league HR/PA is ~0.0275.
+  12: { // HR — 2026 season-to-date .0302 (a mid-season pull read .0275).
     label: 'HR',
-    leagueMean: 0.0275,
+    leagueMean: 0.030,
     leaguePriorN: 425,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.hr / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.hr / p.pa : null),
-    normRange: [0.015, 0.055],
+    norm: { center: 0.030, halfWidth: 0.0185 },
     betterIs: 'higher',
   },
   13: { // RBI
     label: 'RBI',
-    leagueMean: 0.110,
+    leagueMean: 0.113,
     leaguePriorN: 800,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.rbi / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.rbi / p.pa : null),
-    normRange: [0.085, 0.155],
+    norm: { center: 0.113, halfWidth: 0.0355 },
     betterIs: 'higher',
   },
-  16: { // SB
+  16: { // SB — 2026 season-to-date .0178. The .010 it carried was a pre-2023 rate;
+        //      the bigger bases roughly doubled it and the anchor was never refreshed.
     label: 'SB',
-    leagueMean: 0.010,
+    leagueMean: 0.018,
     leaguePriorN: 100,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.sb / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.sb / p.pa : null),
-    normRange: [0.005, 0.050],
+    norm: { center: 0.018, halfWidth: 0.038 },
     betterIs: 'higher',
   },
-  20: { // HBP — hit-by-pitch per PA. League ~0.009; plate-crowders run
+  20: { // HBP — hit-by-pitch per PA. 2026 season-to-date .0115; plate-crowders run
         //      3x that and the trait is among the most persistent batter
         //      skills year-to-year. Included for points leagues (2.6 pts
         //      each in Yahoo default); ~1.3 pts/wk at the archetype extreme.
     label: 'HBP',
-    leagueMean: 0.009,
+    leagueMean: 0.0115,
     leaguePriorN: 400,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 && typeof s.hbp === 'number' ? s.hbp / s.pa : null),
     getPrior: p => (p.pa > 0 && typeof p.hbp === 'number' ? p.hbp / p.pa : null),
-    normRange: [0, 0.025],
+    norm: { center: 0.0115, halfWidth: 0.0125 },
     betterIs: 'higher',
   },
   18: { // BB — stabilises ~120 PA. leagueMean refreshed 2026 (was 0.084),
@@ -192,7 +202,7 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.walks / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.walks / p.pa : null),
-    normRange: [0.055, 0.140],
+    norm: { center: 0.089, halfWidth: 0.0605 },
     betterIs: 'higher',
   },
   21: { // K — stabilises ~60 PA; tighter prior cap so a diverging current K% isn't drowned.
@@ -203,19 +213,18 @@ export const CATEGORY_BASELINE_CONFIG: Record<number, CategoryBaselineConfig> = 
     priorCap: 150,
     getCurrent: s => (s.pa > 0 ? s.strikeouts / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.strikeouts / p.pa : null),
-    normRange: [0.140, 0.300],
+    norm: { center: 0.221, halfWidth: 0.142 },
     betterIs: 'lower',
   },
   23: { // TB — total bases per PA. League-mean TB/PA ≈ AVG × bases-per-hit ×
-        // AB/PA → roughly 0.34 in 2024 MLB. Elite power+contact hitters land
-        // near 0.50; punchless hitters near 0.25.
+        // AB/PA → .3552 in 2026 season-to-date.
     label: 'TB',
-    leagueMean: 0.340,
+    leagueMean: 0.355,
     leaguePriorN: 900,
     priorCap: 250,
     getCurrent: s => (s.pa > 0 ? s.totalBases / s.pa : null),
     getPrior: p => (p.pa > 0 ? p.totalBases / p.pa : null),
-    normRange: [0.260, 0.470],
+    norm: { center: 0.355, halfWidth: 0.086 },
     betterIs: 'higher',
   },
 };
@@ -267,6 +276,21 @@ export interface BlendedBaseline {
 const TALENT_GATE_EFFECTIVE_PA = 100;
 
 /**
+ * Share of plate appearances that are neither a walk nor an at-bat — HBP,
+ * sacrifice flies and bunts, catcher's interference. 2026 season-to-date:
+ * AB/PA .888 with BB/PA .0891, so .0229 (MLB Stats API, 2026-09-08). The
+ * old `1 − bbRate` approximation dropped this and ran every talent-path
+ * H/PA and TB/PA ~2.6% high, which read as a +0.08 normalized level bias on
+ * both categories for every batter.
+ */
+const NON_BB_NON_AB_PER_PA = 0.023;
+
+/** AB/PA for a batter with the given walk rate. */
+export function abPerPA(bbRate: number): number {
+  return Math.max(0, 1 - bbRate - NON_BB_NON_AB_PER_PA);
+}
+
+/**
  * Talent-derived rate for cats with strong Statcast signal. Returns null
  * for cats where talent doesn't help (R/RBI/SB depend on lineup context,
  * not pure batter skill; HR has no Savant expected primary — xSLG − xBA
@@ -293,10 +317,10 @@ function talentRateForCategory(
   switch (statId) {
     case 3: // AVG — xBA is the deserved H/AB
       return xba;
-    case 8: // H — xBA × (AB/PA); AB/PA ≈ (1 − bbRate)
-      return xba !== null && bbRate !== null ? xba * (1 - bbRate) : null;
-    case 23: // TB — xSLG × (AB/PA); SLG is TB/AB, so TB/PA ≈ xSLG × (1 − bbRate)
-      return xslg !== null && bbRate !== null ? xslg * (1 - bbRate) : null;
+    case 8: // H — xBA × (AB/PA)
+      return xba !== null && bbRate !== null ? xba * abPerPA(bbRate) : null;
+    case 23: // TB — xSLG × (AB/PA); SLG is TB/AB
+      return xslg !== null && bbRate !== null ? xslg * abPerPA(bbRate) : null;
     case 21: // K — regressed K%
       return kRate;
     case 18: // BB — regressed BB%
@@ -428,9 +452,9 @@ export function normalizeRate(
 ): number {
   const cfg = CATEGORY_BASELINE_CONFIG[statId];
   if (!cfg) return 0;
-  const [lo, hi] = cfg.normRange;
-  if (hi <= lo) return 0;
-  let norm = (rate - lo) / (hi - lo);
+  const { center, halfWidth } = cfg.norm;
+  if (halfWidth <= 0) return 0;
+  let norm = 0.5 + (rate - center) / (2 * halfWidth);
   if (betterIs === 'lower') norm = 1 - norm;
   return Math.max(0, Math.min(1, norm));
 }

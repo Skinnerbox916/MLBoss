@@ -31,6 +31,7 @@ import { applyKnobs } from './knobReliability';
 import { getLeagueSbAllowedPerIp } from './leagueRates';
 import {
   LEAGUE_IP_PER_START,
+  LEAGUE_HR_PER_CONTACT,
   talentExpectedEra,
   talentBaa as talentBaaPrimitive,
   talentHrPerPA as talentHrPerPAPrimitive,
@@ -45,15 +46,26 @@ import {
 // see docs/history.md "2026-05 — League rate calibration refresh".
 // ---------------------------------------------------------------------------
 
-const LEAGUE_AVG = 0.239;
+const LEAGUE_AVG = 0.244;        // 2026 season-to-date .2437 (MLB Stats API, 2026-09-08)
 const LEAGUE_K_PER_PA = 0.221;
 const LEAGUE_BB_PER_PA = 0.089; // re-refreshed 2026-07-23 (May's .094 was the early-season walk spike)
-const LEAGUE_H_PER_PA = 0.212;
+const LEAGUE_H_PER_PA = 0.216;   // 2026 season-to-date .2164
 /** League-average HR per plate appearance. 2026 MLB rate is ~0.028
  *  (notably lower than the 2024 anchor 0.034). HR is the constant most
  *  sensitive to era — the dead-ball-ish 2026 environment means HR
  *  ratio-clamp anchors were systematically pessimistic at 0.034. */
-const LEAGUE_HR_PER_PA = 0.0275;
+const LEAGUE_HR_PER_PA = 0.030;  // 2026 season-to-date .0302
+/**
+ * The SP-side HR input is a TALENT primitive — `hrPerContact` regressed
+ * toward `LEAGUE_HR_PER_CONTACT`, times the contact share — while the
+ * bullpen input and `LEAGUE_HR_PER_PA` are ACTUAL rates. The two bases do
+ * not agree at the league mean (.035 × (1 − .221 − .089) = .024 against
+ * .030), so a dead-average starter read as a 20% HR suppressor for every
+ * batter, every day. Rescale the SP primitive onto the actual basis before
+ * the ratio; this factor becomes 1.0 the day the pitcher-side anchor is
+ * refreshed. See docs/league-baselines.md#batter-hr-knob-basis.
+ */
+const SP_HR_TALENT_TO_ACTUAL = LEAGUE_HR_PER_PA / (LEAGUE_HR_PER_CONTACT * (1 - LEAGUE_K_PER_PA - LEAGUE_BB_PER_PA));
 
 // ---------------------------------------------------------------------------
 // Pitcher share-of-variance bounds — anchored to published research, not
@@ -375,7 +387,8 @@ function applyMatchupModifier(
       // Pitcher swing tightened to literature: HR variance is dominated
       // by batter and park; the empirical extreme-pitcher edge per-PA is
       // ~2% (Tango/Clemens). PITCHER_SWING_HR caps at ±18%.
-      const spHr = spHrPerPA(sp);
+      const spHrRaw = spHrPerPA(sp);
+      const spHr = spHrRaw != null ? spHrRaw * SP_HR_TALENT_TO_ACTUAL : null;
       const rpHr = oppRp?.hrPerPA ?? null;
       const blendedMod = blendRatioMult(spHr, rpHr, LEAGUE_HR_PER_PA, PITCHER_SWING_HR, spShare);
       const hints: string[] = [];

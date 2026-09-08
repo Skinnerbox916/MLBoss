@@ -298,6 +298,45 @@ interface Profile {
 
 const PROFILES: Profile[] = [
   {
+    name: 'leagueAverage',
+    desc: 'League-average-everything batter vs league-anchor SP, neutral park/weather, unknown order — locks the 50 = neutral contract',
+    // Every rate sits exactly on its CATEGORY_BASELINE_CONFIG leagueMean and
+    // every talent field on its talentModel anchor, so the L1 baseline is the
+    // league mean by construction. Switch hitter so platoon is held at 1.0;
+    // battingOrder null so opportunity is exactly 1.0; SP talent on the
+    // league anchors so every log5 / ratio knob reads ~1.0. What is left is
+    // the L3 window centering — see docs/unified-rating-model.md#batter-score-scale.
+    // 600 PA at the 2026 league rates in CATEGORY_BASELINE_CONFIG:
+    // AVG .244, H .216, HR .030, R .118, RBI .113, SB .018, BB .089, K .221, TB .355.
+    stats: batter({
+      bats: 'S', avg: 0.244, pa: 600, gp: 150,
+      hr: 18, sb: 11, runs: 71, hits: 130, rbi: 68, walks: 53, strikeouts: 133, totalBases: 213,
+      ops: 0.720, xwoba: 0.320, woba: 0.320, xwobaEffectivePA: 600, xwobaCurrent: 0.320,
+      xwobaCurrentBip: 380, xwobaTalentPrior: 0.320, kRate: 0.221, bbRate: 0.089,
+      xba: 0.244, xslg: 0.404, opsVsL: 0.720, paVsL: 160, opsVsR: 0.720, paVsR: 440,
+      priorSeason: {
+        season: 2025, pa: 600, gp: 150, hr: 18, sb: 11, runs: 71, rbi: 68,
+        hits: 130, walks: 53, strikeouts: 133, totalBases: 213, avg: 0.244,
+      },
+    }),
+    context: ctx({
+      game: game({ park: NEUTRAL_PARK, homeStaffEra: 4.20, awayStaffEra: 4.20 }),
+      isHome: false,
+      opposingPitcher: sp({
+        throws: 'R', era: 4.20, xera: 4.20, battingAvgAgainst: 0.244,
+        talent: pitcherTalent({
+          kPerPA: 0.221, bbPerPA: 0.089, contactXwoba: 0.368, hrPerContact: 0.035,
+          ipPerStart: 5.4, gbRate: 0.435,
+        }),
+      }),
+      hand: 'S',
+      battingOrder: null,
+    }),
+    battingOrder: null,
+    focusMap: NEUTRAL_FOCUS,
+    expectedScoreRange: [46, 54],
+  },
+  {
     name: 'strong-vs-average',
     desc: 'Strong RHB (.275/22 HR) vs average RHP, neutral park, top of order',
     stats: batter({}),
@@ -311,11 +350,11 @@ const PROFILES: Profile[] = [
     battingOrder: 2,
     focusMap: NEUTRAL_FOCUS,
     // Above-average batter vs league-mean SP → SP modifiers are all
-    // ~neutral; the score reflects baseline talent + batting-order
-    // opportunity (1.06×). Platoon is now per-cat (RHB-vs-RHP same-hand:
-    // small K bump / AVG dip), folded into the cats rather than a
-    // composite factor. Lands in the mid-high 60s.
-    expectedScoreRange: [55, 75],
+    // ~neutral; the score is baseline talent on the centred windows
+    // (a .275/22-HR regular sits ~+0.6 SD in AVG/H/TB) × batting-order
+    // opportunity (1.13×). Platoon is per-cat (RHB-vs-RHP same-hand:
+    // small K bump / AVG dip). Lands in the low-to-mid 70s.
+    expectedScoreRange: [65, 80],
   },
   {
     name: 'strong-vs-ace',
@@ -334,7 +373,11 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 4,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [30, 55],
+    // The ace's bite is applied at its fitted reliability (pitcher knob
+    // 0.36-0.77 across the cats), so it takes an above-average bat down
+    // to roughly neutral rather than to "poor". Was 30-55 before the
+    // 2026-09-08 recentring + knob shrink.
+    expectedScoreRange: [45, 65],
   },
   {
     name: 'weak-vs-strong-coors',
@@ -384,7 +427,10 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 5,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [30, 55],
+    // Above-average bat (.265/18/12) at a pitcher's park: park knob now
+    // shrunk to 0.36-0.60 of its raw swing, so the park costs ~5 points
+    // rather than ~15. Reads a touch above neutral.
+    expectedScoreRange: [50, 70],
   },
   {
     name: 'sp-unknown',
@@ -400,9 +446,9 @@ const PROFILES: Profile[] = [
     battingOrder: 3,
     focusMap: NEUTRAL_FOCUS,
     // No SP → all per-PA modifiers reduce to baseline. Score = strong
-    // baseline × batting-order opportunity (1.04×) × no platoon
-    // adjustment (no hand to platoon against). Lands near 70.
-    expectedScoreRange: [60, 80],
+    // baseline × batting-order opportunity (1.09×) × no platoon
+    // adjustment (no hand to platoon against). Lands in the mid 70s.
+    expectedScoreRange: [65, 85],
   },
   {
     name: 'no-game',
@@ -426,7 +472,9 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 9,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [30, 55],
+    // Average bat on centred windows ≈ 50 before the 0.90× ninth-spot
+    // opportunity; lands around 45-52.
+    expectedScoreRange: [40, 60],
   },
   {
     name: 'chase-hr-punt-sb',
@@ -448,9 +496,9 @@ const PROFILES: Profile[] = [
       16: 'punt', 21: 'punt',
     },
     // Power-batter × Coors × wind-out × HR-prone SP × chased cats (HR,
-    // R, RBI) × punted negatives (K, SB). Every chase cat hits the
-    // normalize ceiling 1.0; weighted-sum-with-chase-x2 maxes out the
-    // composite. Score saturates near 96-100 — this is a ceiling test.
+    // R, RBI) × punted negatives (K, SB). A 35-HR bat is ~+2.5 SD on the
+    // HR window before Coors and the SP, so the chased cats clip at 1.0
+    // and the composite saturates — this is a ceiling test.
     expectedScoreRange: [85, 100],
   },
   {
@@ -472,7 +520,9 @@ const PROFILES: Profile[] = [
     }),
     battingOrder: 7,
     focusMap: NEUTRAL_FOCUS,
-    expectedScoreRange: [30, 55],
+    // 30-PA rookie: every category regresses to the league mean, so he
+    // reads as an average bat (≈50) shaded by the 0.98× spot factor.
+    expectedScoreRange: [38, 56],
   },
   {
     // SP/RP divergence: average SP against a shaky bullpen. The blend
@@ -534,9 +584,9 @@ const PROFILES: Profile[] = [
     battingOrder: 3,
     focusMap: NEUTRAL_FOCUS,
     // Opener has ace-level per-PA rates but only 3 IP — bullpen pulls
-    // toward league-average. Score lands above the no-blend score
-    // (where ace rates would dominate 9 IP).
-    expectedScoreRange: [40, 65],
+    // toward league-average, and the SP share of the knob is then shrunk
+    // by its reliability. A strong bat keeps most of its talent score.
+    expectedScoreRange: [60, 80],
   },
   {
     name: 'all-punt',

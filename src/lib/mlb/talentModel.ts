@@ -59,10 +59,10 @@ const LEAGUE_XWOBA = 0.320;           // for the end-result composite clamp
 // xBA tracks AVG closely (it's the no-luck deserved version of AVG); xSLG
 // is meaningfully higher than league SLG because Savant's per-BBE expected
 // outcomes credit hard contact that becomes outs at the league-average
-// BAA rate. xBA refreshed 2026 (0.243 → 0.239); xSLG left at 0.404 pending
+// BAA rate. xBA kept in step with LEAGUE_AVG (.244, 2026-09-08); xSLG left at 0.404 pending
 // a separate Savant probe.
 // See docs/unified-rating-model.md#per-cat-batter-baselines for usage.
-const LEAGUE_XBA = 0.239;
+const LEAGUE_XBA = 0.244;
 const LEAGUE_XSLG = 0.404;
 
 const PRIOR_K_PA = 60;

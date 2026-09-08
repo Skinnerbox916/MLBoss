@@ -49,6 +49,7 @@ Used by [batterForecast.ts](../src/lib/mlb/batterForecast.ts) for log5 calculati
 | `LEAGUE_BB_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Used for log5 of batter BB against the SP/RP-blended BB%. |
 | `LEAGUE_H_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Hits per PA. Used for log5 of H and TB against the SP/RP-blended hits/PA via `talentHitsPerPA`. |
 | `LEAGUE_HR_PER_PA` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | HR per PA. Used for `PITCHER_SWING_HR`-bounded multiplicative ratio (HR is contact-quality, not a clean log5 stat). |
+| `leagueMean` (per category) | [categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) | Prior centre of every raw-path Bayesian blend AND the centre of that category's normalisation window. Refreshed 2026-09-08 to 2026 season-to-date (30 teams summed, 163,893 PA): AVG .244, H .216, HR .030, R .118, RBI .113, SB .018, TB .355, 2B .041, 3B .0035, HBP .0115; K .221 / BB .089 were already right. SB had sat at .010 — a pre-2023 rate the bigger bases roughly doubled — and with the fitted `leaguePriorN` the prior centre matters far more than it did at N = 100, so a stale mean is now a level bias on every player. |
 
 The pitcher-side and batter-side league means agree by construction. MLB is zero-sum: every PA is one batter outcome and one pitcher outcome. If a future change tunes one side, the other side must move in lockstep.
 
@@ -81,12 +82,18 @@ These aren't league baselines but they ARE cross-engine — every advice surface
 | `RATE_SCALE` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | Per-stat typical-swing scale (AVG 0.040, ERA 0.50, etc.). Margin = `gap × dir / scale × confidence`. |
 | `CORRECTED_COUNTING_SCALE` | [matchup/analysis.ts](../src/lib/matchup/analysis.ts) | Fixed residual-uncertainty scale for counting cats when `mode='corrected'`. Keyed by `stat_id` because batter K (21) and pitcher K (42) share a display label. |
 
+## Batter HR knob basis
+
+The batter HR modifier ratios the opposing SP's HR/PA against the league. Its two inputs are on different bases: the SP number is a **talent** primitive (`talentHrPerPA` = `hrPerContact`, regressed toward `LEAGUE_HR_PER_CONTACT`, × contact share) while the bullpen rate and `LEAGUE_HR_PER_PA` are **actual** rates. At the league mean they disagree — .035 × (1 − .221 − .089) = .024 against .030 — so a league-average starter read as a ~20% HR suppressor for every batter until 2026-09-08. `SP_HR_TALENT_TO_ACTUAL` in [batterForecast.ts](../src/lib/mlb/batterForecast.ts) rescales the SP primitive onto the actual basis before the ratio.
+
+Why not refresh `LEAGUE_HR_PER_CONTACT` instead: 2026 HR / (PA − K − BB) is ~.044, so the anchor is stale — but it is the regression centre for every pitcher's HR talent, and moving it re-levels the pitcher engine's HR, ERA and W forecasts, which have their own ledger cohort and harness. That is a pitcher-side change to make on pitcher-side evidence ([forecast-verification.md](./forecast-verification.md#the-pitcher-side-2026-09-04-4192-graded-starts-full-season-regeneration) already reads pitcher talent HR at 0.44). When it is refreshed, `SP_HR_TALENT_TO_ACTUAL` goes to 1.0 on its own — it is computed from the anchors, not hand-set.
+
 ## Updating these
 
 Annual offseason refresh from FanGraphs / Statcast leaderboards, OR mid-season when an SP/RP-blend-style architecture change reveals that a stale anchor is no longer cancelling against the data path. When you do an update:
 
 1. Source the value. The cleanest path is direct from MLB Stats API for the current season — `/api/v1/teams/stats?stats=season&group=pitching&sportId=1&season={year}` returns all 30 teams' aggregate lines; sum across them for the league mean. FanGraphs / Statcast work too. Note the source and date in the commit message.
-2. Update **every location** the constant appears. The five log5 anchors in `batterForecast.ts`, the matching `leagueMean` values in `categoryBaselines.ts`, and the pitcher-side `LEAGUE_K_RATE` / `LEAGUE_BB_RATE` / `LEAGUE_XBA` in `talentModel.ts` MUST stay in sync — MLB is zero-sum.
+2. Update **every location** the constant appears. The five log5 anchors in `batterForecast.ts`, the matching `leagueMean` values in `categoryBaselines.ts`, and the pitcher-side `LEAGUE_K_RATE` / `LEAGUE_BB_RATE` / `LEAGUE_XBA` in `talentModel.ts` MUST stay in sync — MLB is zero-sum. The batter normalisation windows are centred on `leagueMean`, so a mean refresh re-centres the score scale automatically; the `leagueAverage` harness profile (step 4) is what confirms it landed. Use the hitting aggregate for the batter side: `/api/v1/teams/stats?stats=season&group=hitting&sportId=1&season={year}`.
 3. Run the pitcher smoke harness at `src/app/api/admin/test-pitcher-eval/route.ts` — it asserts that canonical archetypes (Skubal, Houser, Montero, Roupp) land in their expected score/tier bands.
 4. Run the batter smoke harness at `src/app/api/admin/test-batter-rating/route.ts` — same role; the expected score ranges there are calibration anchors.
 5. Spot-check on the today page by opening a few rated players and confirming the rating moved the way you expected.

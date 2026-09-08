@@ -189,6 +189,8 @@ The gap between the two bases is itself a finding, and it splits the knobs into 
 - **Batter-specific knobs (platoon, lineup spot).** The count basis is simply wrong for these — the PA distortion is a confounder, driven by the same lineup-card decision as the rate effect. Platoon reads 0.01 to −0.46 on the count basis and 0.48 to 1.03 on the rate basis. Read the rate basis.
 - **Run-environment knobs (park, opposing pitcher, weather).** These genuinely *do* move team PA — a better park or a worse pitcher means the lineup bats more — and the spot model models none of it. So their count-basis coefficient is inflated by a PA-model gap, not by a well-scaled multiplier. Park reads 1.01 on the count basis and 0.58 on the rate basis for TB; the multiplier is over-applied by more than the count fit admits, and separately the PA model should respond to run environment and doesn't.
 
+The table below is the **2026-09-03 build** (pre-neutralisation, pre-fitted-priors) — kept because it is the evidence the three fixes below were drawn from. The regenerated-cohort table that replaced it is further down under [Regenerated cohort](#regenerated-cohort-2026-09-08--the-fit-that-set-the-reliability-table).
+
 | | talent b | opposing pitcher | park | platoon | order |
 |---|---|---|---|---|---|
 | TB | 0.92 | **0.53** | **0.58** | **0.73** | — |
@@ -204,7 +206,7 @@ Bold = differs from 1.00 at p < 0.05. Read together with the scorecard's over-sp
 - **The opposing-pitcher modifier is the worst-scaled knob on the page** — 0.36–0.77, so roughly half its swing is justified. This is a bigger correction than the count basis suggested (0.50–0.86) and it is consistent across every stat.
 - **Park is over-applied on every stat** (0.34–0.77), not stat-dependent as the count basis implied. See the home/away split below for why.
 - **Talent is well calibrated for the stats the box score measures directly** (K 1.02, BB 1.03, H 0.96, TB 0.92) and badly over-spread for R/RBI (0.65). Most of what looked like a talent problem on the count basis (TB 0.82, H 0.82) was PA-model error.
-- **Platoon is not the dead knob it appeared to be.** [Its own section](#the-platoon-knob) is below.
+- **Platoon is not the dead knob it appeared to be.** [Its own section](#the-platoon-knob) is below. Note that the platoon column in *this* fit is confounded with the batter-hand main effect it shares with the hand-split park factors — the diagnose script identifies it off the hand × hand interaction alone, and its numbers are the ones to read.
 - **Lineup-spot run context** is close on both stats (1.35 / 0.95) once PA is controlled; the 1.57 on the count basis was the spot model's PA error re-entering through the same column.
 
 **The park knob is two different problems, and splitting home from away separates them** (`retro-knob-fit.ts <engine> <minRows> home|away`):
@@ -217,6 +219,46 @@ Bold = differs from 1.00 at p < 0.05. Read together with the scorecard's over-sp
 For the batted-ball and run stats the home coefficient is a fraction of the away one — away reaches 0.96 / 1.00 on R and RBI and roughly doubles the home value on TB and HR. That is the signature of **double-counting**: the talent baseline is built from season stats that already contain roughly half of the player's home park, so applying the full park factor at home charges for it twice, while on the road the baseline is near-neutral for that venue and the full factor is warranted. The engine has hit this exact class of bug before — the pitcher velocity multiplier was fixed to 1.0 in 2026-05 for the same reason, because velocity trend already fed the talent layer's regime probe. Park-neutralising the baseline is the corresponding fix here, and it is a talent-layer change, not a modifier re-scale. **K and BB are a separate problem**: low both home and away, which is straightforward over-application of a small, noisy factor that wants regressing toward 100.
 
 **Park data itself is not the gap.** `parks.ts` already carries Savant's Statcast park factors comprehensively — overall wOBA, HR, BB and SO each with left/right handedness splits, plus 2B, 3B, BACON, xBACON and HardHit, on a 3-year rolling window (`scripts/scrape-park-factors.mjs`).
+
+#### Regenerated cohort (2026-09-08) — the fit that set the reliability table
+
+The batter cohort was regenerated on the shipped build (park-neutralised baseline, fitted `leaguePriorN`, the AZ and ATH park-lookup fixes) — 163 game-days, 37,612 rows, 37,386 graded — and the fit re-run on the rate basis. This is the table `KNOB_RELIABILITY` was set from:
+
+| | talent b | opposing pitcher | park (pooled) | park home / away | order | teamSb |
+|---|---|---|---|---|---|---|
+| TB | 1.06 | **0.51** ±.10 | **0.60** ±.11 | 0.46 / 0.64 | — | — |
+| H | 1.06 | **0.36** ±.11 | **0.36** ±.13 | 0.32 / 0.36 | — | — |
+| HR | **1.24** | 0.76 ±.15 | **0.48** ±.11 | 0.38 / 0.48 | — | — |
+| R | 1.12 | **0.41** ±.08 | 0.71 ±.19 | 1.10 / 0.62 | 0.90 ±.20 | — |
+| RBI | 1.11 | **0.42** ±.08 | 0.66 ±.19 | 0.96 / 0.61 | 0.96 ±.14 | — |
+| K | 1.03 | **0.77** ±.04 | **0.52** ±.09 | 0.46 / 0.51 | — | — |
+| BB | 1.06 | **0.64** ±.06 | **0.39** ±.15 | 0.20 / 0.46 | — | — |
+| SB | 0.95 | — | — | — | — | **0.53** ±.11 |
+
+What changed against the 2026-09-03 table, and what it means:
+
+- **Talent is now ~1.0 everywhere the box score measures directly** (TB 1.06, H 1.06, K 1.03, BB 1.06) and R/RBI came up from 0.67/0.65 to 1.12/1.11 — the fitted priors did what the gradient asked. HR reads 1.24 (slightly *under*-spread now); left alone pending a second season.
+- **The park double-count is gone.** R and RBI, the cleanest cases, read 0.57/0.96 and 0.50/1.00 home/away before; now 1.10/0.62 and 0.96/0.61 — the home side no longer sits at half the away side. What remains is roughly uniform under-delivery (pooled 0.36–0.71), which is exactly what the reliability table is for, and where it now lives.
+- **The opposing-pitcher knob did not move** (0.36–0.77 both times), as expected — nothing upstream of it changed. It is now applied at those exponents.
+- **Weather** (SE 1.1–1.7) and the **flat RHP SB bump** (SE 0.87) are not identified by a season of data and stay at 1.0. **Order** reads 0.90 / 0.96 and stays raw.
+- **Platoon** is not read from this table (see the confounding note above); it is calibrated in `platoon.ts`.
+
+Verification is the closed loop the reliability mechanism was built for: regenerate the cohort with the table in place and the same fit should read ~1.00 on every set knob. Done the same day (163 game-days, 37,386 graded rows, stamped 2026.09.08):
+
+| | talent b | opposing pitcher | park | teamSb |
+|---|---|---|---|---|
+| TB | 1.08 | 1.05 ±.20 | 0.99 ±.17 | — |
+| H | 1.07 | 1.04 ±.29 | 0.99 ±.37 | — |
+| HR | **1.29** | 1.00 ±.21 | 1.04 ±.23 | — |
+| R | 1.13 | 1.00 ±.20 | 1.00 ±.26 | — |
+| RBI | 1.12 | 1.00 ±.20 | 1.01 ±.29 | — |
+| K | 1.03 | 1.00 ±.06 | 1.00 ±.16 | — |
+| BB | 1.06 | 1.00 ±.09 | 1.01 ±.39 | — |
+| SB | 1.09 | — | — | 1.00 ±.21 |
+
+Note what the read-back does to the standard errors: shrinking a knob shrinks the variance of its log-multiplier, so the same data identifies it less precisely (park H ±.13 → ±.37). That is the correct trade — the engine is no longer claiming more than it can back — but it means the *next* re-fit needs a bigger cohort to move a value, and small drifts inside these SEs are not findings. The `hand` column (SB, −0.75 ±.87) remains unidentified and is not applied. Decision log: [history.md](./history.md#2026-09--batter-score-scale-recentred-and-the-matchup-layer-applied-at-its-fitted-reliability).
+
+Two level biases surfaced while centring the scale on this cohort and were fixed in the same pass (neither is a modifier-scale question, so neither shows in this table): the talent-path AB/PA shortcut (`1 − BB%`, +2.6% on H and TB) and the HR knob's mixed talent/actual basis (−20% for a league-average SP). Both are described under [unified-rating-model.md — Batter score scale](./unified-rating-model.md#layer-3--batter-score-scale).
 
 #### The pitcher side (2026-09-04, 4,192 graded starts, full-season regeneration)
 
@@ -272,7 +314,7 @@ The shipped calibration (`PLATOON_TILT_SCALE` in [platoon.ts](../src/lib/mlb/pla
 
 **Heterogeneity by manager usage is real, and it is the largest thing left in the batter model.** Split the cohort by how far a batter is shielded from his weak hand (his own share of PA against it, over the league's) and the table is delivered at ~0.2–0.4× for everyday bats and ~1.8–3.2× for shielded ones. Through engine residuals that did not survive a time split, and it was left out. Asked of the corpus directly it replicates cleanly — see [the usage check](#does-manager-usage-predict-split-size) below. The engine holds the input in spirit (`paVsL` / `paVsR`) but not cleanly enough to use yet.
 
-Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. The scorecard grades `retro-*` engines exactly like their live twins (kind derived from the key with the prefix stripped) but as separate sections. Retro capture now covers the full season for both engines (the batter cohort was captured 2026-09-02, the pitcher cohort regenerated 2026-09-04). Still to build: the per-knob fit that reads live + retro rows together.
+Honesty limits, accepted: retro cannot see scratches / late lineup changes / forecast weather (it uses actual starters, posted lineups and observed weather), so its DNP and weather findings are not comparable to live captures. Retro rows must therefore carry their own tag and never pool with live snapshots in the scorecard. The scorecard grades `retro-*` engines exactly like their live twins (kind derived from the key with the prefix stripped) but as separate sections. Retro capture now covers the full season for both engines (the batter cohort regenerated 2026-09-08 on the shipped build, the pitcher cohort 2026-09-04). Still to build: the per-knob fit that reads live + retro rows together.
 
 ### Does manager usage predict split size?
 

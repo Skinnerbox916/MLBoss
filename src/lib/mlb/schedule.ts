@@ -1,5 +1,5 @@
 import { mlbFetchSchedule, mlbFetchTeamStats } from './client';
-import { withCache, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
+import { withCacheGated, CACHE_CATEGORIES } from '@/lib/fantasy/cache';
 import {
   applyPitcherPlatoon,
   applyPitcherRecentForm,
@@ -337,8 +337,14 @@ import { normalizeTeamAbbr as canonicalScheduleAbbr } from './teamAbbr';
 /**
  * Build a `Map<homeAbbr|awayAbbr, { home, away }>` from an ESPN scoreboard
  * response so MLB games can look up probable-pitcher names in O(1) by team
- * pair. Falls back to per-team-abbreviation entries so doubleheaders that
- * don't have a clean pair-key still resolve.
+ * pair.
+ *
+ * The key carries no date, which is safe only because `fetchESPNScoreboard`
+ * is scoped to one game-date per call. If it ever returns more than one date
+ * again, a team pair that meets on consecutive days would collide and the
+ * wrong day's starter would splice onto the game — add the date to the key
+ * before widening that fetch. (Doubleheaders already collide on this key;
+ * both games get game 1's probables.)
  */
 function indexEspnPitchers(
   espn: { events: import('../espn/client').ESPNEvent[] },
@@ -402,8 +408,20 @@ export function stubPitcher(name: string, mlbId = 0, throws: 'L' | 'R' | null = 
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch all MLB games for a date with probable pitchers, weather, and park data.
- * Refreshes every 5 minutes — probable pitchers get confirmed close to game time.
+ * Internal build result. `espnOk` is false when the ESPN scoreboard fetch
+ * threw, which means every `probablePitcher` on the slate is null for
+ * transport reasons rather than because no starter is announced yet. Only
+ * `getGameDay`'s coverage gate reads it; callers get the games array.
+ */
+interface BuiltGameDay {
+  games: MLBGame[];
+  espnOk: boolean;
+}
+
+/**
+ * Build the fully-enriched slate for a date — the heavy path (ESPN names +
+ * per-pitcher line/Savant/platoon/form fetches + talent stamping). Wrapped by
+ * the cached `getGameDay` below; don't call this directly.
  *
  * Probable-pitcher names come from ESPN (full-week coverage); MLB Stats API
  * provides everything else (schedule, venue, weather, lineups, the per-pitcher
@@ -411,12 +429,7 @@ export function stubPitcher(name: string, mlbId = 0, throws: 'L' | 'R' | null = 
  * runs through the documented enrichment + talent pipeline; this is the
  * canonical stamp point for `pp.talent` per `docs/unified-rating-model.md`.
  */
-/**
- * Build the fully-enriched slate for a date — the heavy path (ESPN names +
- * per-pitcher line/Savant/platoon/form fetches + talent stamping). Wrapped by
- * the cached `getGameDay` below; don't call this directly.
- */
-async function buildGameDay(date: string): Promise<MLBGame[]> {
+async function buildGameDay(date: string): Promise<BuiltGameDay> {
   // No probablePitcher hydrate — ESPN owns that field. We keep venue,
   // weather, team, and lineups (all MLB-only).
   const hydrate = ['venue', 'weather', 'team', 'lineups'].join(',');
@@ -425,10 +438,16 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
   // Fetch MLB schedule + ESPN scoreboard in parallel. ESPN is the source of
   // truth for who's pitching; MLB owns the game shell.
   const currentYear = new Date().getFullYear();
+  let espnOk = true;
   const [raw, espn] = await Promise.all([
     mlbFetchSchedule<RawScheduleResponse>(path, date),
-    fetchESPNScoreboard(date, date).catch(err => {
-      console.error('ESPN scoreboard fetch failed; pitcher names will be missing:', err);
+    fetchESPNScoreboard(date).catch(err => {
+      // Degrade rather than blow up the page — but remember that we did, so
+      // the caller's coverage gate keeps this slate out of the cache. A
+      // probable-less slate pinned for the full TTL is how a transient ESPN
+      // outage turns into stale/absent starters on every surface.
+      console.error(`ESPN scoreboard fetch failed for ${date}; pitcher names will be missing:`, err);
+      espnOk = false;
       return { events: [] };
     }),
   ]);
@@ -441,7 +460,7 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
     throw new Error(`MLB schedule response for ${date} is malformed (no dates array)`);
   }
   const dateEntry = raw.dates[0];
-  if (!dateEntry) return [];
+  if (!dateEntry) return { games: [], espnOk };
 
   const games = dateEntry.games.map(parseGame);
 
@@ -475,7 +494,7 @@ async function buildGameDay(date: string): Promise<MLBGame[]> {
     ]),
   );
 
-  return games;
+  return { games, espnOk };
 }
 
 /**
@@ -577,6 +596,14 @@ export async function enrichSlate(games: MLBGame[], season: number = new Date().
  * side effect runs OUTSIDE the cache so it stays fresh on hits (the batter SB
  * forecast reads that module global; it's date-independent and
  * `fetchTeamStaffSplits` is 24h-cached, so this is ~free).
+ *
+ * Coverage gate: this is a two-source fanout (MLB shell + ESPN probables), so
+ * per the rule in docs/data-architecture.md it goes through `withCacheGated`.
+ * A build whose ESPN leg threw still returns — the page renders with venue,
+ * weather and lineups — but is not written to Redis, so the next request
+ * retries instead of serving a starter-less slate for the whole TTL. ESPN
+ * legitimately returning zero probables (a date past its ~1-week horizon) is
+ * not a failure and caches normally.
  */
 export async function getGameDay(date: string): Promise<MLBGame[]> {
   const staff = await fetchTeamStaffSplits();
@@ -586,11 +613,15 @@ export async function getGameDay(date: string): Promise<MLBGame[]> {
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const ttl = date < todayStr ? CACHE_CATEGORIES.SEMI_DYNAMIC.ttlLong : CACHE_CATEGORIES.SEMI_DYNAMIC.ttl;
 
-  return withCache(
-    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:game-day-enriched:${date}`,
+  // Key is versioned: the cached value shape changed from `MLBGame[]` to
+  // `BuiltGameDay`, and v1 entries must not be read back as the new shape.
+  const built = await withCacheGated<BuiltGameDay>(
+    `${CACHE_CATEGORIES.SEMI_DYNAMIC.prefix}:game-day-enriched-v2:${date}`,
     ttl,
     () => buildGameDay(date),
+    result => result.espnOk,
   );
+  return built.games;
 }
 
 /**

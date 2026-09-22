@@ -4,7 +4,13 @@
  */
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2';
-const ESPN_USER_AGENT = 'MLBoss/1.0';
+// ESPN's edge filters on the User-Agent's *leading* product token against an
+// allowlist of well-known HTTP clients. A bare `MLBoss/1.0` passed on
+// 2026-08-09 but is rejected with 403 as of 2026-09-22, as are browser UAs and
+// Node's default. Verified still accepted: `curl/*`, `okhttp/*`,
+// `python-requests/*`, `Go-http-client/*`. Only the first token is matched, so
+// appending our own identifier keeps the request attributable.
+const ESPN_USER_AGENT = 'curl/8.5.0 (+https://mlboss.app) MLBoss/1.0';
 
 export interface ESPNPitcher {
   displayName: string;
@@ -49,23 +55,27 @@ export interface ESPNScoreboard {
 }
 
 /**
- * Fetch MLB games for a date range from ESPN.
- * ESPN provides probable pitcher data for the full week (unlike MLB Stats API).
+ * Fetch one MLB game-date's scoreboard from ESPN.
+ * ESPN publishes probable pitchers ~a week out (MLB Stats API only fills them
+ * 2-3 days out), which is why this is the app's only probables source.
+ *
+ * One date per call, deliberately. ESPN used to accept a `dates=START-END`
+ * range; as of 2026-09-22 every range form returns HTTP 400 and only the
+ * single-date form is served. A single-date query already returns that whole
+ * game-date — including night games whose UTC start date rolls over — so a
+ * range bought us nothing, and the only caller (`buildGameDay`) asked for one
+ * date at a time anyway.
  */
 export async function fetchESPNScoreboard(
-  startDate: string, // YYYY-MM-DD
-  endDate: string,   // YYYY-MM-DD
+  date: string, // YYYY-MM-DD
 ): Promise<ESPNScoreboard> {
-  const start = startDate.replace(/-/g, '');
-  const end = endDate.replace(/-/g, '');
-  const url = `${ESPN_API_BASE}/sports/baseball/mlb/scoreboard?dates=${start}-${end}&limit=500`;
+  const day = date.replace(/-/g, '');
+  const url = `${ESPN_API_BASE}/sports/baseball/mlb/scoreboard?dates=${day}&limit=500`;
 
   try {
     const res = await fetch(url, {
-      // ESPN's edge started rejecting Node's default User-Agent with 403 on
-      // 2026-08-09 (browser UAs and anything with parentheses too). A bare
-      // product token passes. Without it the slate silently renders with no
-      // probable pitchers — ESPN is the only probables source.
+      // The explicit UA is load-bearing (see ESPN_USER_AGENT above) — without
+      // an accepted one the slate renders with no probable pitchers at all.
       headers: { Accept: 'application/json', 'User-Agent': ESPN_USER_AGENT },
       next: { revalidate: 300 }, // 5 min cache (probable pitchers update frequently)
     });

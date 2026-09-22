@@ -8,6 +8,24 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09-22 — ESPN scoreboard: one date per request, and a UA on an allowlist
+
+Reported by the owner: the lineup card showed Mets batters facing **Jacob deGrom** at Texas when the actual starter was MacKenzie Gore. deGrom was a real Texas starter — just not that day. ESPN is the app's *only* probable-pitcher source (MLB Stats API fills `probablePitcher` 2–3 days out; ESPN publishes ~a week), so when the ESPN leg dies every surface that reads a starter goes dark or stale: lineup cards, the streaming boards, the batter L2 matchup layer, the pitcher W-probability.
+
+**Two independent breakages, both at ESPN's edge, both silent.**
+
+1. **The date-range form was withdrawn.** `fetchESPNScoreboard` built `?dates=START-END` and the one caller passed `(date, date)`. Every range form — same-day, two-day, week — now returns HTTP 400; only `?dates=YYYYMMDD` is served. A single-date query already returns that entire game-date, including night games whose UTC start rolls into the next day, so the range bought nothing. The signature is now one date.
+
+2. **The User-Agent allowlist tightened.** ESPN filters on the UA's *leading* product token against a list of known HTTP clients. The `MLBoss/1.0` token added on 2026-08-09 (itself a fix for ESPN rejecting Node's default UA) now 403s, as do browser UAs. Verified still accepted: `curl/*`, `okhttp/*`, `python-requests/*`, `Go-http-client/*`. Only the first token is matched, so the UA leads with `curl/8.5.0` and appends our own identifier.
+
+**Why it failed quietly, and what now stops that.** `buildGameDay` caught the ESPN error, logged it, and carried on with `{ events: [] }` — every probable null — and `getGameDay` then wrote that starter-less slate to Redis under a plain `withCache` for the full TTL. That is exactly the multi-source fanout the [cache rule](./data-architecture.md) says must use `withCacheGated`: a transient upstream outage got pinned instead of retried. `buildGameDay` now returns `{ games, espnOk }` and the gate refuses to cache a build whose ESPN leg threw. The page still renders (venue, weather, lineups are MLB-owned); the next request just retries rather than serving the outage back for five minutes. ESPN *legitimately* returning no probables — a date past its ~1-week horizon — is not a failure and caches normally. The cache key is versioned `-v2` because the stored shape changed.
+
+**Don't reintroduce:** (a) a batched `dates=A-B` ESPN fetch "to save requests" — ESPN 400s it, and `indexEspnPitchers` keys probables by team pair with no date component, so a multi-date response would splice a team's *other* day's starter onto tonight's game (the comment on that function spells out what to change first); (b) a descriptive-product-token User-Agent like `MLBoss/1.0` — it reads as the honest thing to send and is exactly what gets blocked; (c) plain `withCache` on `getGameDay`, which turns any ESPN hiccup into a TTL-long outage.
+
+**Left open:** doubleheaders still collide on the team-pair key — both games take game 1's probables. Pre-existing, unchanged here, and it needs ESPN's per-game id to fix properly.
+
+---
+
 ## 2026-09 — "Locked win" became a win probability instead of a hand-set constant
 
 Reported by the owner looking at a Game Plan that called seven categories locked wins: *"I don't feel like that's taking variation into enough consideration. Are we looking at the probable range on those?"* We were not.

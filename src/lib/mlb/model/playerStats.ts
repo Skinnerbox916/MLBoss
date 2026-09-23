@@ -157,6 +157,12 @@ export interface PitcherSeasonLine {
   hr9: number | null;
   battingAvgAgainst: number | null;
   gbRate: number | null;
+  /** Raw counts behind the rates — HR per contact is regressed on these
+   *  (`computeHrPerContact`). Optional: hand-built lines (harness
+   *  profiles) may omit them and fall back to the per-9 approximation. */
+  battersFaced?: number | null;
+  homeRuns?: number | null;
+  baseOnBalls?: number | null;
 }
 
 /**
@@ -236,6 +242,9 @@ export function parsePitchingLine(raw: RawStat): PitcherSeasonLine {
     hr9: ip > 0 ? Math.round((hr / ip * 9) * 100) / 100 : null,
     battingAvgAgainst: abAgainst > 0 ? Math.round((hitsAllowed / abAgainst) * 1000) / 1000 : null,
     gbRate: (go + ao) > 0 ? Math.round((go / (go + ao)) * 1000) / 1000 : null,
+    battersFaced: raw.battersFaced ?? null,
+    homeRuns: hr,
+    baseOnBalls: bb,
   };
 }
 

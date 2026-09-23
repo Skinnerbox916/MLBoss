@@ -53,7 +53,7 @@ const LEAGUE_K_RATE = 0.221;
 const LEAGUE_BB_RATE = 0.089;
 const LEAGUE_XWOBACON = 0.368;        // batter xwOBA on contact
 const LEAGUE_XWOBACON_PITCHER = 0.368; // pitcher-allowed xwOBA on contact
-const LEAGUE_HARD_HIT = 0.40;         // MLB average Hard-Hit % (EV ≥ 95 mph)
+export const LEAGUE_HARD_HIT = 0.40;         // MLB average Hard-Hit % (EV ≥ 95 mph)
 
 const LEAGUE_XWOBA = 0.320;           // for the end-result composite clamp
 // xBA tracks AVG closely (it's the no-luck deserved version of AVG); xSLG
@@ -65,10 +65,36 @@ const LEAGUE_XWOBA = 0.320;           // for the end-result composite clamp
 const LEAGUE_XBA = 0.244;
 const LEAGUE_XSLG = 0.404;
 
-const PRIOR_K_PA = 60;
-const PRIOR_BB_PA = 120;
-const PRIOR_XWOBACON_BIP = 50;
-const PRIOR_HARD_HIT_BIP = 50;        // HH% stabilises ~50 BBE (Carleton)
+/** League-prior weights (the `leaguePriorN` of each component blend).
+ *  Batters and pitchers carry separate sets: the same component
+ *  stabilises at very different sample sizes on the two sides of the
+ *  plate — a hitter owns his contact quality, a pitcher mostly doesn't.
+ *  Pitcher values: docs/unified-rating-model.md#pitcher-regression-priors. */
+export interface TalentPriors {
+  kPa: number;
+  bbPa: number;
+  xwobaconBip: number;
+  hardHitBip: number;
+}
+
+const BATTER_TALENT_PRIORS: TalentPriors = {
+  kPa: 60,
+  bbPa: 120,
+  xwobaconBip: 50,
+  hardHitBip: 50,        // HH% stabilises ~50 BBE (Carleton)
+};
+
+/** Fitted out of sample 2026-09 (scripts/retro-pitcher-shrinkage-fit.ts):
+ *  K came back at its existing 60 (the control); BB a little heavier; contact
+ *  quality an order of magnitude heavier than the batter value it borrowed.
+ *  Hard-hit at 1000 makes the HH anchor ~flat — for pitchers it earns no
+ *  signal the xwOBACON blend does not already carry. */
+export const PITCHER_TALENT_PRIORS: TalentPriors = {
+  kPa: 60,
+  bbPa: 160,
+  xwobaconBip: 500,
+  hardHitBip: 1000,
+};
 // xBA and xSLG are PA-denominated Savant outputs (they account for K's
 // in the denominator), so we regress them with PA-based priors. They
 // stabilise faster than xwOBA's component recomposition (~150 BIP) but
@@ -83,7 +109,7 @@ const PRIOR_XSLG_PA = 120;
 // The practical effect: hard-hit data pulls xwOBACON up for elite EV
 // guys and down for degraded bat speed — both faster than waiting for
 // outcome data (~150 BIP) to stabilise on its own.
-const HARD_HIT_TO_XWOBACON_SLOPE = 0.48;
+export const HARD_HIT_TO_XWOBACON_SLOPE = 0.48;
 
 // Prior-season caps: how much a pitcher/batter's previous season is
 // allowed to count toward the current talent estimate. Set around the
@@ -95,10 +121,10 @@ const HARD_HIT_TO_XWOBACON_SLOPE = 0.48;
 // prior is capped at 250 PA so the current sample takes over. This
 // prevents stale prior data from dominating in May/June while still
 // anchoring April decisions. Same shape for BIP-based caps.
-function priorSeasonPaCap(currentPa: number): number {
+export function priorSeasonPaCap(currentPa: number): number {
   return Math.max(250, 400 - 0.75 * currentPa);
 }
-function priorSeasonBipCap(currentBip: number): number {
+export function priorSeasonBipCap(currentBip: number): number {
   return Math.max(180, 300 - 0.75 * currentBip);
 }
 
@@ -240,14 +266,15 @@ export function computeBatterTalentXwoba(
     current: current ?? null,
     prior: prior ?? null,
     leagueXwobacon: LEAGUE_XWOBACON,
+    priors: BATTER_TALENT_PRIORS,
   });
 }
 
 /**
- * Compute component-based talent xwOBA-allowed for a pitcher. Symmetric
- * to the batter calc — same league K/BB priors, same composition
- * formula — but with pitcher-allowed xwOBACON as the contact-quality
- * anchor. A lower output means a better pitcher.
+ * Compute component-based talent xwOBA-allowed for a pitcher. Same
+ * composition formula as the batter calc, but with pitcher-allowed
+ * xwOBACON as the contact-quality anchor and the pitcher prior set
+ * (`PITCHER_TALENT_PRIORS`). A lower output means a better pitcher.
  */
 export function computePitcherTalentXwobaAllowed(
   current: StatcastPitcher | null | undefined,
@@ -266,6 +293,7 @@ export function computePitcherTalentXwobaAllowed(
     current: current ?? null,
     prior: prior ?? null,
     leagueXwobacon: LEAGUE_XWOBACON_PITCHER,
+    priors: PITCHER_TALENT_PRIORS,
     regimeShrink,
   });
 }
@@ -293,6 +321,7 @@ function computeTalent(args: {
   current: TalentSource | null;
   prior: TalentSource | null;
   leagueXwobacon: number;
+  priors: TalentPriors;
   /** Multiplier on BOTH prior-season caps and league-prior weights when
    *  the regime probe detects a regime change. Defaults to 1.0 (legacy).
    *  Prior-season cap takes the full shrink; league prior takes
@@ -301,7 +330,7 @@ function computeTalent(args: {
    *  agreement (K%, BB%, whiff%, barrel%, velo). */
   regimeShrink?: number;
 }): TalentResult | null {
-  const { current, prior, leagueXwobacon } = args;
+  const { current, prior, leagueXwobacon, priors } = args;
   const shrink = Math.max(0.1, Math.min(1.0, args.regimeShrink ?? 1.0));
   const lgShrink = Math.sqrt(shrink);
 
@@ -315,7 +344,7 @@ function computeTalent(args: {
   const curHasSkills = hasSkills(current);
   const priorHasSkills = hasSkills(prior);
   if (!curHasSkills && !priorHasSkills) {
-    return degradeToXwobaOnly(current, prior);
+    return degradeToXwobaOnly(current, prior, priors);
   }
 
   const curPa = current?.pa ?? 0;
@@ -329,7 +358,7 @@ function computeTalent(args: {
     prior: prior?.kRate ?? null,
     priorN: prior?.pa ?? 0,
     leagueMean: LEAGUE_K_RATE,
-    leaguePriorN: PRIOR_K_PA * lgShrink,
+    leaguePriorN: priors.kPa * lgShrink,
     priorCap: paCap,
   });
 
@@ -339,7 +368,7 @@ function computeTalent(args: {
     prior: prior?.bbRate ?? null,
     priorN: prior?.pa ?? 0,
     leagueMean: LEAGUE_BB_RATE,
-    leaguePriorN: PRIOR_BB_PA * lgShrink,
+    leaguePriorN: priors.bbPa * lgShrink,
     priorCap: paCap,
   });
 
@@ -354,7 +383,7 @@ function computeTalent(args: {
     prior: prior?.hardHitRate ?? null,
     priorN: prior?.bip ?? 0,
     leagueMean: LEAGUE_HARD_HIT,
-    leaguePriorN: PRIOR_HARD_HIT_BIP * lgShrink,
+    leaguePriorN: priors.hardHitBip * lgShrink,
     priorCap: bipCap,
   });
 
@@ -369,7 +398,7 @@ function computeTalent(args: {
     prior: prior?.xwobacon ?? null,
     priorN: prior?.bip ?? 0,
     leagueMean: hhAnchoredXwobacon,
-    leaguePriorN: PRIOR_XWOBACON_BIP * lgShrink,
+    leaguePriorN: priors.xwobaconBip * lgShrink,
     priorCap: bipCap,
   });
 
@@ -444,12 +473,13 @@ function hasSkills(s: TalentSource | null): boolean {
 function degradeToXwobaOnly(
   current: TalentSource | null,
   prior: TalentSource | null,
+  priors: TalentPriors,
 ): TalentResult | null {
   const curV = current?.xwoba ?? null;
   const curN = curV !== null ? (current?.bip ?? 0) : 0;
   const priV = prior?.xwoba ?? null;
   const priN = priV !== null ? Math.min(prior?.bip ?? 0, priorSeasonBipCap(curN)) : 0;
-  const lgN = PRIOR_XWOBACON_BIP;
+  const lgN = priors.xwobaconBip;
 
   let num = 0;
   let den = 0;

@@ -372,18 +372,25 @@ const NON_BB_NON_AB_PER_PA = 0.023;
  *  want hand-specific behaviour resolve `vsLeft` / `vsRight` themselves. */
 export const LEAGUE_OPS = 0.710;
 
-/** League-average HR-per-contact rate. Used as the regression anchor for
- *  hrPerContact. ~0.035 corresponds to a roughly league-average HR/9 of
- *  1.15 across the population. */
-export const LEAGUE_HR_PER_CONTACT = 0.035;
-const LEAGUE_HR_PER_CONTACT_PRIOR_BIP = 200;
+/** League-average HR per contact, contact = PA − K − BB (the same basis
+ *  the forecast multiplies back by). 2026 season-to-date .0438 over the
+ *  full Statcast corpus (157,749 PA); the 2025 starter split read .0468.
+ *  Was .035, which ran every regressed pitcher's HR ~20% low. */
+export const LEAGUE_HR_PER_CONTACT = 0.044;
+/** League-prior weight and prior-season cap for HR/contact, in contact
+ *  events. Fitted out of sample (scripts/retro-pitcher-shrinkage-fit.ts):
+ *  HR allowed stabilises far slower than the old 200 / 250 assumed, and a
+ *  full prior season earns roughly its whole sample back.
+ *  See docs/unified-rating-model.md#pitcher-regression-priors. */
+export const LEAGUE_HR_PER_CONTACT_PRIOR_BIP = 500;
+export const HR_PER_CONTACT_PRIOR_CAP = 750;
 
 /** League-average IP/start. Anchors `ipPerStart` for thin samples
  *  in the talent regression, and is exported as the fallback when
  *  `talent` is missing on a stub SP (e.g. ID resolution failed) for
  *  consumers that derive an SP-share from `ipPerStart`. */
 export const LEAGUE_IP_PER_START = 5.4;
-const LEAGUE_IP_PER_START_PRIOR_GS = 6;
+export const LEAGUE_IP_PER_START_PRIOR_GS = 6;
 
 /** League-mean reliever workload anchors. Sourced from 2024 MLB season:
  *  a typical RP makes ~62 G over ~180 calendar days = ~2.4 G/week, with
@@ -873,12 +880,14 @@ export function computePitcherTalent(args: ComputeTalentArgs): PitcherTalent {
 // ---------------------------------------------------------------------------
 
 /**
- * HR / contact rate, Bayesian-blended. We don't have HR/contact directly
- * on Savant, so we derive from Stats-API HR/9 + outs-per-game arithmetic:
- *   HR/contact ≈ HR / (PA - K - BB) ≈ HR / (IP × 4.3 × (1 - K% - BB%))
- *
- * For simplicity we use the population (1 - K% - BB%) ≈ 0.69 to convert
- * IP → contact. Anchored to LEAGUE_HR_PER_CONTACT with a 200-BIP prior.
+ * HR / contact rate, Bayesian-blended. Contact = PA − K − BB, taken from the
+ * season line's own counts, so HR and its denominator describe the same
+ * appearances (the starter split). The forecast multiplies this back by the
+ * pitcher's own contact rate, so the denominator must be his own too: the old
+ * derivation assumed a population contact share (IP × 4.3 × 0.69) and then
+ * multiplied by the pitcher's real one, reading a 30%-K arm's HR ~10% low.
+ * Lines without counts (hand-built harness profiles) keep that per-9
+ * approximation. Prior strength: LEAGUE_HR_PER_CONTACT_PRIOR_BIP.
  */
 function computeHrPerContact(args: {
   currentLine: PitcherSeasonLine | null;
@@ -894,21 +903,28 @@ function computeHrPerContact(args: {
   const shrink = Math.max(0.1, Math.min(1.0, args.regimeShrink ?? 1.0));
   const lgShrink = Math.sqrt(shrink);
 
-  const fromLine = (line: PitcherSeasonLine | null): number | null => {
-    if (!line || line.ip <= 0 || line.hr9 == null) return null;
-    const totalContact = Math.max(1, line.ip * 4.3 * 0.69);
-    const totalHr = line.hr9 * line.ip / 9;
-    return totalHr / totalContact;
+  const fromLine = (line: PitcherSeasonLine | null, bip: number): { rate: number; n: number } | null => {
+    if (!line) return null;
+    const bf = line.battersFaced ?? 0;
+    if (bf > 0 && line.homeRuns != null && line.strikeOuts != null && line.baseOnBalls != null) {
+      const contact = bf - line.strikeOuts - line.baseOnBalls;
+      return contact > 0 ? { rate: line.homeRuns / contact, n: contact } : null;
+    }
+    if (line.ip <= 0 || line.hr9 == null) return null;
+    const approxContact = Math.max(1, line.ip * 4.3 * 0.69);
+    return { rate: (line.hr9 * line.ip / 9) / approxContact, n: bip > 0 ? bip : approxContact };
   };
+  const cur = fromLine(currentLine, currentBip);
+  const pri = fromLine(priorLine, priorBip);
 
   const blend = blendRate({
-    current: fromLine(currentLine),
-    currentN: currentBip > 0 ? currentBip : (currentLine?.ip ?? 0) * 4.3 * 0.69,
-    prior: fromLine(priorLine),
-    priorN: priorBip > 0 ? priorBip : (priorLine?.ip ?? 0) * 4.3 * 0.69,
+    current: cur?.rate ?? null,
+    currentN: cur?.n ?? 0,
+    prior: pri?.rate ?? null,
+    priorN: pri?.n ?? 0,
     leagueMean: LEAGUE_HR_PER_CONTACT,
     leaguePriorN: LEAGUE_HR_PER_CONTACT_PRIOR_BIP * lgShrink,
-    priorCap: 250 * shrink,
+    priorCap: HR_PER_CONTACT_PRIOR_CAP * shrink,
   });
 
   return blend.value;

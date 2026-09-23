@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.09.08';
+export const MODEL_VERSION = '2026.09.23';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -224,6 +224,28 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'points-batter-day', stats: '*' },
       { engine: 'retro-batter-day', stats: '*' },
       { engine: 'points-pitcher-start', stats: ['points'] },
+    ],
+  },
+  {
+    version: '2026.09.23',
+    date: '2026-09-23',
+    summary:
+      'Pitcher talent regression priors fitted instead of borrowed from batters (docs/history.md ' +
+      '"2026-09 — Pitcher regression priors fitted"). Out of sample over the full-season Statcast corpus with ' +
+      'the real 2025 season as prior: xwOBACON 50 -> 500 BIP and hard-hit 50 -> 1000 (a pitcher does not own ' +
+      'his contact quality the way a hitter does), BB 120 -> 160, HR/contact 200 -> 500 with a prior-season ' +
+      'cap of 750 (was 250); K came back at its existing 60, the control. LEAGUE_HR_PER_CONTACT .035 -> .044 ' +
+      '(2026 corpus .0438), and per-pitcher HR/contact now uses the season line\'s own PA - K - BB instead ' +
+      'of a population contact share, which read high-K arms ~10% low. Pitcher K and IP are untouched and keep ' +
+      'pooling. The opposing SP\'s talent feeds every batter forecast except K, so the batter slate engines ' +
+      'segment on the contact / walk / power stats; batter-week is matchup-neutral and does not.',
+    touched: [
+      { engine: 'pitcher-start', stats: ['bb', 'h', 'hr', 'er', 'qs', 'w', 'score'] },
+      { engine: 'retro-pitcher-start', stats: ['bb', 'h', 'hr', 'er', 'qs', 'w', 'score'] },
+      { engine: 'points-pitcher-start', stats: '*' },
+      { engine: 'batter-day', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'tb', 'doubles', 'triples', 'score'] },
+      { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'tb', 'doubles', 'triples', 'score'] },
+      { engine: 'points-batter-day', stats: '*' },
     ],
   },
 ];

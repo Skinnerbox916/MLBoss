@@ -17,10 +17,7 @@ Anchors the batter talent regression in [talentModel.ts](../src/lib/mlb/talentMo
 | `LEAGUE_XWOBACON` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average xwOBA on contact (batter). The component blended toward population for thin BIP samples. |
 | `LEAGUE_HARD_HIT` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average Hard-Hit % (EV ≥ 95 mph). |
 | `LEAGUE_XWOBA` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | End-result composite clamp. Anchors the assembled component-blended xwOBA back to a sane range. |
-| `K_PRIOR_PA` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | Regression strength for K rate. Higher = pulls harder toward `LEAGUE_K_RATE` at low sample. K% stabilizes fastest (Carleton), so the prior is light. |
-| `BB_PRIOR_PA` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | Regression strength for BB rate. Slower-stabilizing than K, so heavier prior. |
-| `XWOBACON_PRIOR_BIP` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | Regression strength for xwOBA on contact. Stabilizes ~80 BIP. |
-| `PRIOR_HARD_HIT_BIP` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | HH% stabilizes ~50 BBE (Carleton). |
+| `BATTER_TALENT_PRIORS` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-prior weights (`leaguePriorN`) for the batter component blends: K and BB per PA, xwOBACON and hard-hit per BIP. K% stabilises fastest (Carleton), so its prior is lightest. The pitcher side has its own set (next table) — the two were one shared set until 2026-09. |
 | `FULL_SAMPLE_PA` | [categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts) | PA at which a prior season is treated as fully reliable. Below this, prior weight in `blendRate` is shrunk by `priorN / FULL_SAMPLE_PA` so a 234-PA partial year doesn't get equal authority to a 600-PA full year. |
 
 ## League rate priors (pitcher talent)
@@ -29,9 +26,10 @@ Anchors the pitcher talent regression in [pitching/talent.ts](../src/lib/pitchin
 
 | Constant | File | Anchor |
 |---|---|---|
+| `PITCHER_TALENT_PRIORS` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-prior weights for the pitcher component blends (K, BB, xwOBACON, hard-hit). Fitted out of sample, not assumed — rationale and the fit in [unified-rating-model.md#pitcher-regression-priors](./unified-rating-model.md#pitcher-regression-priors). Contact quality sits an order of magnitude above the batter value: a pitcher does not own his contact the way a hitter does. |
 | `LEAGUE_XWOBACON_PITCHER` | [talentModel.ts](../src/lib/mlb/talentModel.ts) | League-average xwOBA-allowed on contact. Same value as the batter side. (Note: pitcher-side K-per-PA and BB-per-PA share the single `LEAGUE_K_RATE` / `LEAGUE_BB_RATE` definition in `talentModel.ts` — there is no separate pitcher-side copy.) |
-| `LEAGUE_HR_PER_CONTACT` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average HR per ball in play. ~3.5% MLB-wide. |
-| `LEAGUE_HR_PER_CONTACT_PRIOR_BIP` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Regression strength for HR/contact. HR per BIP is the most volatile component; heavy prior. |
+| `LEAGUE_HR_PER_CONTACT` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average HR per contact, contact = PA − K − BB (the basis the forecast multiplies back by). Refreshed 2026-09-23 from the Statcast corpus season-to-date; it had sat at a pre-2026 value ~20% low. |
+| `LEAGUE_HR_PER_CONTACT_PRIOR_BIP`, `HR_PER_CONTACT_PRIOR_CAP` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-prior weight and prior-season cap for HR/contact, in contact events. Fitted with the other pitcher priors — see [unified-rating-model.md#pitcher-regression-priors](./unified-rating-model.md#pitcher-regression-priors). |
 | `LEAGUE_IP_PER_START` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average IP per starter game. Drives expected workload in the forecast layer. |
 | `LEAGUE_IP_PER_START_PRIOR_GS` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Regression strength for IP/start. Stabilizes quickly (~6 starts). |
 | `LEAGUE_GB_RATE` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | League-average ground-ball rate. Drives `gbBoost` HR-park gating in forecast layer. |
@@ -87,7 +85,7 @@ These aren't league baselines but they ARE cross-engine — every advice surface
 
 The batter HR modifier ratios the opposing SP's HR/PA against the league. Its two inputs are on different bases: the SP number is a **talent** primitive (`talentHrPerPA` = `hrPerContact`, regressed toward `LEAGUE_HR_PER_CONTACT`, × contact share) while the bullpen rate and `LEAGUE_HR_PER_PA` are **actual** rates. At the league mean they disagree — .035 × (1 − .221 − .089) = .024 against .030 — so a league-average starter read as a ~20% HR suppressor for every batter until 2026-09-08. `SP_HR_TALENT_TO_ACTUAL` in [batterForecast.ts](../src/lib/mlb/batterForecast.ts) rescales the SP primitive onto the actual basis before the ratio.
 
-Why not refresh `LEAGUE_HR_PER_CONTACT` instead: 2026 HR / (PA − K − BB) is ~.044, so the anchor is stale — but it is the regression centre for every pitcher's HR talent, and moving it re-levels the pitcher engine's HR, ERA and W forecasts, which have their own ledger cohort and harness. That is a pitcher-side change to make on pitcher-side evidence ([forecast-verification.md](./forecast-verification.md#the-pitcher-side-2026-09-04-4192-graded-starts-full-season-regeneration) already reads pitcher talent HR at 0.44). When it is refreshed, `SP_HR_TALENT_TO_ACTUAL` goes to 1.0 on its own — it is computed from the anchors, not hand-set.
+Why the rescale rather than refreshing `LEAGUE_HR_PER_CONTACT` at the time: the anchor is the regression centre for every pitcher's HR talent, so moving it was a pitcher-side change to make on pitcher-side evidence. That happened 2026-09-23 (.035 → .044, [history.md](./history.md#2026-09--pitcher-regression-priors-fitted-contact-quality-was-trusted-10x-too-fast)), and `SP_HR_TALENT_TO_ACTUAL` went to ~1.0 on its own — it is computed from the anchors, not hand-set. It stays in place as the guard against the two bases drifting apart again.
 
 ## Updating these
 

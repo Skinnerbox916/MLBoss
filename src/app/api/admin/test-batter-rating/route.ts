@@ -33,7 +33,7 @@ import type {
   ProbablePitcher, EnrichedGame, GameWeather, ParkData,
   RolePitchingLine, TeamStaffSplits,
 } from '@/lib/mlb/types';
-import type { PitcherTalent } from '@/lib/pitching/talent';
+import { LEAGUE_HR_PER_CONTACT, type PitcherTalent } from '@/lib/pitching/talent';
 import type { EnrichedLeagueStatCategory } from '@/lib/fantasy/stats';
 import type { Focus } from '@/lib/rating/focus';
 
@@ -111,7 +111,7 @@ function pitcherTalent(overrides: Partial<PitcherTalent>): PitcherTalent {
     kPerPA: 0.225,
     bbPerPA: 0.080,
     contactXwoba: 0.365,
-    hrPerContact: 0.035,
+    hrPerContact: LEAGUE_HR_PER_CONTACT,
     ipPerStart: 5.5,
     gbRate: 0.45,
     fastballVelo: 94.0,
@@ -325,7 +325,7 @@ const PROFILES: Profile[] = [
       opposingPitcher: sp({
         throws: 'R', era: 4.20, xera: 4.20, battingAvgAgainst: 0.244,
         talent: pitcherTalent({
-          kPerPA: 0.221, bbPerPA: 0.089, contactXwoba: 0.368, hrPerContact: 0.035,
+          kPerPA: 0.221, bbPerPA: 0.089, contactXwoba: 0.368, hrPerContact: LEAGUE_HR_PER_CONTACT,
           ipPerStart: 5.4, gbRate: 0.435,
         }),
       }),

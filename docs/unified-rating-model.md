@@ -120,7 +120,7 @@ Every consumer of `blendedBaselineForCategory` — matchup-aware `getBatterRatin
 **Two level biases fixed alongside**, because a centered window is only honest if the L2 output for a league-average matchup actually equals the league mean:
 
 - the talent-path AB/PA approximation (`1 − BB%`) dropped HBP/SF/SH and ran H and TB 2.6% high (`abPerPA`, `NON_BB_NON_AB_PER_PA`); `talentHitsPerPA` on the pitcher side had the same shortcut.
-- the HR knob compared a talent-basis SP rate (`hrPerContact` regressed toward `LEAGUE_HR_PER_CONTACT` .035 × contact share = .024) against the actual-basis `LEAGUE_HR_PER_PA` .030, so a dead-average starter read as a 20% HR suppressor for every batter. `SP_HR_TALENT_TO_ACTUAL` in `batterForecast.ts` rescales the SP input onto the actual basis; see [league-baselines.md#batter-hr-knob-basis](./league-baselines.md#batter-hr-knob-basis) for why the pitcher-side anchor was left alone.
+- the HR knob compared a talent-basis SP rate (`hrPerContact` regressed toward `LEAGUE_HR_PER_CONTACT` .035 × contact share = .024) against the actual-basis `LEAGUE_HR_PER_PA` .030, so a dead-average starter read as a 20% HR suppressor for every batter. `SP_HR_TALENT_TO_ACTUAL` in `batterForecast.ts` rescales the SP input onto the actual basis; see [league-baselines.md#batter-hr-knob-basis](./league-baselines.md#batter-hr-knob-basis). The pitcher-side anchor was refreshed separately on pitcher evidence (2026-09-23, [#pitcher-regression-priors](#pitcher-regression-priors)), which took the rescale to ~1.0.
 
 **Knob reliability.** L2 modifiers are applied at `m ** r` with `r` from `KNOB_RELIABILITY` ([mlb/knobReliability.ts](../src/lib/mlb/knobReliability.ts)) — the fitted fraction of each knob's raw swing the outcomes support. Fitted values landed 2026-09-08 (opposing pitcher 0.36–0.77, park 0.36–0.71, team-SB 0.53); rationale and the fit table live in [forecast-verification.md](./forecast-verification.md#per-knob-calibration-fit-2026-09-full-season-retro-cohort). Platoon is calibrated inside `platoon.ts` and stays 1.0 there; weather, batting-order and the flat RHP SB bump are not identified by the fit and stay raw.
 
@@ -197,7 +197,7 @@ interface PitcherTalent {
   kPerPA: number;          // e.g. 0.265 = 26.5% K rate
   bbPerPA: number;         // e.g. 0.072
   contactXwoba: number;    // xwOBA on contact (.300 elite, .368 league avg, .420 bad)
-  hrPerContact: number;    // ~0.035 league avg
+  hrPerContact: number;    // HR / (PA − K − BB), ~0.044 league avg
 
   // Per-start depth + style
   ipPerStart: number;
@@ -234,6 +234,26 @@ interface PitcherTalent {
 ```
 
 The talent vector is **stamped onto every enriched `ProbablePitcher`** by `getGameDay` in [schedule.ts](../src/lib/mlb/schedule.ts). Every consumer reads from the same vector — there is no other "talent" representation.
+
+#### Pitcher regression priors
+
+How hard each talent component regresses toward the league. Values live in `PITCHER_TALENT_PRIORS` ([talentModel.ts](../src/lib/mlb/talentModel.ts)) and `LEAGUE_HR_PER_CONTACT_PRIOR_BIP` / `HR_PER_CONTACT_PRIOR_CAP` ([pitching/talent.ts](../src/lib/pitching/talent.ts)); this section owns why.
+
+**They are fitted, not assumed.** Until 2026-09 the pitcher K / BB / xwOBACON / hard-hit blends ran through `computeTalent` with the *batter* prior weights — a claim that a pitcher owns his contact quality after ~50 balls in play the way a hitter does. `scripts/retro-pitcher-shrinkage-fit.ts` tests that directly: window A of the season supplies the observed rate, a strictly later window B is the target, and the prior weight that best predicts B out of sample is the right one (Poisson likelihood for K / BB / HR counts, Gaussian with measured per-unit noise for contact wOBA). It runs the engine's real three-way shape — current + a real prior season (2025 Savant leaderboards and the 2025 MLB starter split) + league — at three split dates, about 190–200 starters each. The contact target is the pitcher's *actual* wOBA on contact in B: the engine uses xwOBACON to forecast hits, homers and runs, so the question is how well it predicts those.
+
+What the fit said:
+
+- **K came back at its existing value** — the control, same as the batter fit.
+- **Contact quality needs an order of magnitude more regression than hitters get.** Hitters own their batted-ball quality; pitchers mostly don't (the same asymmetry the [Statcast-contribution study](./forecast-verification.md#what-the-corpus-says-about-statcasts-contribution) found). xwOBACON as the input still predicts future contact as well as or better than the pitcher's own actual contact wOBA, so the Statcast input stays — it just gets far less weight per ball.
+- **The hard-hit anchor earns nothing for pitchers.** At the batter-side strength it predicted slightly *worse* than a flat league anchor; heavily regressed it ties flat. It is kept (heavily regressed) so the pitcher and batter paths share one shape.
+- **HR/contact needs a heavier prior and more prior-season weight** — a full prior season should count close to its whole sample, not be capped at a third of it.
+- **BB wants slightly more** than the batter value, consistently across splits, though the gain is within noise.
+
+**HR/contact is computed from real counts.** The per-pitcher rate is HR / (PA − K − BB) from the season line's own counts. It used to be derived from HR/9 with a population contact share (IP × 4.3 × 0.69), which the forecast then multiplied back by the pitcher's *own* contact rate — reading a 30%-K arm's HR ~10% low. Its league anchor `LEAGUE_HR_PER_CONTACT` is on the same basis ([league-baselines.md](./league-baselines.md)).
+
+**Not yet fitted here:** IP/start. Its fit wants the prior season to count for much less than the current cap — a recency problem that belongs to the IP/leash model rather than to a prior weight, so it is left for that rework. GB rate only gates the park HR factor and was not fitted.
+
+Re-fit with `npx tsx scripts/retro-pitcher-shrinkage-fit.ts`; a correctly-set engine reads "gain vs now" ≈ 0 at every split. Decision log: [history.md](./history.md#2026-09--pitcher-regression-priors-fitted-contact-quality-was-trusted-10x-too-fast).
 
 ### Layer 2 — `GameForecast`
 
@@ -496,6 +516,7 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | `SP_HR_TALENT_TO_ACTUAL` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Puts the SP HR talent primitive on the same (actual) basis as `LEAGUE_HR_PER_PA` and the bullpen rate — see [league-baselines.md#batter-hr-knob-basis](./league-baselines.md#batter-hr-knob-basis) |
 | P(W) model (`PYTH_EXP`, `HOME_ODDS`, `W_CREDIT_BASE/PER_IP`, `runsFactor`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Pythagorean odds + IP-linked credit share; ledger-anchored 2026-07, n=188 starts — see [§Start probabilities](#start-probabilities) |
 | `QS_BASE`, `QS_SPREAD` | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Raw QS heuristic shrunk toward league base; tails were ~3× over-spread — see [§Start probabilities](#start-probabilities) |
+| `PITCHER_TALENT_PRIORS`, `LEAGUE_HR_PER_CONTACT_PRIOR_BIP`, `HR_PER_CONTACT_PRIOR_CAP` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts), [pitching/talent.ts](../src/lib/pitching/talent.ts) | Fitted out of sample against later-window outcomes — see [#pitcher-regression-priors](#pitcher-regression-priors). Re-fit, don't hand-tune |
 | `PA_FULL_TRUST` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Effective PA for full sample-confidence; see [league-baselines.md](./league-baselines.md) |
 | `MAX_CONFIDENCE_BAND` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Cap on pitcher score uncertainty band |
 | `MAX_BATTER_BAND` | [batterRating.ts](../src/lib/mlb/batterRating.ts) | Cap on batter score uncertainty band |

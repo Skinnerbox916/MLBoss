@@ -170,9 +170,12 @@ const PROFILES: Profile[] = [
     // (+8 uniform shift): lands ~32, back to 'weak'. The never-stream
     // verdict lives in the score — 32 is the bottom decile of rosterable
     // starters on the recentered scale; 'bad' (<28) is now reserved for
-    // arms the forecast sees as actively unrosterable.
+    // arms the forecast sees as actively unrosterable. Re-ranged 2026-09
+    // with the fitted pitcher priors (xwOBACON 50 -> 500 BIP): ~580 BIP of
+    // .41-.42 contact now regresses to ~.386, the out-of-sample answer, so
+    // the score lifts 32 -> 38. Tier is the assertion and it holds.
     expectedTier: 'weak',
-    expectedScoreRange: [26, 36],
+    expectedScoreRange: [30, 42],
     currentLine: STD_LINE(5.40, 6.8, 30, 6),
     priorLine:   STD_LINE(5.20, 7.0, 165, 28),
     currentSavant: STD_SAVANT(140, 100, 0.165, 0.090, 0.420, 0.46, 91.8, 2.0),

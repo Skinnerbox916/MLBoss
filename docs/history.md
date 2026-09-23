@@ -8,6 +8,22 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — Pitcher regression priors fitted: contact quality was trusted ~10x too fast
+
+2026-09-23, `MODEL_VERSION` 2026.09.23. The pitcher talent vector's K / BB / xwOBACON / hard-hit blends ran through the shared `computeTalent` with the **batter** prior weights (xwOBACON 50 BIP, hard-hit 50, BB 120, K 60), and HR/contact sat at a 200-contact prior with a 250 prior-season cap. None of those had been measured for pitchers. The per-knob fit read the consequence as talent over-spread — HR 0.44, ER 0.68 on the count basis — and a split-half check of the corpus (xwOBACON split-half r ≈ 0.10 at ~190 BIP per half) put pitcher contact-quality stabilisation in the thousands of balls in play, not fifty.
+
+**What changed.** `scripts/retro-pitcher-shrinkage-fit.ts` fits each prior out of sample (window A rate → later window B outcome, current + real 2025 prior season + league, three split dates). Pitchers now carry their own `PITCHER_TALENT_PRIORS` in `talentModel.ts`; batters keep theirs unchanged. Fitted: xwOBACON 50 → 500, hard-hit 50 → 1000, BB 120 → 160, HR/contact 200 → 500 with a prior-season cap of 750; K came back at 60 (the control). Two HR corrections rode along: `LEAGUE_HR_PER_CONTACT` .035 → .044 (2026 corpus .0438; the anchor was ~20% low), and per-pitcher HR/contact is computed from the season line's own PA − K − BB — the old HR/9 derivation used a population contact share and then multiplied back by the pitcher's own, reading high-K arms ~10% low. `SP_HR_TALENT_TO_ACTUAL` in `batterForecast.ts` went to ~1.0 on its own, as designed.
+
+**Verified** on the full-season retro cohort regenerated on the shipped build (4,214 starts): HR bias −8.7% → 0.0%, HR calibration slope 0.41 → 0.87, ER 0.57 → 0.70, BB 0.75 → 0.81, W 0.45 → 0.53, QS bias +14.4% → +12.7%. Knob-fit talent coefficients (count basis): HR 0.44 → 0.94, ER 0.68 → 0.94, BB 0.82 → 0.90. K, IP and PA are byte-identical, as intended. The prior-fit re-run reads gain-vs-now ≤ 1.7 ll at every split (was up to +11.8). Pitcher harness 8/8 after re-ranging the `bad` profile (its tier held; the heavier contact prior lifts its score 32 → 38, the out-of-sample answer); batter harness 13/13.
+
+**Rejected:** hard-hit as the pitcher xwOBACON anchor at the batter strength — it predicted slightly *worse* than a flat anchor (−2.8 / −3.6 ll at two of three splits); heavily regressed it ties flat and is kept only so the two sides share a shape. Actual contact wOBA as the input instead of xwOBACON — xwOBACON matched or beat it at every split.
+
+**Left open:** (1) H now reads under-spread on the count basis (1.47) but calibrated on the rate basis (1.03) — it is inheriting the batters-faced volume under-spread (PA 1.45), which is the IP/leash rework's job, as is IP/start's prior (its fit wants far less prior-season weight — a recency problem, not a prior weight). (2) The batter-side opposing-pitcher `KNOB_RELIABILITY` (0.36–0.77) was fitted against the over-spread pitcher talent this entry fixes; the retro batter cohort must be regenerated and that knob re-fit, or the SP effect on batters is now shrunk twice. (3) The pitcher matchup knobs (opp K 0.59, park K 0.64, park ER 0.34) are unchanged by this and still over-applied.
+
+**Don't reintroduce:** one prior set shared across batters and pitchers. The same component stabilises an order of magnitude apart on the two sides of the plate.
+
+---
+
 ## 2026-09-22 — ESPN scoreboard: one date per request, and a UA on an allowlist
 
 Reported by the owner: the lineup card showed Mets batters facing **Jacob deGrom** at Texas when the actual starter was MacKenzie Gore. deGrom was a real Texas starter — just not that day. ESPN is the app's *only* probable-pitcher source (MLB Stats API fills `probablePitcher` 2–3 days out; ESPN publishes ~a week), so when the ESPN leg dies every surface that reads a starter goes dark or stale: lineup cards, the streaming boards, the batter L2 matchup layer, the pitcher W-probability.

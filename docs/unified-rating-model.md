@@ -247,7 +247,7 @@ What the fit said:
 - **Contact quality needs an order of magnitude more regression than hitters get.** Hitters own their batted-ball quality; pitchers mostly don't (the same asymmetry the [Statcast-contribution study](./forecast-verification.md#what-the-corpus-says-about-statcasts-contribution) found). xwOBACON as the input still predicts future contact as well as or better than the pitcher's own actual contact wOBA, so the Statcast input stays — it just gets far less weight per ball.
 - **The hard-hit anchor earns nothing for pitchers.** At the batter-side strength it predicted slightly *worse* than a flat league anchor; heavily regressed it ties flat. It is kept (heavily regressed) so the pitcher and batter paths share one shape.
 - **HR/contact needs a heavier prior and more prior-season weight** — a full prior season should count close to its whole sample, not be capped at a third of it.
-- **BB wants slightly more** than the batter value, consistently across splits, though the gain is within noise.
+- **BB was not identified.** The full-season fit read 130–180 against the old 120, but a refit on pre-July data alone read 55–80, and old-vs-new on July-onward starts showed no gain. It stays at 120 — briefly shipped at 160 and reverted the same day.
 
 **HR/contact is computed from real counts.** The per-pitcher rate is HR / (PA − K − BB) from the season line's own counts. It used to be derived from HR/9 with a population contact share (IP × 4.3 × 0.69), which the forecast then multiplied back by the pitcher's *own* contact rate — reading a 30%-K arm's HR ~10% low. Its league anchor `LEAGUE_HR_PER_CONTACT` is on the same basis ([league-baselines.md](./league-baselines.md)).
 
@@ -268,30 +268,42 @@ interface GameForecast {
   expectedERA: number;
   expectedPerPA: { kPerPA, bbPerPA, hrPerPA, contactXwoba, baa };
   expectedPerGame: { ip, pa, k, bb, er, h, hr };
-  probabilities: { qs, w, wParts: { pTeam, credit, rs, ra, ownOffenseKnown } };
+  probabilities: { qs, w, wParts: { pTeam, credit, rs, ra, ownOffenseKnown, reach5, reach6 } };
   multipliers: { velocity, platoon, park, weather, opp, bullpen };
 }
 ```
 
 - `expectedPerPA` — adjusted for opposing offense (log5 against opp K-rate-vs-hand, HR-park, etc.). The **batter side** consumes this for log5 calculations against the opposing SP.
 - `expectedPerGame` — projected IP, K, BB, ER, H, HR for the start. Drives the per-category score windows in Layer 3.
-- `probabilities` — P(QS), P(W) + the W decomposition (`wParts`). P(W) prices both sides in runs: SP talents, both pens (`MLBGame.{home,away}Team.staffSplits.rp.era` with `staffEra` fallback), opposing-lineup and own-offense run factors. See [Start probabilities](#start-probabilities) below.
+- `probabilities` — P(QS), P(W) + the decomposition (`wParts`). Both are built on leash-aware probabilities of reaching 6 and 5 IP; P(team wins) prices both sides in runs: SP talents, both pens (`MLBGame.{home,away}Team.staffSplits.rp.era` with `staffEra` fallback), opposing-lineup and own-offense run factors. See [Start probabilities](#start-probabilities) below.
 - `multipliers` — surfaced for breakdown UI. Bullpen is the only one that doesn't fold into the Layer 3 composite (it only affects W odds). The `park` multiplier comes from `getParkAdjustment` — shared with the batter-side rating.
 
 ### Start probabilities
 
-The one home for the P(QS) / P(W) calibration rationale. Values live in `pitching/forecast.ts` (probability constants + the term scales inside `buildGameForecast`); the Layer 3 normalization windows in `pitching/rating.ts` bracket the resulting output ranges.
+The one home for the P(QS) / P(W) rationale. Values live in `pitching/forecast.ts` (the "Start-probability model" constants and `reachFeatures`); the Layer 3 normalization windows in `pitching/rating.ts` are centred on the resulting league-average outputs. Re-fit with `npx tsx scripts/retro-start-probabilities-fit.ts`.
 
-**P(W) = P(team wins) × P(SP credited | team win).** The original additive formula (`0.40 ± SP-talent ± bullpen ± home`) was graded by the first ledger cycle (2026-07-25, n=188 starts) as noise: mean forecast 40.5% against a realized 31.9%, calibration slope ~0.1 (honest = 1.0), AUC 0.52 — realized win rate was flat ~32% across every forecast band, because wins hinge on run support and game context far more than SP-vs-SP talent. The replacement decomposes:
+**Both are built on the probability of *reaching* an innings threshold** (2026-09-23). A QS needs 6 IP and a win needs 5, and whether a start gets there is decided as much by the manager's leash as by the pitcher's talent: an arm pulled at ~5 IP every time rarely reaches 6 however good his ERA forecast is. So the forecast carries two reach probabilities:
 
-- **P(team wins)** — Pythagorean win odds (exponent `PYTH_EXP` 1.83, Bill James / Pythagenpat at MLB run environments) over both sides' expected runs per 9. Runs allowed: our SP's *talent* ERA over his projected innings + our pen (`rpEraOf`: relief-only ERA, staff fallback) for the rest, scaled by the opposing lineup's run factor. Runs scored — the run-support side the old formula assumed average: opposing SP talent ERA (league 4.20 anchor when TBD) over a league-average 5.4-IP start + their pen, scaled by our own offense's run factor vs the opposing SP's hand. Talent ERAs enter context-free: park/weather inflate both sides of one game and roughly cancel in the odds ratio, while lineup quality is side-specific. `runsFactor` maps team OPS → run rate at ~3% of league scoring per 10 OPS points (cross-team season regressions, runs/G ≈ linear in OPS), clamped ±20% ≈ best/worst real MLB offenses. Home edge is the long-run MLB home win rate (~.540) applied in odds space, and the resulting probability is capped to .28–.72 — the band real single-game MLB win probabilities live in (biggest moneyline favorites ≈ −300).
-- **P(credited | team win)** — the starter must complete 5 and hand a lead to the pen, so credit share rises with projected depth: `0.64 + 0.10 × (IP − 5.4)`, clamped .52–.78. The 0.64 base reproduces the pool's realized 31.9% at neutral inputs (0.50 × 0.64 ≈ 0.32); the slope is estimated, not hard-sourced — flagged for the ledger to check.
+- **P(reach 6 IP)** and **P(reach 5 IP)** — logistic in `reachFeatures`: the mean IP forecast, the forecast ERA, and the leash, which is the pitcher's own recent start lengths (`PitcherTalent.recentStartOuts`, from the game log `schedule.ts` already fetches). The leash has two terms: the share of his last six starts that went that deep, blended with two pseudo-starts at the league rate so a 0-for-2 call-up is not a 0% arm; and the mean IP of his last three. With no start history (season debut, the L6 neutral paths, the FA pool) both leash terms sit at their centres and the forecasts alone decide.
+- **P(QS) = P(reach 6) × P(ER ≤ 3 | reached 6).** The second factor is ~.89 and nearly flat in forecast ERA. A pitcher who is giving up runs is pulled before 6, so run prevention reaches QS mostly through the reach term. That is why ERA sits inside the reach model rather than in a separate QS term.
+- **P(W) = P(team wins) × P(SP credited | team wins)**, credit logistic in logit P(reach 5). He must reach 5 to be eligible, then leave with the lead and have the pen hold it.
 
-Final clamp 0.10–0.55; typical output ~0.20–0.48. Every input is regressed/clamped upstream and every missing input falls back to a league anchor (run-support-neutral in the L6 neutral/vacuum paths, which deliberately omit `ownOffense`). The full decomposition is returned as `probabilities.wParts` and snapshotted into ledger context, so the next calibration pass can grade P(team win), credit share, and run rates separately instead of reverse-engineering the total — the constraint that hampered the first pass.
+**How it was chosen, not just fit.** The feature set was picked on a June validation window inside the training period (forecast IP only → + leash rate → + last-3 IP → + ERA, with two leash-shrink strengths). It was then scored, frozen, on the July-onward holdout against the engine's captured forecasts. On the holdout (1,653 starts): QS Brier .2133 → .2069, log-loss .616 → .600, and W Brier .1988 → .1951. Every calibration band is within ~2 points, where the old QS ran 3–5 points high in every band. A pre-July fit and the full-season fit give nearly identical reach coefficients; the full-season values ship. The leash term for reaching 5 IP and ERA's effect on QS-given-6 are weak but harmless.
 
-**P(QS) keeps its shape but shrinks its tails.** The raw `0.5·ipFactor + 0.5·eraFactor` heuristic graded honest in its middle bands (50% forecasts realized 52.6%) but over-spread ~3× at the tails (13% forecasts realized 27%; 72% realized 45%; logit slope 0.25 ± 0.14). It is now shrunk 0.55× toward a 0.40 base — the middle barely moves, the tails compress. Output range ~0.18-0.73.
+What it fixed, by the segments the owner actually decides on:
 
-Re-grade both curves at `/admin/forecast` (they segment at model version `2026.07.25`) before re-widening anything; the pre-recalibration evidence is summarized in [history.md](./history.md#2026-07--wqs-probability-recalibration).
+- **Short-leash arms** (no 6-IP start in the last six): the old model priced them at the league QS rate its IP heuristic implied.
+- **Workhorses** (5–6 of the last six went 6+): the old model under-rated them by ~8–9 points of QS.
+- **Regular starters overall** were already roughly honest on QS and stay so.
+- **W credit share** was a constant .64 at a league-average projection (`0.64 + 0.10 × (IP − 5.4)`); the cohort realizes .56–.59, which was most of the W over-forecast.
+
+**P(team wins)** — unchanged, and graded by the fit script rather than re-fit. Pythagorean win odds (exponent `PYTH_EXP` 1.83, Bill James / Pythagenpat at MLB run environments) over both sides' expected runs per 9.
+- *Runs allowed:* our SP's *talent* ERA over his projected innings plus our pen (`rpEraOf`: relief-only ERA, with a staff fallback), scaled by the opposing lineup's run factor.
+- *Runs scored:* opposing SP talent ERA (league 4.20 anchor when TBD) over a league-average 5.4-IP start plus their pen, scaled by our own offense's run factor vs the opposing SP's hand.
+- *Context:* talent ERAs enter context-free, because park and weather inflate both sides of one game and roughly cancel in the odds ratio, while lineup quality is side-specific. `runsFactor` maps team OPS → run rate at ~3% of league scoring per 10 OPS points, clamped ±20%. The home edge is the long-run MLB home win rate (~.540) in odds space, capped to .28–.72.
+- *Grading:* on the 2026 retro cohort it is honest after July but read over-spread in April–June (.35 forecasts realized .45, .65 realized .56). That's a watch item, not yet a finding.
+
+The decomposition — `pTeam`, `credit`, `rs`, `ra`, `reach5`, `reach6` — is returned as `probabilities.wParts` and snapshotted into ledger context, so each piece grades separately. The history of the previous two models (the additive P(W) the first ledger cycle graded as noise, and the shrunk QS heuristic) is in [history.md](./history.md#2026-09--qs-and-w-from-reach-probabilities).
 
 ### Layer 3 — `PitcherRating`
 
@@ -514,8 +526,8 @@ Constants the rating model is anchored against. Touch with care; re-run the pitc
 | `KNOB_RELIABILITY` | [mlb/knobReliability.ts](../src/lib/mlb/knobReliability.ts) | Per-knob, per-stat exponent on every batter L2 modifier — the fitted share of the raw swing the cohort delivers. Re-fit with `scripts/retro-knob-fit.ts`; a correct table reads back ~1.00 |
 | `NON_BB_NON_AB_PER_PA` | [mlb/categoryBaselines.ts](../src/lib/mlb/categoryBaselines.ts), [pitching/talent.ts](../src/lib/pitching/talent.ts) | HBP + SF + SH share of PA (.023, 2026) so AB/PA = 1 − BB% − this on both talent paths |
 | `SP_HR_TALENT_TO_ACTUAL` | [batterForecast.ts](../src/lib/mlb/batterForecast.ts) | Puts the SP HR talent primitive on the same (actual) basis as `LEAGUE_HR_PER_PA` and the bullpen rate — see [league-baselines.md#batter-hr-knob-basis](./league-baselines.md#batter-hr-knob-basis) |
-| P(W) model (`PYTH_EXP`, `HOME_ODDS`, `W_CREDIT_BASE/PER_IP`, `runsFactor`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Pythagorean odds + IP-linked credit share; ledger-anchored 2026-07, n=188 starts — see [§Start probabilities](#start-probabilities) |
-| `QS_BASE`, `QS_SPREAD` | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Raw QS heuristic shrunk toward league base; tails were ~3× over-spread — see [§Start probabilities](#start-probabilities) |
+| P(team wins) (`PYTH_EXP`, `HOME_ODDS`, `runsFactor`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Pythagorean run odds; ledger-anchored 2026-07 — see [§Start probabilities](#start-probabilities) |
+| Reach model (`REACH_6`, `REACH_5`, `QS_ER_GIVEN_6`, `W_CREDIT`, `LEASH_WINDOW`, `LEASH_PRIOR_STARTS`) | [pitching/forecast.ts](../src/lib/pitching/forecast.ts) | Logistic fits on the retro cohort; feature set validated on a July+ holdout — see [§Start probabilities](#start-probabilities). Re-fit with `scripts/retro-start-probabilities-fit.ts`, don't hand-tune |
 | `PITCHER_TALENT_PRIORS`, `LEAGUE_HR_PER_CONTACT_PRIOR_BIP`, `HR_PER_CONTACT_PRIOR_CAP` | [mlb/talentModel.ts](../src/lib/mlb/talentModel.ts), [pitching/talent.ts](../src/lib/pitching/talent.ts) | Fitted out of sample against later-window outcomes — see [#pitcher-regression-priors](#pitcher-regression-priors). Re-fit, don't hand-tune |
 | `PA_FULL_TRUST` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Effective PA for full sample-confidence; see [league-baselines.md](./league-baselines.md) |
 | `MAX_CONFIDENCE_BAND` | [pitching/talent.ts](../src/lib/pitching/talent.ts) | Cap on pitcher score uncertainty band |

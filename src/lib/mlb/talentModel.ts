@@ -85,13 +85,16 @@ const BATTER_TALENT_PRIORS: TalentPriors = {
 };
 
 /** Fitted out of sample 2026-09 (scripts/retro-pitcher-shrinkage-fit.ts):
- *  K came back at its existing 60 (the control); BB a little heavier; contact
- *  quality an order of magnitude heavier than the batter value it borrowed.
+ *  K came back at its existing 60 (the control); contact quality an order of
+ *  magnitude heavier than the batter value it borrowed. BB stays at the
+ *  batter 120: the full-season fit read 130-180 but a pre-July refit read
+ *  55-80 and the holdout showed no gain either way, so neither direction
+ *  is identified.
  *  Hard-hit at 1000 makes the HH anchor ~flat — for pitchers it earns no
  *  signal the xwOBACON blend does not already carry. */
 export const PITCHER_TALENT_PRIORS: TalentPriors = {
   kPa: 60,
-  bbPa: 160,
+  bbPa: 120,
   xwobaconBip: 500,
   hardHitBip: 1000,
 };

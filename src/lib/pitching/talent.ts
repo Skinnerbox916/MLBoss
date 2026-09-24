@@ -73,6 +73,14 @@ export interface PitcherTalent {
    *  For pure relievers this is essentially the league anchor (no
    *  starts to learn from); use `ipPerAppearance` for their workload. */
   ipPerStart: number;
+  /** Outs recorded in his most recent starts this season, oldest first
+   *  (up to six). The leash: how deep his manager actually lets him go,
+   *  which the QS / W reach probabilities read (`reachProbability` in
+   *  forecast.ts). Usage, not skill — kept raw rather than regressed; the
+   *  forecast blends it with the league rate. Null/absent when the caller
+   *  has no game log (FA pool, projection route, harness profiles) —
+   *  the reach model then falls back to the IP and ERA forecasts alone. */
+  recentStartOuts?: number[] | null;
   /** Role classification driven by current-season usage with prior-year
    *  fallback. `starter` = has at least one current-season GS (or one
    *  prior-season GS when current is empty); `reliever` = has appearances
@@ -668,6 +676,9 @@ export interface ComputeTalentArgs {
    *  reliever workload signal know how many calendar weeks of sample
    *  the current `gamesPitched` is spread over. Defaults to "today". */
   asOfDate?: Date;
+  /** Outs in his most recent starts this season, oldest first — passed
+   *  through to `PitcherTalent.recentStartOuts`. */
+  recentStartOuts?: number[] | null;
 }
 
 /**
@@ -847,6 +858,7 @@ export function computePitcherTalent(args: ComputeTalentArgs): PitcherTalent {
     contactXwoba,
     hrPerContact,
     ipPerStart,
+    recentStartOuts: args.recentStartOuts?.slice(-6) ?? null,
     role,
     appearancesPerWeek,
     ipPerAppearance,

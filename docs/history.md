@@ -8,6 +8,36 @@ Reverse-chronological. Add new entries at the top.
 
 ---
 
+## 2026-09 — QS and W from reach probabilities
+
+2026-09-23, `MODEL_VERSION` 2026.09.23.2. Surfaced by the owner on a live streaming card: Bryce Miller at 47% QS and 31% W, against 1 QS and 1 W in his last 12 starts. His IP forecast (~5.2) was close to what he was actually doing (~5.0 — pulled at about five innings nearly every start). The fault was in how QS and W were built from it.
+
+**What we used to do.** QS was a heuristic on the *mean* IP and ERA forecasts — `0.5·ipFactor + 0.5·eraFactor`, shrunk 0.55× toward a .40 base (the 2026-07 recalibration, below). W was P(team wins) × a credit share of `0.64 + 0.10 × (IP − 5.4)`. Neither knew how often a pitcher actually reaches the innings the categories require. A QS needs 6 IP; a W needs 5. Whether a start gets there is decided as much by the manager's leash as by talent, and a mean of 5.2 IP says nothing about whether this manager ever lets him reach 6.
+
+**What replaced it.** Logistic models for P(reach 6 IP) and P(reach 5 IP) over the IP and ERA forecasts plus the leash: the share of his last six starts that went that deep (with two league-rate pseudo-starts) and his last-3 mean IP. The leash comes from `PitcherTalent.recentStartOuts`, built from the game log `schedule.ts` already fetched. Then QS = P(reach 6) × P(ER ≤ 3 | reached 6), and W = P(team wins) × credit(P(reach 5)). Fitted by `scripts/retro-start-probabilities-fit.ts`; rationale in [unified-rating-model.md#start-probabilities](./unified-rating-model.md#start-probabilities).
+
+**Validated before shipping, not just fit.** The feature set was chosen on a June validation window inside the training period, then scored, frozen, on the July-onward holdout against the engine's captured forecasts. On the holdout (1,653 starts): QS Brier .2133 → .2069, and every calibration band within ~2 points, where the old QS ran 3–5 high in all of them; W Brier .1988 → .1951. The pre-July and full-season fits give nearly the same reach coefficients, and on the holdout the shipped (full-season) coefficients score no better than the pre-July ones, so the in-sample fit isn't buying anything. End to end on the regenerated full-season cohort: QS bias +12.7% → 0.0%, correlation with outcome .20 → .25; W bias +9.1% → −0.1%, calibration slope .53 → .68, correlation .08 → .13. K, IP and PA are unchanged. Pitcher harness 8/8 after two re-ranges: the QS / W score windows re-centred on the new league-average outputs, and the `lopezJ` floor 50 → 45 (its ceiling is the assertion). Batter harness 13/13.
+
+**Findings along the way:**
+- **"Hasn't done it in months" is mostly noise.** Regular starters with no 6-IP start in their last six still delivered QS 22–30% next time, so the leash enters as a regressed rate, not a verdict.
+- **Recency-weighted K / BB / HR rates don't beat season-to-date.** Tested on the corpus, weights chosen before July and scored after: gains within noise, and short windows much worse. Only whiff rate showed a recency benefit.
+- **ERA barely moves QS once the pitcher reaches 6.** P(ER ≤ 3 | 6 IP) is ~.89 regardless: an arm giving up runs is pulled first, so ERA acts through the reach term.
+- **W credit share:** the old .64 realized .56–.59. That gap was most of the W over-forecast.
+
+**Rejected:**
+- **A within-season version of the regime probe** (shrink toward recent form when velocity, whiff, K and BB all move together). The owner's call: too clever. Miller's peripherals collapsed mid-season and then recovered over his next four starts, the exact case such a probe would over-react to.
+- **Picking the model variant by its test-set score.** The first pass of the study did this; it was re-run with in-train validation before anything shipped.
+
+**Also in this version:** the pitcher BB prior goes back to 120 — the 160 from 2026.09.23 did not replicate on a pre-July refit and showed no holdout gain.
+
+**Don't reintroduce:**
+- QS or W credit as a function of the mean IP forecast alone. The threshold probability is the quantity, and it needs the leash.
+- A hard "hasn't gone 6 in N starts → QS ≈ 0" rule. The evidence says regress it.
+
+**Left open:** P(team wins) reads over-spread in April–June and honest after — a watch item. The points engine's own W anchor (`BASE_P_WIN_PER_START` .33 in `points/rateVector.ts`) predates this and sits above the cohort's realized ~.29.
+
+---
+
 ## 2026-09 — Pitcher regression priors fitted: contact quality was trusted ~10x too fast
 
 2026-09-23, `MODEL_VERSION` 2026.09.23. The pitcher talent vector's K / BB / xwOBACON / hard-hit blends ran through the shared `computeTalent` with the **batter** prior weights (xwOBACON 50 BIP, hard-hit 50, BB 120, K 60), and HR/contact sat at a 200-contact prior with a 250 prior-season cap. None of those had been measured for pitchers. The per-knob fit read the consequence as talent over-spread — HR 0.44, ER 0.68 on the count basis — and a split-half check of the corpus (xwOBACON split-half r ≈ 0.10 at ~190 BIP per half) put pitcher contact-quality stabilisation in the thousands of balls in play, not fifty.

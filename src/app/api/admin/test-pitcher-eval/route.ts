@@ -224,7 +224,10 @@ const PROFILES: Profile[] = [
           'on top of base xERA. If this profile reaches tough (≥ 62), BB ' +
           'compounding has regressed (the penalty is worth ~4-5 score points).',
     expectedTier: 'average',
-    expectedScoreRange: [50, 61],
+    // The ceiling is the assertion. Floor lowered 50 -> 45 on 2026-09-23:
+    // the fitted pitcher contact prior regresses his .273 xwOBACON harder
+    // and QS / W are now priced off P(reach 6 / 5 IP) — together 50 -> 49.
+    expectedScoreRange: [45, 61],
     currentLine: STD_LINE(6.52, 6.83, 29, 6),
     priorLine:   STD_LINE(4.08, 11.30, 110, 18),
     currentSavant: SAVANT(146, 101, 0.158, 0.151, 0.273, 0.297, 0.211, 0.040, null, -1.23),

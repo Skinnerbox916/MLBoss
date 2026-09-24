@@ -134,11 +134,11 @@ interface NormWindow {
 // rate between categories; change a width only with a reason.
 // Rationale: docs/unified-rating-model.md#layer-3--pitcherrating.
 const PITCHER_NORM: Record<number, NormWindow> = {
-  // QS — P(QS). The forecast layer shrinks its raw heuristic toward the
-  // 0.40 league base (output range ~0.18-0.73), so the window brackets
-  // that: docs/unified-rating-model.md#start-probabilities.
+  // QS — P(QS) = P(reach 6 IP) x P(ER <= 3 | reached 6). Centred on the
+  // league-average output (~0.33 — the leagueAverage harness profile),
+  // width unchanged: docs/unified-rating-model.md#start-probabilities.
   83: {
-    label: 'QS', betterIs: 'higher', worst: 0.15, best: 0.65,
+    label: 'QS', betterIs: 'higher', worst: 0.08, best: 0.58,
     formatExpected: (v) => `${(v * 100).toFixed(0)}% QS`,
   },
   // K — per-game expected K count. League-average forecast is ~5.1 K
@@ -150,11 +150,11 @@ const PITCHER_NORM: Record<number, NormWindow> = {
     label: 'K', betterIs: 'higher', worst: 2.4, best: 7.9,
     formatExpected: (v) => `${v.toFixed(1)} K`,
   },
-  // W — P(W) from the decomposed P(team win) × P(credit) model (typical
-  // range ~0.20-0.48, hard-clamped 0.10-0.55), so the window brackets
-  // the typical range: docs/unified-rating-model.md#start-probabilities.
+  // W — P(W) = P(team win) x P(credit | team win), credit leash-aware via
+  // P(reach 5 IP). Centred on the league-average output (~0.32), width
+  // unchanged: docs/unified-rating-model.md#start-probabilities.
   28: {
-    label: 'W', betterIs: 'higher', worst: 0.20, best: 0.48,
+    label: 'W', betterIs: 'higher', worst: 0.18, best: 0.46,
     formatExpected: (v) => `${(v * 100).toFixed(0)}% W`,
   },
   // ERA — per-game expected ERA. Centered at 4.10, the model's output

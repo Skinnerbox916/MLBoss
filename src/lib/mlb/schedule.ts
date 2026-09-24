@@ -12,6 +12,7 @@ import {
   fetchPitcherOverallSeasonEra,
   fetchPitcherPlatoonSplits,
   fetchPitcherRecentForm,
+  getPitcherRecentStartOuts,
   resolveMLBId,
   getPitcherSeasonLines,
 } from './players';
@@ -530,12 +531,13 @@ export async function enrichSlate(games: MLBGame[], season: number = new Date().
       p.throws = identity.throws;
     }
 
-    const [line, overallEra, platoon, recentForm, seasonLines] = await Promise.all([
+    const [line, overallEra, platoon, recentForm, seasonLines, recentStartOuts] = await Promise.all([
       fetchPitcherFullLine(p.mlbId, season),
       fetchPitcherOverallSeasonEra(p.mlbId, season),
       fetchPitcherPlatoonSplits(p.mlbId, season),
       fetchPitcherRecentForm(p.mlbId, undefined, season),
       getPitcherSeasonLines(p.mlbId, season),
+      getPitcherRecentStartOuts(p.mlbId, season),
     ]);
     applyPitcherStatsLine(p, line);
     // Overlay the user-facing ERA with the overall (all-appearances) value.
@@ -556,6 +558,7 @@ export async function enrichSlate(games: MLBGame[], season: number = new Date().
       priorLine: seasonLines.prior,
       currentSavant: savantMap.get(p.mlbId) ?? null,
       priorSavant: priorSavantMap.get(p.mlbId) ?? null,
+      recentStartOuts,
     });
   };
 

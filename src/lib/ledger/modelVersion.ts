@@ -22,7 +22,7 @@ import type { ForecastEngine } from './capture';
  * whenever a change alters what an engine predicts, AND add a MODEL_CHANGELOG
  * entry naming what it touched. UI-only / plumbing changes don't bump.
  */
-export const MODEL_VERSION = '2026.09.23';
+export const MODEL_VERSION = '2026.09.23.2';
 
 /** `'*'` = every engine / every stat. `stats` lists the graded stat keys a
  *  change altered (see PITCHER_STATS / BATTER_STATS / 'points' in scorecard.ts). */
@@ -245,6 +245,28 @@ export const MODEL_CHANGELOG: readonly ModelChange[] = [
       { engine: 'points-pitcher-start', stats: '*' },
       { engine: 'batter-day', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'tb', 'doubles', 'triples', 'score'] },
       { engine: 'retro-batter-day', stats: ['r', 'h', 'hr', 'rbi', 'bb', 'tb', 'doubles', 'triples', 'score'] },
+      { engine: 'points-batter-day', stats: '*' },
+    ],
+  },
+  {
+    version: '2026.09.23.2',
+    date: '2026-09-23',
+    summary:
+      'QS and W priced off the probability of REACHING 6 and 5 innings (docs/history.md "2026-09 — QS and W ' +
+      'from reach probabilities"). QS was a shrunk 50/50 heuristic on mean IP and ERA; W credit was a constant ' +
+      '.64 share with an IP slope. Both now come from logistic reach models on the IP and ERA forecasts plus the ' +
+      'manager\'s leash (how many of the pitcher\'s last six starts went that deep, and his last-3 IP): ' +
+      'QS = P(6 IP) x P(ER <= 3 | 6 IP), W = P(team win) x credit(P(5 IP)). Feature set chosen on a June ' +
+      'validation window; on a July+ holdout QS Brier .2133 -> .2069 and W .1988 -> .1951, calibrated within ' +
+      '~2 points in every band where the old QS ran 3-5 high throughout. PITCHER_NORM QS / W windows ' +
+      're-centred on the new league-average outputs. Also reverts the pitcher BB prior 160 -> 120 (did not ' +
+      'replicate pre-July), which moves SP walk rates and so batter BB and run context too.',
+    touched: [
+      { engine: 'pitcher-start', stats: ['qs', 'w', 'bb', 'h', 'er', 'score'] },
+      { engine: 'retro-pitcher-start', stats: ['qs', 'w', 'bb', 'h', 'er', 'score'] },
+      { engine: 'points-pitcher-start', stats: '*' },
+      { engine: 'batter-day', stats: ['bb', 'r', 'rbi', 'score'] },
+      { engine: 'retro-batter-day', stats: ['bb', 'r', 'rbi', 'score'] },
       { engine: 'points-batter-day', stats: '*' },
     ],
   },

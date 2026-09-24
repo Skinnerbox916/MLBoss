@@ -40,7 +40,11 @@
  *
  * The regime probe (which scales these priors per pitcher) is held neutral.
  *
- *   npx tsx scripts/retro-pitcher-shrinkage-fit.ts [minPaA=80] [minPaB=60]
+ * `--through=YYYY-MM-DD` truncates everything (corpus, starts, league anchors,
+ * noise) to games strictly before that date, so the fit can be run on the
+ * past alone and its answer graded on the games after it.
+ *
+ *   npx tsx scripts/retro-pitcher-shrinkage-fit.ts [minPaA=80] [minPaB=60] [--through=YYYY-MM-DD]
  */
 import { config } from 'dotenv';
 config({ path: '.env.local' });
@@ -60,8 +64,10 @@ import {
 
 const SEASON = 2026;
 const PRIOR_SEASON = 2025;
-const minPaA = Number(process.argv[2] ?? 80);
-const minPaB = Number(process.argv[3] ?? 60);
+const positional = process.argv.slice(2).filter(a => !a.startsWith('--'));
+const through = process.argv.find(a => a.startsWith('--through='))?.split('=')[1] ?? null;
+const minPaA = Number(positional[0] ?? 80);
+const minPaB = Number(positional[1] ?? 60);
 /** Engine IP/start prior-season cap (talent.ts `blendIpPerStart`). */
 const IP_PRIOR_CAP_GS = 30;
 const MIN_GS_A = 4;
@@ -170,9 +176,11 @@ async function main() {
     select min(game_date)::text as f, max(game_date)::text as t from statcast_events
     where game_date >= ${`${SEASON}-01-01`}`);
   const { f: first, t: last } = dres.rows[0] as { f: string; t: string };
-  const endExcl = new Date(Date.parse(last) + 86400000).toISOString().slice(0, 10);
+  const corpusEnd = new Date(Date.parse(last) + 86400000).toISOString().slice(0, 10);
+  const endExcl = through && through < corpusEnd ? through : corpusEnd;
   const dateList = (await db.execute(sql`
-    select distinct game_date::text as d from statcast_events where game_date >= ${first} order by 1`)).rows
+    select distinct game_date::text as d from statcast_events
+    where game_date >= ${first} and game_date < ${endExcl} order by 1`)).rows
     .map(r => (r as { d: string }).d);
 
   // Every graded start in the season, from the retro cohort (it covers the
@@ -184,7 +192,8 @@ async function main() {
     where s.engine = 'retro-pitcher-start' and a.status = 'played'
       and coalesce((a.pitching->>'gs')::int, 0) = 1`);
   const starts: Start[] = (sres.rows as Record<string, unknown>[])
-    .map(r => ({ id: Number(r.mlb_id), date: String(r.date), ip: Number(r.ip) }));
+    .map(r => ({ id: Number(r.mlb_id), date: String(r.date), ip: Number(r.ip) }))
+    .filter(s => s.date < endExcl);
 
   // Per-unit noise for the Gaussian components, measured on the corpus.
   const w = WOBA_WEIGHTS[SEASON];
@@ -193,7 +202,8 @@ async function main() {
       when 'triple' then ${w.s3}::float8 when 'home_run' then ${w.hr}::float8 else 0 end) as v_woba,
       var_pop(est_woba) as v_xwoba
     from statcast_events
-    where game_date >= ${first} and bb_type is not null and events is not null and events <> 'truncated_pa'`);
+    where game_date >= ${first} and game_date < ${endExcl}
+      and bb_type is not null and events is not null and events <> 'truncated_pa'`);
   const vWoba = Number((vres.rows[0] as Record<string, unknown>).v_woba);
   const vXwoba = Number((vres.rows[0] as Record<string, unknown>).v_xwoba);
   // Per-start IP variance WITHIN pitcher — the noise around a pitcher's own mean.
@@ -228,7 +238,7 @@ async function main() {
     { bf: 0, k: 0, bb: 0, hr: 0, ip: 0, gs: 0 });
 
   const P = PITCHER_TALENT_PRIORS;
-  console.log(`corpus ${first}..${last}: ${season.length} pitchers, ${tot.pa} PA; ${starts.length} graded starts`);
+  console.log(`corpus ${first}..${endExcl} (exclusive)${through ? ' — TRUNCATED by --through' : ''}: ${season.length} pitchers, ${tot.pa} PA; ${starts.length} graded starts`);
   console.log(`prior season ${PRIOR_SEASON}: ${priorSavant.size} Savant rows, ${priorLines.size} starter lines\n`);
   console.log(`league anchors            engine     ${SEASON} corpus   ${PRIOR_SEASON} SP line`);
   console.log(`  K/PA                    ${f(0.221, 4).padEnd(10)} ${f(lg.k, 4).padEnd(14)} ${f(pl.k / pl.bf, 4)}`);

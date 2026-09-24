@@ -179,10 +179,12 @@ export interface PitcherRateVector {
 
 /** League-baseline P(Win) for a league-average starter in a given start.
  *  Ledger-calibrated 2026-07-25: realized SP win rate was 31.9% over the
- *  first 188 graded starts vs the 0.38 this previously assumed — same
- *  anchor as the categories-side W model (`W_CREDIT_BASE` × even team odds
- *  ≈ 0.33; see docs/unified-rating-model.md#start-probabilities). Quality
- *  (run prevention) and depth scale around this. */
+ *  first 188 graded starts vs the 0.38 this previously assumed. The
+ *  categories-side W model has since moved to a leash-aware reach model
+ *  (docs/unified-rating-model.md#start-probabilities) and the full 2026
+ *  retro cohort realizes ~0.29 per start — this points anchor has not been
+ *  re-checked against it yet. Quality (run prevention) and depth scale
+ *  around this. */
 const BASE_P_WIN_PER_START = 0.33;
 
 /** League-average starter ERA anchor (matches the `xwobaToXera` anchor in

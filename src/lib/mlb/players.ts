@@ -262,6 +262,26 @@ export async function fetchPitcherRecentForm(
 }
 
 /**
+ * Outs recorded in a pitcher's most recent starts this season, oldest first
+ * (up to `n`) — the leash the QS / W reach probabilities read
+ * (`PitcherTalent.recentStartOuts`). Same cached game log as
+ * `fetchPitcherRecentForm`; empty on fetch failure, which the forecast
+ * treats as "no history" rather than "never goes deep".
+ */
+export async function getPitcherRecentStartOuts(
+  mlbId: number,
+  season: number = new Date().getFullYear(),
+  n: number = 6,
+): Promise<number[]> {
+  const raw = await fetchPitcherGameLog(mlbId, season);
+  if (!raw) return [];
+  return parsePitcherGameLines(findGroup(raw, 'gameLog'))
+    .filter(g => g.isStart)
+    .map(g => g.outs)
+    .slice(-n);
+}
+
+/**
  * Fetch a pitcher's per-appearance gamelog entries with opponent team IDs
  * and PA counts. Used by the talent layer for strength-of-schedule
  * weighting — outings vs weak lineups get sample-shrunk so the Bayesian

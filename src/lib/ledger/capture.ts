@@ -263,6 +263,8 @@ export async function capturePitcherSlate(
             rs: round3(forecast.probabilities.wParts.rs),
             ra: round3(forecast.probabilities.wParts.ra),
             ownOffenseKnown: forecast.probabilities.wParts.ownOffenseKnown,
+            reach5: round3(forecast.probabilities.wParts.reach5),
+            reach6: round3(forecast.probabilities.wParts.reach6),
           },
           // Joinability + candidate-confounder screen (2026-07, see
           // docs/forecast-verification.md#snapshot-context): gamePk makes

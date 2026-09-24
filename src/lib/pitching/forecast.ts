@@ -103,6 +103,10 @@ export interface GameForecast {
       /** False when run support fell back to league-average (no own-team
        *  offense supplied — deliberate in L6 neutral paths). */
       ownOffenseKnown: boolean;
+      /** P(he reaches 5 / 6 IP) — the leash-aware reach probabilities
+       *  that W credit and QS are built on. */
+      reach5: number;
+      reach6: number;
     };
   };
   multipliers: {
@@ -198,11 +202,33 @@ const LEAGUE_OPS_K_RATE = 0.221;
  *  it by 1.5 PA/inning per OPS unit in `buildGameForecast`. */
 const PA_PER_INNING_BASE = 4.3;
 
-/** P(QS) shrink anchors + P(W) model anchors. Ledger-calibrated
- *  2026-07-25 against the first 188 graded starts — rationale and
- *  sourcing per constant: docs/unified-rating-model.md#start-probabilities. */
-const QS_BASE = 0.40;
-const QS_SPREAD = 0.55;
+/** Start-probability model: QS and W are built from the probability of
+ *  REACHING 6 and 5 innings, and that probability carries the manager's
+ *  leash — how many of the pitcher's recent starts actually went that
+ *  deep — on top of the IP and ERA forecasts. Logistic coefficients on
+ *  features centred at the constants below. Fitted 2026-09-23 on the
+ *  full-season retro cohort (4,206 starts); the feature set was chosen on
+ *  a June validation window and graded on a July+ holdout before shipping.
+ *  Re-fit: scripts/retro-start-probabilities-fit.ts. Rationale:
+ *  docs/unified-rating-model.md#start-probabilities. */
+interface ReachCoefs { b0: number; ip: number; leash: number; last3: number; era: number; base: number }
+const REACH_6: ReachCoefs = { b0: -0.516, ip: 0.548, leash: 0.201, last3: 0.357, era: -0.134, base: 0.370 };
+const REACH_5: ReachCoefs = { b0: 0.930, ip: 0.515, leash: 0.026, last3: 0.495, era: -0.047, base: 0.692 };
+const REACH_IP_CENTER = 5.4;
+const REACH_LAST3_CENTER = 5.2;
+const REACH_ERA_CENTER = 4.2;
+/** Starts the leash rate looks back over, and the pseudo-starts at the
+ *  league reach rate blended into it (a 0-for-2 call-up is not a 0% arm). */
+const LEASH_WINDOW = 6;
+const LEASH_PRIOR_STARTS = 2;
+/** P(ER ≤ 3 | he reached 6 IP) — ~.895 and nearly flat in ERA: a pitcher
+ *  who is giving up runs gets pulled before 6, so run prevention reaches
+ *  QS mostly through the reach term. */
+const QS_ER_GIVEN_6 = { b0: 2.118, era: -0.221 };
+/** P(SP credited | team wins), logistic in logit(P(reach 5)). The old
+ *  constant credit share (.64 at 5.4 IP) ran ~6 points high — realized
+ *  .56-.59 — which was most of the W over-forecast. */
+const W_CREDIT = { b0: -0.288, reach5: 0.672 };
 /** League ERA anchor for missing pens / TBD opposing SPs — same center
  *  as `xwobaToXera` (.318 xwOBA → 4.20). */
 const LEAGUE_ERA_ANCHOR = 4.20;
@@ -211,12 +237,6 @@ const LEAGUE_ERA_ANCHOR = 4.20;
 const PYTH_EXP = 1.83;
 /** Long-run MLB home win rate ≈ .540, expressed as odds. */
 const HOME_ODDS = 0.54 / 0.46;
-/** P(SP credited | team win) at a league-average 5.4-IP projection, and
- *  its slope per projected IP (must complete 5 and leave with the lead —
- *  deeper starts hold credit more often). Slope is estimated, not
- *  hard-sourced; the ledger's wParts grading will check it. */
-const W_CREDIT_BASE = 0.64;
-const W_CREDIT_PER_IP = 0.10;
 
 // `xwobaToXera`, `composeXwobaAllowed`, `talentBaa`, `talentHrPerPA`, and
 // `talentContactRate` now live in `./talent` as the single canonical
@@ -228,8 +248,13 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-function clamp01(v: number): number {
-  return clamp(v, 0, 1);
+function sigmoid(z: number): number {
+  return 1 / (1 + Math.exp(-z));
+}
+
+function logit(p: number): number {
+  const q = clamp(p, 1e-4, 1 - 1e-4);
+  return Math.log(q / (1 - q));
 }
 
 // ---------------------------------------------------------------------------
@@ -600,16 +625,14 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
   const expectedH = expectedPa * (1 - bbPerPA) * baa;
 
   // ----- Probabilities ----------------------------------------------------
-  // QS: P(IP ≥ 6 AND ER ≤ 3). Heuristic on IP and expectedERA. Now that
-  // expectedERA includes park/opp/weather, QS odds respond to context too
-  // (a tough park dampens an ace's QS probability, etc.). The raw 0-1
-  // heuristic is over-spread — its middle is honest but its tails aren't —
-  // so it's shrunk toward the league QS base before use. Evidence +
-  // anchors: docs/unified-rating-model.md#start-probabilities.
-  const ipFactor = clamp((expectedIp - 4.5) / 1.5, 0, 1);
-  const eraFactor = clamp((4.50 - expectedERA) / 2.50, 0, 1);
-  const rawQs = 0.5 * ipFactor + 0.5 * eraFactor;
-  const qs = clamp01(QS_BASE + QS_SPREAD * (rawQs - QS_BASE));
+  // QS = P(reach 6 IP) × P(ER ≤ 3 | reached 6). A QS is a threshold on
+  // innings, so it is priced off the chance of getting there — which the
+  // manager's leash decides as much as the mean IP forecast does: a
+  // pitcher pulled at ~5 every time rarely reaches 6 however good his
+  // ERA. Evidence + anchors: docs/unified-rating-model.md#start-probabilities.
+  const reach6 = reachProbability(REACH_6, 18, expectedIp, expectedERA, pitcher.recentStartOuts);
+  const reach5 = reachProbability(REACH_5, 15, expectedIp, expectedERA, pitcher.recentStartOuts);
+  const qs = reach6 * sigmoid(QS_ER_GIVEN_6.b0 + QS_ER_GIVEN_6.era * (expectedERA - REACH_ERA_CENTER));
 
   // W: P(team wins) × P(SP credited | team win), both sides priced in
   // runs. Replaced the additive talent-nudge formula 2026-07-25 after
@@ -649,12 +672,11 @@ export function buildGameForecast(args: BuildForecastArgs): GameForecast {
   const teamOdds = Math.pow(rs / ra, PYTH_EXP) * (isHome ? HOME_ODDS : 1 / HOME_ODDS);
   const pTeam = clamp(teamOdds / (1 + teamOdds), 0.28, 0.72);
 
-  const credit = clamp(
-    W_CREDIT_BASE + W_CREDIT_PER_IP * (expectedIp - LEAGUE_IP_PER_START),
-    0.52, 0.78,
-  );
-  const w = clamp(pTeam * credit, 0.10, 0.55);
-  const wParts = { pTeam, credit, rs, ra, ownOffenseKnown: ownOps != null };
+  // Credit: he has to reach 5 IP to be eligible, then leave with the lead
+  // and have the pen hold it — so credit rises with P(reach 5).
+  const credit = sigmoid(W_CREDIT.b0 + W_CREDIT.reach5 * logit(reach5));
+  const w = pTeam * credit;
+  const wParts = { pTeam, credit, rs, ra, ownOffenseKnown: ownOps != null, reach5, reach6 };
   const bullpen = buildBullpenMultiplier(game, isHome);
 
   // ----- Surface multipliers (display only — already folded in above) ----
@@ -852,6 +874,49 @@ function rateChain(pitcher: PitcherTalent, f: RateChainFactors): RateChain {
     kPerPA, bbPerPA, hrPerPA, inGameContactRate, nonHrContactValue, contactXwoba, baa, hPerPA,
     xwobaAllowed, expectedERA,
   };
+}
+
+/**
+ * Feature vector for the reach model — `[1, IP, leash, last-3 IP, ERA]`,
+ * each centred. The leash is his own recent start lengths: the share of his
+ * last `LEASH_WINDOW` starts that reached `outsNeeded` (blended with
+ * `LEASH_PRIOR_STARTS` pseudo-starts at `baseRate`, the league reach rate)
+ * as a logit deviation from that rate, and the mean IP of his last three.
+ * With no start history (season debut, L6 neutral paths) both leash terms
+ * sit at zero and only the forecasts speak. Exported so the re-fit script
+ * (scripts/retro-start-probabilities-fit.ts) fits exactly these features.
+ */
+export function reachFeatures(
+  outsNeeded: number,
+  baseRate: number,
+  expectedIp: number,
+  expectedERA: number,
+  recentStartOuts: readonly number[] | null | undefined,
+): number[] {
+  const starts = (recentStartOuts ?? []).slice(-LEASH_WINDOW);
+  const reached = starts.filter(o => o >= outsNeeded).length;
+  const rate = (reached + LEASH_PRIOR_STARTS * baseRate) / (starts.length + LEASH_PRIOR_STARTS);
+  const last3 = starts.slice(-3);
+  const last3Ip = last3.length > 0 ? last3.reduce((a, b) => a + b, 0) / last3.length / 3 : REACH_LAST3_CENTER;
+  return [
+    1,
+    expectedIp - REACH_IP_CENTER,
+    logit(rate) - logit(baseRate),
+    last3Ip - REACH_LAST3_CENTER,
+    expectedERA - REACH_ERA_CENTER,
+  ];
+}
+
+/** P(this start reaches `outsNeeded` outs) — logistic over `reachFeatures`. */
+function reachProbability(
+  c: ReachCoefs,
+  outsNeeded: number,
+  expectedIp: number,
+  expectedERA: number,
+  recentStartOuts: readonly number[] | null | undefined,
+): number {
+  const x = reachFeatures(outsNeeded, c.base, expectedIp, expectedERA, recentStartOuts);
+  return sigmoid(c.b0 * x[0] + c.ip * x[1] + c.leash * x[2] + c.last3 * x[3] + c.era * x[4]);
 }
 
 function log5(rateA: number, rateB: number, leagueRate: number): number {
